@@ -2,12 +2,11 @@ package container
 
 import (
 	"context"
-	"net/url"
 	"os"
-	"regexp"
 
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -28,18 +27,13 @@ func NewDelRestoreLogic(ctx context.Context, svcCtx *svc.ServiceContext) *DelRes
 
 func (l *DelRestoreLogic) DelRestore(req *types.DelContainerBackupReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	fileName, err := url.QueryUnescape(req.Filename)
+	fullPath, err := utiles.ResolveBackupPath(req.Filename, ".json", ".yaml")
 	if err != nil {
 		resp.Code = 400
-		resp.Msg = "文件名解码失败"
+		resp.Msg = "非法文件名"
 		resp.Data = map[string]interface{}{}
 		return resp, nil
 	}
-	basePath := os.Getenv("BACKUP_DIR") // 从环境变量中获取备份目录
-	if basePath == "" {
-		basePath = "/data/backups" // 如果环境变量未设置，使用默认值
-	}
-	fullPath := basePath + "/" + fileName
 	err = os.Remove(fullPath)
 	if err != nil {
 		resp.Code = 400
@@ -51,9 +45,4 @@ func (l *DelRestoreLogic) DelRestore(req *types.DelContainerBackupReq) (resp *ty
 	resp.Msg = "success"
 	resp.Data = map[string]interface{}{}
 	return resp, nil
-}
-
-func CleanFilename(filename string) string {
-	reg := regexp.MustCompile("[^a-zA-Z0-9-]+")
-	return reg.ReplaceAllString(filename, "")
 }

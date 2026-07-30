@@ -3,79 +3,84 @@ package icons
 import (
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
+
+var imageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:-]*$`)
+
+var allowedImageTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+	".gif":  "image/gif",
+}
 
 func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 1. 解析 Multipart 表单
 		err := r.ParseMultipartForm(10 << 20) // 10MB 限制
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to parse form: %v", err))
+			writeUploadError(w, http.StatusBadRequest, "failed to parse form")
 			return
 		}
 
 		// 2. 获取文件和 Key
 		file, handler, err := r.FormFile("file")
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to get file: %v", err))
+			writeUploadError(w, http.StatusBadRequest, "failed to get file")
 			return
 		}
 		defer file.Close()
 
 		imageNameKey := r.FormValue("imageName")
-		if imageNameKey == "" {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("imageName is required"))
+		if err := validateImageName(imageNameKey); err != nil {
+			writeUploadError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		// 3. 确保目录存在 (防御性编程)
-		dataPath := "/data/config/image"
-		os.MkdirAll(dataPath, 0755)
+		dataPath := imageUploadDir
+		if err := os.MkdirAll(dataPath, 0o755); err != nil {
+			writeUploadError(w, http.StatusInternalServerError, "failed to prepare upload dir")
+			return
+		}
 
 		// 4. 确定文件名
-		filename := handler.Filename
-		containerName := r.FormValue("containerName")
-		if containerName != "" {
-			// 清理容器名称以确保文件名安全
-			// 将非法字符替换为下划线
-			reg := regexp.MustCompile(`[\\/:*?"<>|]`)
-			safeName := reg.ReplaceAllString(containerName, "_")
-
-			// 获取原始文件名的扩展名
-			ext := filepath.Ext(filename)
-			if ext == "" {
-				// 尝试从内容类型检测扩展名，或者如果缺失则默认为 .png？
-				// 如果可能，最好保留原始扩展名逻辑，或者不追加任何内容。
-			}
-			filename = safeName + ext
+		filename, err := generateStoredFilename(file, handler)
+		if err != nil {
+			writeUploadError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		dstPath := filepath.Join(dataPath, filename)
 		dst, err := os.Create(dstPath)
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to create file on server: %v", err))
+			writeUploadError(w, http.StatusInternalServerError, "failed to create file on server")
 			return
 		}
 		defer dst.Close()
 
 		if _, err := io.Copy(dst, file); err != nil {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to copy file content: %v", err))
+			writeUploadError(w, http.StatusInternalServerError, "failed to copy file content")
 			return
 		}
 
 		// 5. 更新 imageLogos.js
-		jsPath := "/data/config/imageLogos.js"
+		jsPath := imageLogosPath
 		if err := updateImageLogosJS(jsPath, imageNameKey, filename); err != nil {
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to update config: %v", err))
+			_ = os.Remove(dstPath)
+			writeUploadError(w, http.StatusInternalServerError, "failed to update config")
 			return
 		}
 
@@ -85,6 +90,48 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Data: filename,
 		})
 	}
+}
+
+func validateImageName(imageName string) error {
+	if imageName == "" {
+		return fmt.Errorf("imageName is required")
+	}
+	if !imageNamePattern.MatchString(imageName) {
+		return fmt.Errorf("invalid imageName")
+	}
+	return nil
+}
+
+func generateStoredFilename(file multipart.File, handler *multipart.FileHeader) (string, error) {
+	header := make([]byte, 512)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("failed to inspect upload")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("failed to reset upload stream")
+	}
+
+	ext := strings.ToLower(filepath.Ext(handler.Filename))
+	expectedType, ok := allowedImageTypes[ext]
+	if !ok {
+		return "", fmt.Errorf("only png, jpg, jpeg, webp and gif files are allowed")
+	}
+
+	detectedType := http.DetectContentType(header[:n])
+	if detectedType != expectedType {
+		return "", fmt.Errorf("uploaded file content does not match its extension")
+	}
+
+	return uuid.NewString() + ext, nil
+}
+
+func writeUploadError(w http.ResponseWriter, statusCode int, msg string) {
+	httpx.WriteJson(w, statusCode, types.Resp{
+		Code: statusCode,
+		Msg:  msg,
+		Data: map[string]interface{}{},
+	})
 }
 
 func updateImageLogosJS(filePath, imageName, filename string) error {

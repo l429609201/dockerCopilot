@@ -31,6 +31,14 @@ func (l *RestoreLogic) Restore(req *types.ContainerRestoreReq) (resp *types.Resp
 	resp = &types.Resp{}
 	taskID := uuid.New().String()
 	fileName := req.Filename
+	fullPath, pathErr := utiles.ResolveBackupPath(fileName, ".json")
+	if pathErr != nil {
+		resp.Code = 400
+		resp.Msg = pathErr.Error()
+		resp.Data = map[string]interface{}{}
+		return resp, pathErr
+	}
+	fileName = filepath.Base(fullPath)
 	if filepath.Ext(fileName) != ".json" {
 		err = fmt.Errorf("目前仅支持config备份恢复")
 		resp.Code = 400
