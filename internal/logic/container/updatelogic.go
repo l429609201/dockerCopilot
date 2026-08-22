@@ -2,6 +2,8 @@ package container
 
 import (
 	"context"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
@@ -27,20 +29,28 @@ func NewUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UpdateLogi
 func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
 	taskID := uuid.New().String()
-	go func() {
-		// Catch any panic and log the error
-		defer func() {
-			if r := recover(); r != nil {
-				l.Errorf("Recovered from panic in UpdateContainer: %v", r)
-			}
-		}()
-		imageNameAndTag := req.ImageNameAndTag
-		delOldContainer := os.Getenv("DelOldContainer") != "false"
-		err := utiles.UpdateContainer(l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID)
-		if err != nil {
-			l.Errorf("Error in UpdateContainer: %v", err)
+	imageNameAndTag := req.ImageNameAndTag
+	delOldContainer := os.Getenv("DelOldContainer") != "false"
+	// 整体超时时间来自配置，默认 1800 秒
+	timeoutSec := l.svcCtx.Config.Task.PullTimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = 1800
+	}
+	// 通过统一任务管理器提交：限制并发、对同一容器去重，避免重复更新和资源打满
+	startErr := l.svcCtx.TaskManager.TryStart(taskID, req.Id, svc.TaskTypeContainerUpdate, func(taskCtx context.Context) {
+		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
+		defer cancel()
+		if e := utiles.UpdateContainerWithContext(ctxWithTimeout, l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID); e != nil {
+			l.Errorf("Error in UpdateContainer: %v", e)
 		}
-	}()
+	})
+	if startErr != nil {
+		// 资源重复等登记失败：返回业务错误，不下发无效 taskID
+		resp.Code = 400
+		resp.Msg = startErr.Error()
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
 	resp.Code = 200
 	resp.Msg = "success"
 	resp.Data = map[string]string{"taskID": taskID}

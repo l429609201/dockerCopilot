@@ -7,3 +7,19 @@ Log:
 Auth:
   AccessSecret: ${secretKey}
   AccessExpire: 7257600
+Task:
+  # 异步任务全局并发上限，避免同时拉取过多镜像压垮 Docker daemon
+  MaxConcurrent: 2
+  # 单个镜像拉取/容器更新的整体超时(秒)
+  PullTimeoutSec: 1800
+Compose:
+  # Compose 项目扫描根目录；需将宿主机 compose 目录挂载进容器，空则禁用该功能
+  ScanPaths: []
+  # 扫描最大目录深度
+  MaxDepth: 3
+  # 单个 compose 文件最大字节数(10MB)
+  MaxFileSize: 10485760
+  # docker compose 命令执行超时(秒)
+  CommandTimeoutSec: 300
+  # 是否允许直接部署含高风险配置(privileged等)的项目
+  AllowHighRisk: false

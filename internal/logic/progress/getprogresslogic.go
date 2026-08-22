@@ -42,6 +42,13 @@ func (l *GetProgressLogic) GetProgress(req *types.GetProgressReq) (resp *types.R
 		"name":       progress.Name,
 		"detailMsg":  progress.DetailMsg,
 		"isDone":     progress.IsDone,
+		// 新增字段：便于前端区分失败/取消状态、展示耗时与任务类型
+		"failed":     progress.Failed,
+		"canceled":   progress.Canceled,
+		"taskType":   progress.TaskType,
+		"resourceID": progress.ResourceID,
+		"startedAt":  progress.StartedAt,
+		"endedAt":    progress.EndedAt,
 	}
 	return resp, nil
 }

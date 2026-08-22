@@ -40,6 +40,42 @@ services:
     image: 0nlylty/dockercopilot:latest
 ```
 
+## 新增功能说明（改造版）
+
+以下功能在原版基础上新增，均以当前 Go 后端为主线实现。
+
+### 镜像拉取与更新异步化
+- 启动时镜像检查改为后台执行，不再阻塞服务启动和其他页面。
+- 容器更新、镜像拉取进入统一任务系统，支持并发上限、进度、失败原因和取消。
+- 取消任务：`POST /api/progress/:taskid/cancel`。
+- 相关配置见 `etc/dockerCopilot.yaml` 的 `Task` 段（`MaxConcurrent`、`PullTimeoutSec`）。
+
+### 定时更新特定容器
+- 通过 `/api/schedules` 管理定时规则，支持 cron、容器选择、仅有更新才更新、跳过无 tag/digest 镜像、保留旧容器和通知开关。
+- Docker Hub 等私有仓库凭据通过 `/api/registries` 管理，接口和日志均脱敏，不回显明文。
+- 配置持久化到 `/data/config/config.json`，可用 `DOCKERCOPILOT_BOT_CONFIG` 覆盖路径。
+
+### Telegram 机器人
+- 通过 `/api/bot/telegram` 配置 Token、白名单 Chat ID、代理和通知开关。
+- 支持容器列表查询、启动/停止/重启（inline 二次确认），仅白名单会话可操作。
+- 定时更新结果可推送到 Telegram。
+
+### Compose 项目管理
+- 需将宿主机 compose 目录挂载进容器，并在配置中设置 `Compose.ScanPaths`：
+
+```yaml
+volumes:
+  - /宿主机/compose目录:/compose
+  - ./data:/data
+```
+
+- 支持项目扫描、文件查看/编辑、YAML 校验、高风险配置提示和部署操作（up/down/restart/pull）。
+- 部署 `up` 遇高风险配置需二次确认；所有部署命令带超时并进入任务系统。
+
+### Portainer 风格容器运维
+- 容器暂停、恢复、强制终止、删除、重命名、命令执行、日志查看和参数编辑。
+- 参数编辑通过"停旧→建新→启动→校验→可选删旧"任务化重建，失败自动回滚。
+
 ## 开发环境
 
 go版本：1.21+

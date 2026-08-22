@@ -1,0 +1,56 @@
+name: CD - 构建镜像
+
+on:
+  push:
+    branches: [docker]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - '.github/workflows/cd.yml'
+  workflow_dispatch:
+
+jobs:
+  # 构建并推送到 Docker Hub
+  push-docker:
+    runs-on: ubuntu-latest
+    name: 构建并推送 Docker 镜像
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录到 Docker Hub
+        uses: docker/login-action@v3.0.0
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: 提取元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/docker-copilot-frontend
+          tags: |
+            type=raw,value=dev
+
+      - name: 构建并推送到 Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 推送结果
+        run: |
+          echo "✅ Docker 镜像推送成功"
+          echo "仓库地址: docker.io/${{ secrets.DOCKER_HUB_USERNAME }}/docker-copilot-frontend"
+          echo "标签: ${{ steps.meta.outputs.tags }}"

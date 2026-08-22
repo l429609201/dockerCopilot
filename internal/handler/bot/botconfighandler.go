@@ -1,0 +1,42 @@
+package bot
+
+import (
+	"net/http"
+
+	"github.com/onlyLTY/dockerCopilot/internal/logic/bot"
+	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/zeromicro/go-zero/rest/httpx"
+)
+
+// writeResp 统一响应写出。
+func writeResp(w http.ResponseWriter, r *http.Request, resp *types.Resp, err error) {
+	if err != nil {
+		httpx.WriteJson(w, resp.Code, resp)
+		return
+	}
+	httpx.OkJsonCtx(r.Context(), w, resp)
+}
+
+// GetConfigHandler 返回脱敏后的 Bot 配置。
+func GetConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := bot.NewBotConfigLogic(r.Context(), svcCtx)
+		resp, err := l.Get()
+		writeResp(w, r, resp, err)
+	}
+}
+
+// SaveConfigHandler 更新 Bot 配置并触发重载。
+func SaveConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.TelegramConfigReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := bot.NewBotConfigLogic(r.Context(), svcCtx)
+		resp, err := l.Save(&req)
+		writeResp(w, r, resp, err)
+	}
+}

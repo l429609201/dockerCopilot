@@ -30,3 +30,11 @@ __pycache__/
 /db.sqlite3
 /front/
 /logs/
+
+# React 前端依赖与构建产物（源码保留，仅忽略生成物）
+/frontend-react/node_modules/
+/frontend-react/dist/
+/frontend-react/.env
+
+.sanshu-memory
+改造.md

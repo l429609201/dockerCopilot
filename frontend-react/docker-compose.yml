@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: .
+    ports:
+      - "12713:12713"
+    environment:
+      - VITE_API_BASE_URL=http://backend:12712  # 使用服务名而不是 localhost
+      - PORT=12713
+    depends_on:
+      - backend
+
+    networks:
+      - app-network
+
+  backend:
+    image: your-backend-image:latest  # 替换为你的后端镜像
+    ports:
+      - "12712:12712"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

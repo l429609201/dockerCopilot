@@ -1,0 +1,132 @@
+package containerops
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-connections/nat"
+)
+
+// EditSpec 承载容器重建时的可编辑字段。nil 字段表示保留原值。
+type EditSpec struct {
+	Image         string
+	Env           []string
+	RestartPolicy string
+	PortBindings  []string
+	KeepOld       bool
+}
+
+// Recreate 通过"停止旧容器 -> 重命名旧容器 -> 用新配置创建 -> 启动 -> 可选删除旧容器"
+// 实现参数编辑。失败时尝试恢复旧容器名并重启，尽量避免服务丢失。
+// progress 回调用于向任务系统上报阶段（可为 nil）。
+func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progress func(pct int, msg string)) error {
+	report := func(pct int, msg string) {
+		if progress != nil {
+			progress(pct, msg)
+		}
+	}
+	cli := s.svcCtx.DockerClient
+
+	report(10, "读取原容器配置")
+	inspected, err := cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return fmt.Errorf("获取容器信息失败: %w", err)
+	}
+	if inspected.Config == nil || inspected.HostConfig == nil {
+		return fmt.Errorf("容器配置不可用")
+	}
+	name := strings.TrimPrefix(inspected.Name, "/")
+
+	// 基于原配置应用变更
+	newConfig := *inspected.Config
+	if spec.Image != "" {
+		newConfig.Image = spec.Image
+	}
+	if spec.Env != nil {
+		newConfig.Env = spec.Env
+	}
+	newConfig.Hostname = ""
+
+	newHostConfig := *inspected.HostConfig
+	if spec.RestartPolicy != "" {
+		newHostConfig.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(spec.RestartPolicy)}
+	}
+	if spec.PortBindings != nil {
+		bindings, exposed, perr := parsePortBindings(spec.PortBindings)
+		if perr != nil {
+			return perr
+		}
+		newHostConfig.PortBindings = bindings
+		// ExposedPorts 可能为 nil，需先初始化再写入，避免 panic
+		if newConfig.ExposedPorts == nil {
+			newConfig.ExposedPorts = nat.PortSet{}
+		}
+		for p := range exposed {
+			newConfig.ExposedPorts[p] = struct{}{}
+		}
+	}
+	networkingConfig := &network.NetworkingConfig{EndpointsConfig: inspected.NetworkSettings.Networks}
+
+	report(30, "停止旧容器")
+	timeout := 10
+	_ = cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout})
+
+	report(45, "重命名旧容器")
+	backupName := name + "-old-" + time.Now().Format("20060102150405")
+	if err := cli.ContainerRename(context.Background(), id, backupName); err != nil {
+		return fmt.Errorf("重命名旧容器失败: %w", err)
+	}
+
+	report(60, "创建新容器")
+	created, err := cli.ContainerCreate(context.Background(), &newConfig, &newHostConfig, networkingConfig, nil, name)
+	if err != nil {
+		// 回滚：恢复旧容器名并重启
+		_ = cli.ContainerRename(context.Background(), id, name)
+		_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
+		return fmt.Errorf("创建新容器失败，已回滚: %w", err)
+	}
+
+	report(80, "启动新容器")
+	if err := cli.ContainerStart(context.Background(), created.ID, container.StartOptions{}); err != nil {
+		// 回滚：删除新容器，恢复旧容器
+		_ = cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
+		_ = cli.ContainerRename(context.Background(), id, name)
+		_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
+		return fmt.Errorf("启动新容器失败，已回滚: %w", err)
+	}
+
+	if !spec.KeepOld {
+		report(95, "删除旧容器")
+		_ = cli.ContainerRemove(context.Background(), id, container.RemoveOptions{})
+	}
+	report(100, "参数编辑完成")
+	return nil
+}
+
+// parsePortBindings 解析 "hostPort:containerPort/proto" 列表为 Docker 端口结构。
+func parsePortBindings(specs []string) (nat.PortMap, nat.PortSet, error) {
+	bindings := nat.PortMap{}
+	exposed := nat.PortSet{}
+	for _, s := range specs {
+		parts := strings.SplitN(s, ":", 2)
+		if len(parts) != 2 {
+			return nil, nil, fmt.Errorf("端口映射格式错误: %s", s)
+		}
+		hostPort := parts[0]
+		containerPart := parts[1]
+		if !strings.Contains(containerPart, "/") {
+			containerPart += "/tcp"
+		}
+		port, err := nat.NewPort(strings.SplitN(containerPart, "/", 2)[1], strings.SplitN(containerPart, "/", 2)[0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("解析端口失败 %s: %w", s, err)
+		}
+		bindings[port] = append(bindings[port], nat.PortBinding{HostPort: hostPort})
+		exposed[port] = struct{}{}
+	}
+	return bindings, exposed, nil
+}

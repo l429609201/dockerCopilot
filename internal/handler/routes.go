@@ -7,10 +7,15 @@ import (
 	"net/http"
 
 	auth "github.com/onlyLTY/dockerCopilot/internal/handler/auth"
+	bot "github.com/onlyLTY/dockerCopilot/internal/handler/bot"
+	compose "github.com/onlyLTY/dockerCopilot/internal/handler/compose"
 	container "github.com/onlyLTY/dockerCopilot/internal/handler/container"
+	favicon "github.com/onlyLTY/dockerCopilot/internal/handler/favicon"
 	icons "github.com/onlyLTY/dockerCopilot/internal/handler/icons"
 	image "github.com/onlyLTY/dockerCopilot/internal/handler/image"
+	ops "github.com/onlyLTY/dockerCopilot/internal/handler/ops"
 	progress "github.com/onlyLTY/dockerCopilot/internal/handler/progress"
+	schedule "github.com/onlyLTY/dockerCopilot/internal/handler/schedule"
 	version "github.com/onlyLTY/dockerCopilot/internal/handler/version"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 
@@ -142,6 +147,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/progress/:taskid",
 				Handler: progress.GetProgressHandler(serverCtx),
 			},
+			{
+				// 取消正在执行的任务（拉取等可中断阶段生效）
+				Method:  http.MethodPost,
+				Path:    "/progress/:taskid/cancel",
+				Handler: progress.CancelProgressHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
@@ -158,6 +169,175 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/version",
 				Handler: version.VersionHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// 定时更新规则管理
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/schedules",
+				Handler: schedule.ListHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/schedules",
+				Handler: schedule.SaveHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodDelete,
+				Path:    "/schedules/:id",
+				Handler: schedule.DeleteHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/schedules/:id/run",
+				Handler: schedule.RunNowHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// Registry 凭据管理
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/registries",
+				Handler: schedule.RegistryListHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/registries",
+				Handler: schedule.RegistrySaveHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodDelete,
+				Path:    "/registries/:id",
+				Handler: schedule.RegistryDeleteHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// Compose 项目管理
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/compose/projects",
+				Handler: compose.ListHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/compose/validate",
+				Handler: compose.ValidateHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/compose/projects/:id/files/:filename",
+				Handler: compose.ReadFileHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPut,
+				Path:    "/compose/projects/:id/files/:filename",
+				Handler: compose.SaveFileHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/compose/projects/:id/action",
+				Handler: compose.ActionHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// Telegram Bot 配置
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/bot/telegram",
+				Handler: bot.GetConfigHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/bot/telegram",
+				Handler: bot.SaveConfigHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// 阶段7：Portainer 风格容器运维（生命周期、日志、命令、详情）
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/pause",
+				Handler: ops.PauseHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/unpause",
+				Handler: ops.UnpauseHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/kill",
+				Handler: ops.KillHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodDelete,
+				Path:    "/container/:id",
+				Handler: ops.RemoveHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/rename2",
+				Handler: ops.RenameHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/inspect",
+				Handler: ops.InspectHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/logs",
+				Handler: ops.LogsHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/exec",
+				Handler: ops.ExecHandler(serverCtx),
+			},
+			{
+				// 参数编辑（任务化重建），返回 taskID
+				Method:  http.MethodPut,
+				Path:    "/container/:id/edit",
+				Handler: ops.EditHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// 阶段8：favicon 解析（供前端按容器端口抓取站点图标）
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/favicon/resolve",
+				Handler: favicon.ResolveHandler(serverCtx),
 			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),

@@ -26,6 +26,8 @@ type Info struct {
 	CreateTime  string `json:"createTime"`
 	RunningTime string `json:"runningTime"`
 	HaveUpdate  bool   `json:"haveUpdate"`
+	// Ports 暴露到宿主机的端口列表（仅含有 PublicPort 的），供前端抓取站点 favicon
+	Ports []int `json:"ports"`
 }
 
 func NewContainersListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ContainersListLogic {
@@ -76,6 +78,19 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 		containerInfo.CreateTime = t.Format("2006-01-02 15:04:05")
 		containerInfo.RunningTime = v.Status
 		containerInfo.HaveUpdate = v.Update
+		// 收集暴露到宿主机的公共端口并去重，供前端探测站点 favicon
+		seenPorts := make(map[int]struct{})
+		for _, p := range v.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			port := int(p.PublicPort)
+			if _, ok := seenPorts[port]; ok {
+				continue
+			}
+			seenPorts[port] = struct{}{}
+			containerInfo.Ports = append(containerInfo.Ports, port)
+		}
 		containerInfoList = append(containerInfoList, containerInfo)
 	}
 	resp.Data = containerInfoList

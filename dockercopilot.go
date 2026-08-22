@@ -12,6 +12,8 @@ import (
 
 	"github.com/onlyLTY/dockerCopilot/internal/config"
 	"github.com/onlyLTY/dockerCopilot/internal/handler"
+	"github.com/onlyLTY/dockerCopilot/internal/module/bot"
+	"github.com/onlyLTY/dockerCopilot/internal/module/scheduler"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"github.com/robfig/cron/v3"
@@ -63,6 +65,18 @@ func main() {
 	defer server.Stop()
 	ctx := svc.NewServiceContext(c)
 
+	// 创建 Telegram Bot：既是指令交互入口，也作为定时更新的通知渠道。
+	tgBot := bot.New(ctx)
+	ctx.Bot = tgBot
+	tgBot.Reload() // 按持久化配置决定是否启动
+	defer tgBot.Stop()
+
+	// 创建并启动定时更新调度器，注入 Bot 作为通知渠道；配置变更时由 handler 触发重载。
+	sched := scheduler.New(ctx, tgBot)
+	ctx.Scheduler = sched
+	sched.Start()
+	defer sched.Stop()
+
 	// Ensure data directory and config exist (Auto-init)
 	dataDir := "/data/config/image"
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -80,25 +94,41 @@ export const customImageLogos = {
 		}
 	}
 
-	list, err := utiles.GetImagesList(ctx)
-	if err != nil {
-		logx.Errorf("panic获取镜像列表出错: %v", err)
-		panic(err)
-	}
-	go ctx.HubImageInfo.CheckUpdate(list)
+	// 首轮镜像更新检查放到后台执行：镜像列表获取和加速器域名探测都可能较慢，
+	// 绝不能阻塞 HTTP 服务启动，否则容器控制等页面在启动阶段会长时间无响应。
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logx.Errorf("首轮镜像更新检查发生 panic 已恢复: %v", r)
+			}
+		}()
+		list, err := utiles.GetImagesList(ctx)
+		if err != nil {
+			// 获取失败仅记录日志，不清空已有结果、不退出进程
+			logx.Errorf("首轮获取镜像列表出错: %v", err)
+			return
+		}
+		ctx.HubImageInfo.CheckUpdate(list)
+	}()
 	corndanmu := cron.New(cron.WithParser(cron.NewParser(
 		cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
 	)))
 	_, err = corndanmu.AddFunc("30 * * * *", func() {
+		// 定时检查同样做 panic 兜底，单次失败不影响后续调度和主服务
+		defer func() {
+			if r := recover(); r != nil {
+				logx.Errorf("定时镜像更新检查发生 panic 已恢复: %v", r)
+			}
+		}()
 		list, err := utiles.GetImagesList(ctx)
 		if err != nil {
-			logx.Errorf("panic获取镜像列表出错: %v", err)
-			panic(err)
+			logx.Errorf("定时获取镜像列表出错: %v", err)
+			return
 		}
 		ctx.HubImageInfo.CheckUpdate(list)
 	})
 	if err != nil {
-		logx.Errorf("panic添加定时任务出错: %v", err)
+		logx.Errorf("添加定时任务出错: %v", err)
 		panic(err)
 	}
 	corndanmu.Start()

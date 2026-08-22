@@ -6,7 +6,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	MyType "github.com/onlyLTY/dockerCopilot/internal/types"
-	"log"
+	"github.com/zeromicro/go-zero/core/logx"
 	"strings"
 )
 
@@ -14,7 +14,9 @@ func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 	var imagesList []MyType.Image
 	dockerImages, err := ctx.DockerClient.ImageList(context.Background(), image.ListOptions{})
 	if err != nil {
-		log.Fatalf("Unable to fetch docker images: %s", err)
+		// 不能用 log.Fatalf，否则获取镜像失败会直接杀掉整个进程
+		logx.Errorf("Unable to fetch docker images: %s", err)
+		return imagesList, err
 	}
 
 	for _, img := range dockerImages {

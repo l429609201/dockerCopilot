@@ -7,7 +7,6 @@ import (
 
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -36,30 +35,14 @@ func (l *VersionLogic) Version(req *types.VersionReq) (resp *types.Resp, err err
 		}
 		return resp, nil
 	} else if req.Type == "remote" {
-		remoteVersion, err := utiles.GetRemoteVersion()
-		if err != nil {
-			resp.Code = 50001
-			resp.Msg = "获取版本错误" + err.Error()
-			resp.Data = map[string]string{
-				"remoteVersion": config.Version,
-			}
-			return resp, nil
-		} else if remoteVersion != config.Version {
-			resp.Code = 200
-			resp.Msg = "程序有更新"
-			resp.Data = map[string]string{
-				"remoteVersion": remoteVersion,
-			}
-			return resp, nil
-		} else {
-			resp.Code = 200
-			resp.Msg = "程序无更新"
-			resp.Data = map[string]string{
-				"remoteVersion": remoteVersion,
-			}
-			return resp, nil
+		// 二进制自更新已下线，不再远程比对版本。
+		// 保留该分支仅为兼容旧前端：始终返回“无更新”，升级请更新容器镜像。
+		resp.Code = 200
+		resp.Msg = "程序无更新"
+		resp.Data = map[string]string{
+			"remoteVersion": config.Version,
 		}
-
+		return resp, nil
 	} else {
 		resp.Code = 400
 		resp.Msg = "type 参数错误"
