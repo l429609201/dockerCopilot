@@ -5,9 +5,10 @@
 # ---------- 阶段1：构建前端 ----------
 FROM node:22-alpine AS frontend
 WORKDIR /web
-# 先装依赖（利用层缓存）
+# 先装依赖（利用层缓存）。用 npm install 而非 npm ci：
+# 允许 package-lock 未完全同步时自动解析补齐（如新增的 @xterm 依赖）。
 COPY frontend-react/package.json frontend-react/package-lock.json ./
-RUN npm ci
+RUN npm install
 # 再拷源码并构建，产物默认输出到 dist
 COPY frontend-react/ ./
 RUN npm run build
