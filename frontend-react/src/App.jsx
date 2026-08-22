@@ -10,6 +10,8 @@ import { Schedules } from './components/Schedules.jsx'
 import { Compose } from './components/Compose.jsx'
 import { Settings } from './components/Settings.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
+import { TaskProvider } from './hooks/useTasks.jsx'
+import { TaskPanel } from './components/TaskPanel.jsx'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cn } from './utils/cn.js'
 
@@ -190,6 +192,8 @@ function AppContent() {
         onTabChange={handleTabChange}
         windowWidth={windowWidth}
       />
+      {/* 全局任务浮层：任意页面可见运行中任务及进度 */}
+      <TaskPanel />
     </div>
   )
 }
@@ -198,7 +202,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AppContent />
+        <TaskProvider>
+          <AppContent />
+        </TaskProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

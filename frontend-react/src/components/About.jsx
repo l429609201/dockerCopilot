@@ -1,7 +1,5 @@
 import React from 'react'
 import { Github, Mail, Heart, MessageSquare } from 'lucide-react'
-import wechatImg from '../assets/wechat.jpg'
-import alipayImg from '../assets/alipay.jpg'
 import logoImg from '../assets/DockerCopilot-logo.png'
 
 export function About() {
@@ -74,42 +72,6 @@ export function About() {
             >
               前往 GitHub Issues &rarr;
             </a>
-          </div>
-        </div>
-
-        {/* 赞赏 */}
-        <div className="card relative overflow-hidden p-6 sm:p-8 border-2 border-primary-100 dark:border-primary-900/30">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary-50 to-blue-50 dark:from-primary-900/10 dark:to-blue-900/10 pointer-events-none"></div>
-
-          <div className="relative z-10 text-center">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">最后的最后</h2>
-            <p className="text-gray-600 dark:text-gray-400 mb-6 max-w-2xl mx-auto">
-              如果您觉得 Docker Copilot 对您有帮助，可以请我喝一瓶快乐水。您的支持是我持续维护和更新项目的最大动力！
-            </p>
-
-            <div className="flex flex-wrap justify-center gap-8">
-              <div className="group flex flex-col items-center">
-                <div className="w-40 h-40 bg-white p-2 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 transform transition-transform group-hover:scale-105 group-hover:rotate-1">
-                  <img
-                    src={wechatImg}
-                    alt="微信赞赏码"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <span className="mt-3 text-sm font-medium text-gray-600 dark:text-gray-400 group-hover:text-primary-600 transition-colors">微信支付</span>
-              </div>
-
-              <div className="group flex flex-col items-center">
-                <div className="w-40 h-40 bg-white p-2 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 transform transition-transform group-hover:scale-105 group-hover:-rotate-1">
-                  <img
-                    src={alipayImg}
-                    alt="支付宝赞赏码"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <span className="mt-3 text-sm font-medium text-gray-600 dark:text-gray-400 group-hover:text-blue-600 transition-colors">支付宝</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>

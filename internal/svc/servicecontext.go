@@ -54,6 +54,7 @@ const (
 	TaskTypeImagePull       = "image_pull"
 	TaskTypeComposeAction   = "compose_action"
 	TaskTypeScheduledUpdate = "scheduled_update"
+	TaskTypeImagePrune      = "image_prune" // 批量清理/删除镜像
 )
 
 type TaskProgress struct {

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle } from 'lucide-react'
 import { imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
+import { useTasks } from '../hooks/useTasks.jsx'
 
 // 安全的图片组件
 function SafeImage({ src, alt, className, fallback }) {
@@ -24,8 +25,9 @@ function SafeImage({ src, alt, className, fallback }) {
 }
 
 export function Images() {
-  const [images, setImages] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
+  const { addTask } = useTasks()
+  // 删除/清理等操作的 loading（与列表查询的 loading 区分）
+  const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, image: null })
@@ -64,86 +66,76 @@ export function Images() {
     }
   })
 
-  const fetchImages = async () => {
-    try {
-      setIsLoading(true)
-      setError(null)
-
+  // 镜像列表改用 react-query：切换页面时缓存保留，切回立即显示旧数据并后台刷新，
+  // 避免此前 useState 方案在组件卸载后丢失数据、切回空白的问题。
+  const { data: images = [], isFetching, refetch } = useQuery({
+    queryKey: ['images'],
+    queryFn: async () => {
       const response = await imageAPI.getImages()
-
       if (response.data && (response.data.code === 0 || response.data.code === 200)) {
-        setImages(response.data.data || [])
-      } else {
-        const errorMsg = response.data?.msg || '获取镜像列表失败'
-        setError(errorMsg)
-        setImages([])
+        return response.data.data || []
       }
-    } catch (error) {
-      const errorMsg = error.response?.data?.msg || error.message || '网络错误，请检查后端服务'
-      setError(errorMsg)
-      setImages([])
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchImages()
-  }, [])
+      throw new Error(response.data?.msg || '获取镜像列表失败')
+    },
+    staleTime: 10000,
+    refetchOnWindowFocus: false,
+  })
+  // 合并 loading：列表查询中或操作进行中都算 loading
+  const isLoading = isFetching || actionLoading
+  // 兼容原有调用点：刷新即重新查询
+  const fetchImages = () => refetch()
 
   const handleDeleteImage = async (imageId, force = false) => {
     try {
-      setIsLoading(true)
+      setActionLoading(true)
       setDeleteModal({ isOpen: false, image: null })
 
       await imageAPI.deleteImage(imageId, force)
 
       setSuccessModal({ isOpen: true, message: '镜像删除成功' })
-      fetchImages()
+      await refetch()
       setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
     } catch (error) {
       const errorMsg = error.response?.data?.msg || error.message || '删除镜像失败'
       setError(errorMsg)
-      setIsLoading(false)
+    } finally {
+      setActionLoading(false)
     }
   }
 
+  // 异步批量清理：提交任务拿 taskID，注册到全局任务浮层，前端不再同步阻塞等待
   const handlePrune = async (type) => {
     try {
-      setIsLoading(true)
       setError(null)
-
       let imagesToDelete = []
       if (type === 'dangling') {
         imagesToDelete = images.filter(img => img.tag === 'None' || img.tag === '<none>')
       } else if (type === 'unused') {
         imagesToDelete = images.filter(img => !img.inUsed)
       }
-
       if (imagesToDelete.length === 0) {
         setError('没有找到需要清理的镜像')
-        setIsLoading(false)
         return
       }
 
-      // 批量删除
-      const deletePromises = imagesToDelete.map(image =>
-        imageAPI.deleteImage(image.id, false)
-      )
-
-      await Promise.all(deletePromises)
-
-      const message = type === 'dangling'
-        ? `成功清理 ${imagesToDelete.length} 个无Tag镜像`
-        : `成功清理 ${imagesToDelete.length} 个未使用的镜像`
-
-      setSuccessModal({ isOpen: true, message })
-      fetchImages()
+      const ids = imagesToDelete.map(img => img.id)
+      const resp = await imageAPI.pruneImages(ids, false)
+      const taskID = resp.data?.data?.taskID
+      if (!taskID) {
+        setError(resp.data?.msg || '提交清理任务失败')
+        return
+      }
+      // 注册到全局任务浮层，任意页面可见进度；完成后自动刷新列表
+      addTask({
+        id: taskID,
+        title: type === 'dangling' ? '清理无Tag镜像' : '清理未使用镜像',
+        onDone: () => refetch(),
+      })
+      setSuccessModal({ isOpen: true, message: `已提交清理任务（${ids.length} 个镜像），可在右下角查看进度` })
       setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
     } catch (error) {
       const errorMsg = error.response?.data?.msg || error.message || '清理镜像失败'
       setError(errorMsg)
-      setIsLoading(false)
     }
   }
 

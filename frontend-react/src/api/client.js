@@ -143,6 +143,8 @@ export const imageAPI = {
   getImages: () => apiClient.get('/api/images'),
   getIcons: () => apiClient.get('/api/icons'),
   deleteImage: (id, force = false) => apiClient.delete(`/api/image/${id}?force=${force}`),
+  // 异步批量清理镜像：提交 ids 列表，返回 taskID
+  pruneImages: (ids, force = false) => apiClient.post('/api/images/prune', { ids, force }),
   uploadIcon: (file, imageName, containerName) => {
     const formData = new FormData()
     formData.append('file', file)

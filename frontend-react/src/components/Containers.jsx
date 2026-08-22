@@ -17,13 +17,14 @@ import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getImageLogo } from '../config/imageLogos.js'
-import icons8Img from '../assets/icons8.png'
 import { ContainerOps } from './ContainerOps.jsx'
 import { useFaviconMap } from '../hooks/useFavicon.js'
 import { ContainerListRow } from './ContainerListRow.jsx'
 import { formatRunningTime } from '../utils/format.js'
+import { useTasks } from '../hooks/useTasks.jsx'
 
 export function Containers() {
+  const { addTask } = useTasks()
   const queryClient = useQueryClient()
   const [selectedContainer, setSelectedContainer] = useState(null)
   // 添加批量操作相关的状态
@@ -372,6 +373,8 @@ export function Containers() {
             ...prev,
             [containerId]: taskID
           }))
+          // 同时注册到全局任务浮层，切换页面也能看到该更新进度
+          addTask({ id: taskID, title: `更新 ${container.name}`, onDone: () => refetch() })
 
           pollProgress(containerId, taskID)
         } else {

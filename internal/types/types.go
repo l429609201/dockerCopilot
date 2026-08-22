@@ -58,6 +58,12 @@ type RemoveImageReq struct {
 	Force bool `form:"force,default=false"`
 }
 
+// PruneImagesReq 批量清理镜像请求：提交镜像ID列表，异步逐个删除。
+type PruneImagesReq struct {
+	Ids   []string `json:"ids"`
+	Force bool     `json:"force,default=false"`
+}
+
 type RenameContainerReq struct {
 	OldName string `json:"oldName"`
 	NewName string `json:"newName"`
