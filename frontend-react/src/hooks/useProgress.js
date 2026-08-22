@@ -2,124 +2,56 @@ import { useState, useEffect, useRef } from 'react'
 import { progressAPI } from '../api/client.js'
 
 /**
- * 进度查询Hook
- * @param {string} taskId - 任务ID
- * @param {function} onComplete - 完成回调
- * @param {function} onError - 错误回调
+ * 进度查询 Hook：轮询 /api/progress/:taskid，返回结构化进度。
+ * 返回 { progress, isPolling }，progress 含 percentage/message/detailMsg/isDone/failed。
  */
 export function useProgress(taskId, onComplete, onError) {
   const [progress, setProgress] = useState(null)
   const [isPolling, setIsPolling] = useState(false)
-  const intervalRef = useRef(null)
+  const timerRef = useRef(null)
+  const cbRef = useRef({ onComplete, onError })
+  cbRef.current = { onComplete, onError }
 
   useEffect(() => {
-    if (!taskId || isPolling) return
-import { useState, useEffect, useRef } from 'react'
-import { progressAPI } from '../api/client.js'
-
-/**
- * 进度查询Hook
- * @param {string} taskId - 任务ID
- * @param {function} onComplete - 完成回调
- * @param {function} onError - 错误回调
- */
-export function useProgress(taskId, onComplete, onError) {
-  const [progress, setProgress] = useState(null)
-  const [isPolling, setIsPolling] = useState(false)
-  const intervalRef = useRef(null)
-
-  useEffect(() => {
-    if (!taskId || isPolling) return
-
+    if (!taskId) return
     setIsPolling(true)
 
-    const pollProgress = async () => {
-      try {
-        const response = await progressAPI.getProgress(taskId)
-        const data = response.data
-
-        setProgress(data)
-
-        // 检查任务是否完成
-        if (data.code === 200 && data.data?.status === 'completed') {
-          stopPolling()
-          onComplete?.(data)
-        } else if (data.code !== 200 && data.code !== 0) {
-          stopPolling()
-          onError?.(data)
-        }
-      } catch (error) {
-        console.error('查询进度失败:', error)
-        stopPolling()
-        onError?.(error)
-      }
-    }
-
-    const stopPolling = () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
+    const stop = () => {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
       setIsPolling(false)
     }
 
-    // 立即执行一次
-    pollProgress()
-
-    // 每2秒查询一次进度
-    intervalRef.current = setInterval(pollProgress, 2000)
-
-    // 清理函数
-    return () => {
-      stopPolling()
-    }
-  }, [taskId, isPolling, onComplete, onError])
-
-  return { progress, isPolling }
-}
-    setIsPolling(true)
-
-    const pollProgress = async () => {
+    const poll = async () => {
       try {
-        const response = await progressAPI.getProgress(taskId)
-        const data = response.data
-
-        setProgress(data)
-
-        // 检查任务是否完成
-        if (data.code === 200 && data.data?.status === 'completed') {
-          stopPolling()
-          onComplete?.(data)
-        } else if (data.code !== 200 && data.code !== 0) {
-          stopPolling()
-          onError?.(data)
+        const resp = await progressAPI.getProgress(taskId)
+        const body = resp.data
+        const d = body?.data || {}
+        setProgress({
+          code: body?.code,
+          percentage: d.percentage ?? 0,
+          message: d.message || body?.msg || '',
+          detailMsg: d.detailMsg || '',
+          isDone: !!d.isDone,
+          failed: !!d.failed,
+          canceled: !!d.canceled,
+          raw: d,
+        })
+        if (body?.code === 400) { stop(); cbRef.current.onError?.(body); return }
+        if (d.isDone) {
+          stop()
+          if (d.failed) cbRef.current.onError?.(d)
+          else cbRef.current.onComplete?.(d)
         }
-      } catch (error) {
-        console.error('查询进度失败:', error)
-        stopPolling()
-        onError?.(error)
+      } catch (err) {
+        console.error('查询进度失败:', err)
+        stop(); cbRef.current.onError?.(err)
       }
     }
 
-    const stopPolling = () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
-      setIsPolling(false)
-    }
-
-    // 立即执行一次
-    pollProgress()
-
-    // 每2秒查询一次进度
-    intervalRef.current = setInterval(pollProgress, 2000)
-
-    // 清理函数
-    return () => {
-      stopPolling()
-    }
-  }, [taskId, isPolling, onComplete, onError])
+    poll()
+    timerRef.current = setInterval(poll, 1500)
+    return stop
+  }, [taskId])
 
   return { progress, isPolling }
 }

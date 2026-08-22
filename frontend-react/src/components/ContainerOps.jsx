@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react'
-import { FileText, Terminal, RefreshCw } from 'lucide-react'
+import { FileText, Terminal as TerminalIcon, RefreshCw } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
+import { Terminal } from './Terminal.jsx'
 
 // 容器运维弹窗：日志查看 + 命令执行（一次性）
 export function ContainerOps({ container, onClose }) {
@@ -16,7 +17,7 @@ export function ContainerOps({ container, onClose }) {
         </div>
         <div className="flex gap-2 mb-3">
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')} icon={FileText} label="日志" />
-          <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={Terminal} label="命令" />
+          <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="控制台" />
         </div>
         {tab === 'logs' ? <LogsPanel id={container.id} /> : <ExecPanel id={container.id} />}
       </div>
@@ -73,39 +74,62 @@ function LogsPanel({ id }) {
   )
 }
 
-// 命令执行面板
+// 交互式控制台面板（Portainer 风格）：选 shell + 用户 -> 连接 -> xterm 终端
 function ExecPanel({ id }) {
-  const [cmd, setCmd] = useState('ls -al')
-  const [output, setOutput] = useState('')
-  const [running, setRunning] = useState(false)
+  const [shell, setShell] = useState('/bin/bash')
+  const [custom, setCustom] = useState(false)
+  const [customCmd, setCustomCmd] = useState('/bin/bash')
+  const [user, setUser] = useState('root')
+  const [connected, setConnected] = useState(false)
+  const [sessionKey, setSessionKey] = useState(0)
 
-  const run = async () => {
-    const parts = cmd.trim().split(/\s+/).filter(Boolean)
-    if (parts.length === 0) return
-    setRunning(true); setOutput('执行中...')
-    try {
-      const r = await containerAPI.execContainer(id, parts)
-      const d = r.data?.data
-      setOutput(`退出码: ${d?.exitCode}\n\n${d?.output || ''}`)
-    } catch (e) {
-      setOutput('执行失败：' + (e.message || '未知错误'))
-    } finally { setRunning(false) }
+  const effectiveCmd = custom ? customCmd : shell
+
+  const connect = () => {
+    setSessionKey((k) => k + 1)
+    setConnected(true)
   }
+  const disconnect = () => setConnected(false)
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex gap-2 mb-2">
-        <input value={cmd} onChange={(e) => setCmd(e.target.value)} className="input font-mono"
-          placeholder="如：ls -al  （参数以空格分隔，不支持管道）" />
-        <button onClick={run} disabled={running}
-          className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700 disabled:opacity-60">
-          执行
-        </button>
+      {/* 连接配置栏 */}
+      <div className="flex flex-wrap items-end gap-3 mb-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">命令</label>
+          {custom ? (
+            <input value={customCmd} onChange={(e) => setCustomCmd(e.target.value)}
+              className="input font-mono w-48" placeholder="自定义命令" />
+          ) : (
+            <select value={shell} onChange={(e) => setShell(e.target.value)} className="input w-48">
+              <option value="/bin/bash">/bin/bash</option>
+              <option value="/bin/sh">/bin/sh</option>
+              <option value="/bin/ash">/bin/ash</option>
+            </select>
+          )}
+        </div>
+        <label className="flex items-center gap-1 text-sm text-gray-600 dark:text-gray-300 pb-2">
+          <input type="checkbox" checked={custom} onChange={(e) => setCustom(e.target.checked)} />
+          自定义命令
+        </label>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">用户</label>
+          <input value={user} onChange={(e) => setUser(e.target.value)} className="input w-32" placeholder="root" />
+        </div>
+        {connected ? (
+          <button onClick={disconnect} className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700">断开</button>
+        ) : (
+          <button onClick={connect} className="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700">连接</button>
+        )}
       </div>
-      <pre className="flex-1 min-h-[280px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg whitespace-pre-wrap">
-        {output}
-      </pre>
-      <p className="text-xs text-gray-400 mt-1">提示：命令通过 Docker Exec API 执行，参数按空格拆分，不支持 shell 管道/重定向。</p>
+
+      {connected ? (
+        <Terminal key={sessionKey} containerId={id} cmd={effectiveCmd} user={user} />
+      ) : (
+        <div className="flex-1 min-h-[280px] flex items-center justify-center text-gray-400 text-sm bg-gray-900/50 rounded-lg">
+          选择 shell 与用户后点击「连接」进入交互式终端
+        </div>
+      )}
     </div>
   )
 }

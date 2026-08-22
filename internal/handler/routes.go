@@ -343,4 +343,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
 	)
+
+	// 阶段9：容器交互式终端（WebSocket）。
+	// 不走 WithJwt 中间件（浏览器 WebSocket 无法自定义 Authorization 头），
+	// 改由 handler 内校验 query 中的 token。
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/exec/ws",
+				Handler: ops.ExecWSHandler(serverCtx),
+			},
+		},
+		rest.WithPrefix("/api"),
+	)
 }

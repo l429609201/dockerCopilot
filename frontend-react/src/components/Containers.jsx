@@ -20,54 +20,8 @@ import { getImageLogo } from '../config/imageLogos.js'
 import icons8Img from '../assets/icons8.png'
 import { ContainerOps } from './ContainerOps.jsx'
 import { useFaviconMap } from '../hooks/useFavicon.js'
-
-// 格式化运行时间为中文
-function formatRunningTime(runningTime) {
-  if (!runningTime) return '未知'
-
-  // 如果已经是中文格式，直接返回
-  if (runningTime.includes('小时') || runningTime.includes('分钟') || runningTime.includes('秒')) {
-    return runningTime
-  }
-
-  // 尝试解析英文格式
-  // 支持格式: "2h 30m", "2 hours 30 minutes", "30m", "30 minutes", "1 day 2h 30m" 等
-  let hours = 0
-  let minutes = 0
-  let days = 0
-
-  // 提取天数
-  const dayMatch = runningTime.match(/(\d+)\s*(?:day|d)/)
-  if (dayMatch) {
-    days = parseInt(dayMatch[1])
-  }
-
-  // 提取小时
-  const hourMatch = runningTime.match(/(\d+)\s*(?:hour|h)/)
-  if (hourMatch) {
-    hours = parseInt(hourMatch[1])
-  }
-
-  // 提取分钟
-  const minMatch = runningTime.match(/(\d+)\s*(?:minute|min|m)/)
-  if (minMatch) {
-    minutes = parseInt(minMatch[1])
-  }
-
-  // 构建中文输出
-  let result = ''
-  if (days > 0) {
-    result += `${days}天 `
-  }
-  if (hours > 0) {
-    result += `${hours}小时 `
-  }
-  if (minutes > 0 || (days === 0 && hours === 0)) {
-    result += `${minutes}分钟`
-  }
-
-  return result.trim()
-}
+import { ContainerListRow } from './ContainerListRow.jsx'
+import { formatRunningTime } from '../utils/format.js'
 
 export function Containers() {
   const queryClient = useQueryClient()
@@ -511,6 +465,8 @@ export function Containers() {
         } else if (data.msg) {
           progressMsg = data.msg
         }
+        // 拉取层实时明细（后端 detailMsg，如"进度Downloading: 12MB/50MB"）
+        const detailMsg = data.data?.detailMsg || ''
 
         // 提取百分比
         if (data.data?.percentage !== undefined) {
@@ -574,6 +530,7 @@ export function Containers() {
             action: 'update',
             loading: true,
             progress: progressMsg,
+            detailMsg: detailMsg,
             percentage: percentage
           }
         }))
@@ -982,10 +939,9 @@ export function Containers() {
 
         {containers.length > 0 ? (
           <div className={cn(
-            "gap-4",
             viewMode === 'list'
-              ? "grid grid-cols-1"
-              : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+              ? "flex flex-col gap-2"
+              : "grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           )}>
             {containers
               .filter((container) => {
@@ -997,6 +953,23 @@ export function Containers() {
               })
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
+                // 列表模式：渲染横向一条的列表行
+                if (viewMode === 'list') {
+                  return (
+                    <ContainerListRow
+                      key={container.id}
+                      container={container}
+                      iconUrl={container.iconUrl || faviconMap[container.id] || getImageLogo(container.usingImage)}
+                      selected={isSelected}
+                      batchMode={isBatchMode}
+                      actionState={containerActions[container.id]}
+                      onOpen={(c) => setSelectedContainer(c)}
+                      onToggleSelect={toggleContainerSelection}
+                      onAction={handleContainerAction}
+                      onUpdate={handleUpdateContainer}
+                    />
+                  )
+                }
                 return (
                   <div key={container.id} className="group">
                     {/* 容器卡片 - 简化设计，点击调起详情 */}
@@ -1154,14 +1127,22 @@ export function Containers() {
                       {!isBatchMode && (
                         <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
-                            <div className="flex-1 flex items-center justify-center space-x-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap">
-                              <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
-                              <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
-                                {containerActions[container.id].action === 'start' && '启动中'}
-                                {containerActions[container.id].action === 'stop' && '停止中'}
-                                {containerActions[container.id].action === 'restart' && '重启中'}
-                                {containerActions[container.id].action === 'update' && `更新中${containerActions[container.id].percentage ? ` ${Math.round(containerActions[container.id].percentage)}%` : ''}`}
-                              </span>
+                            <div className="flex-1 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
+                              <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                                <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+                                <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
+                                  {containerActions[container.id].action === 'start' && '启动中'}
+                                  {containerActions[container.id].action === 'stop' && '停止中'}
+                                  {containerActions[container.id].action === 'restart' && '重启中'}
+                                  {containerActions[container.id].action === 'update' && `更新中${containerActions[container.id].percentage ? ` ${Math.round(containerActions[container.id].percentage)}%` : ''}`}
+                                </span>
+                              </div>
+                              {/* 实时拉取明细（后端 detailMsg，如下载层进度） */}
+                              {containerActions[container.id].detailMsg && (
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400 text-center truncate" title={containerActions[container.id].detailMsg}>
+                                  {containerActions[container.id].detailMsg}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <>
