@@ -118,6 +118,28 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 		return err
 	}
 
+	// 【增强】收集旧镜像信息（SHA256、大小）
+	oldImageInfo, _, err := serviceContext.DockerClient.ImageInspectWithRaw(context.Background(), inspectedContainer.Image)
+	if err != nil {
+		logx.Errorf("获取旧镜像信息失败: %v，继续更新流程", err)
+	} else {
+		// 提取 SHA256（去掉 sha256: 前缀）
+		oldDigest := strings.TrimPrefix(oldImageInfo.ID, "sha256:")
+		oldTaskProgress.OldImageDigest = oldDigest
+		oldTaskProgress.OldImageSize = oldImageInfo.Size
+		logx.Infof("旧镜像信息 - Digest: %s, Size: %d bytes", oldDigest, oldImageInfo.Size)
+	}
+
+	// 【增强】解析镜像名称和标签
+	imageNameParts := strings.Split(imageNameAndTag, ":")
+	if len(imageNameParts) == 2 {
+		oldTaskProgress.ImageName = imageNameParts[0]
+		oldTaskProgress.ImageTag = imageNameParts[1]
+	} else {
+		oldTaskProgress.ImageName = imageNameAndTag
+		oldTaskProgress.ImageTag = "latest"
+	}
+
 	// 准备新容器配置（使用新镜像）
 	inspectedContainer.Config.Hostname = ""
 	inspectedContainer.Config.Image = imageNameAndTag
@@ -191,6 +213,18 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	if err != nil {
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败", err)
 		return err
+	}
+
+	// 【增强】收集新镜像信息（SHA256、大小）
+	newImageInfo, _, err := serviceContext.DockerClient.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+	if err != nil {
+		logx.Errorf("获取新镜像信息失败: %v，但容器已成功启动", err)
+	} else {
+		// 提取 SHA256（去掉 sha256: 前缀）
+		newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
+		oldTaskProgress.NewImageDigest = newDigest
+		oldTaskProgress.NewImageSize = newImageInfo.Size
+		logx.Infof("新镜像信息 - Digest: %s, Size: %d bytes", newDigest, newImageInfo.Size)
 	}
 
 	oldTaskProgress.Message = "更新成功"

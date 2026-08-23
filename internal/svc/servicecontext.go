@@ -72,6 +72,13 @@ type TaskProgress struct {
 	Canceled   bool   `json:"canceled,omitempty"`   // 是否被取消
 	StartedAt  int64  `json:"startedAt,omitempty"`  // 开始时间(毫秒)
 	EndedAt    int64  `json:"endedAt,omitempty"`    // 结束时间(毫秒)
+	// 镜像详细信息（用于更新完成消息）
+	OldImageDigest string `json:"oldImageDigest,omitempty"` // 旧镜像 SHA256
+	NewImageDigest string `json:"newImageDigest,omitempty"` // 新镜像 SHA256
+	OldImageSize   int64  `json:"oldImageSize,omitempty"`   // 旧镜像大小（字节）
+	NewImageSize   int64  `json:"newImageSize,omitempty"`   // 新镜像大小（字节）
+	ImageName      string `json:"imageName,omitempty"`      // 镜像名称（不含tag）
+	ImageTag       string `json:"imageTag,omitempty"`       // 镜像标签
 }
 
 type ProgressStoreType map[string]TaskProgress

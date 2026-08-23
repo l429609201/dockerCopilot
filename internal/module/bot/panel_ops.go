@@ -236,7 +236,46 @@ func (b *Bot) watchUpdateProgress(chatID int64, messageID int64, taskID, name, i
 				} else if progress.Canceled {
 					text.WriteString("\n⚠️ <b>更新已取消</b>")
 				} else {
-					text.WriteString("\n✅ <b>更新完成</b>")
+					text.WriteString("\n✅ <b>更新完成</b>\n\n")
+
+					// 【增强】显示镜像详细信息
+					text.WriteString("<b>📦 镜像详情</b>\n")
+					if progress.ImageName != "" {
+						text.WriteString(fmt.Sprintf("名称：<code>%s</code>\n", escapeHTML(progress.ImageName)))
+					}
+					if progress.ImageTag != "" {
+						text.WriteString(fmt.Sprintf("标签：<code>%s</code>\n", escapeHTML(progress.ImageTag)))
+					}
+
+					// 显示旧镜像信息
+					if progress.OldImageDigest != "" {
+						text.WriteString(fmt.Sprintf("\n<b>📋 旧镜像</b>\n"))
+						text.WriteString(fmt.Sprintf("SHA256：<code>%s</code>\n", escapeHTML(shortenDigest(progress.OldImageDigest))))
+						if progress.OldImageSize > 0 {
+							text.WriteString(fmt.Sprintf("大小：%s\n", formatBytes(progress.OldImageSize)))
+						}
+					}
+
+					// 显示新镜像信息
+					if progress.NewImageDigest != "" {
+						text.WriteString(fmt.Sprintf("\n<b>🆕 新镜像</b>\n"))
+						text.WriteString(fmt.Sprintf("SHA256：<code>%s</code>\n", escapeHTML(shortenDigest(progress.NewImageDigest))))
+						if progress.NewImageSize > 0 {
+							text.WriteString(fmt.Sprintf("大小：%s\n", formatBytes(progress.NewImageSize)))
+						}
+
+						// 显示大小变化
+						if progress.OldImageSize > 0 && progress.NewImageSize > 0 {
+							sizeDiff := progress.NewImageSize - progress.OldImageSize
+							if sizeDiff > 0 {
+								text.WriteString(fmt.Sprintf("变化：<b>+%s</b> ⬆️\n", formatBytes(sizeDiff)))
+							} else if sizeDiff < 0 {
+								text.WriteString(fmt.Sprintf("变化：<b>-%s</b> ⬇️\n", formatBytes(-sizeDiff)))
+							} else {
+								text.WriteString("变化：<b>无变化</b>\n")
+							}
+						}
+					}
 				}
 
 				// 添加返回按钮
@@ -281,4 +320,26 @@ func (b *Bot) renderProgressBar(percentage int) string {
 
 	bar := strings.Repeat("█", filledBlocks) + strings.Repeat("░", emptyBlocks)
 	return fmt.Sprintf("[%s] %d%%", bar, percentage)
+}
+
+// shortenDigest 缩短 SHA256 摘要，只显示前 12 位，便于阅读
+func shortenDigest(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
+}
+
+// formatBytes 将字节数格式化为人类可读的大小（KB, MB, GB）
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical } from 'lucide-react'
+import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
 import { ContainerStats } from './ContainerStats.jsx'
@@ -8,7 +8,7 @@ import { ContainerStats } from './ContainerStats.jsx'
 // 所有交互通过 props 回调，保持与卡片视图一致的行为。
 export function ContainerListRow({
   container, iconUrl, selected, batchMode, actionState, stat,
-  onOpen, onToggleSelect, onAction, onUpdate, onOps, onFiles,
+  onOpen, onToggleSelect, onAction, onUpdate, onOps, onFiles, onEdit, onProcess,
 }) {
   const running = container.status === 'running'
   const loading = actionState?.loading
@@ -84,6 +84,8 @@ export function ContainerListRow({
                 <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="blue" />
                 <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="purple" />
                 {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="yellow" />}
+                {onEdit && <IconBtn onClick={() => onEdit({ ...container, ID: container.id })} icon={Edit3} title="编辑容器" color="orange" />}
+                {onProcess && <IconBtn onClick={() => onProcess({ ...container, ID: container.id })} icon={Activity} title="查看进程" color="green" />}
               </>
             )}
             {loading ? (

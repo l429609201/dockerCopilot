@@ -115,6 +115,29 @@ func (b *Bot) Notify(title string, text string) {
 	}
 }
 
+// NotifyUpdateWithKeyboard 推送带交互式键盘的更新通知（每个容器一行操作按钮）。
+// containers 为需要更新的容器列表，每个容器包含名称和镜像信息。
+func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
+	b.mu.Lock()
+	client := b.client
+	cfg := b.cfg
+	b.mu.Unlock()
+	if client == nil || !cfg.Enabled || !cfg.NotifyUpdate {
+		return
+	}
+
+	for _, chatID := range cfg.AllowedChatIDs {
+		b.sendUpdateNotificationToChat(chatID, containers)
+	}
+}
+
+// UpdateContainer 更新通知的容器信息结构。
+type UpdateContainer struct {
+	ID    string
+	Name  string
+	Image string
+}
+
 // Reload 根据最新配置重建 Bot：停止旧轮询，按需启动新轮询。
 func (b *Bot) Reload() {
 	cfg := b.svcCtx.AppConfig.Get().Telegram

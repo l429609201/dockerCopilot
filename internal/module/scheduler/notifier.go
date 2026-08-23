@@ -101,27 +101,35 @@ func (s *Scheduler) runUpdateCheck() {
 		if _, ok := muted[name]; ok {
 			continue // 已屏蔽
 		}
-		pending = append(pending, MyContainer{Name: name, Image: c.Image})
+		pending = append(pending, MyContainer{ID: c.ID, Name: name, Image: c.Image})
 	}
 
 	if len(pending) == 0 {
 		return
 	}
 
-	// 组织推送文案
-	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("检测到 %d 个容器有可用更新：\n\n", len(pending)))
-	for _, c := range pending {
-		msg.WriteString(fmt.Sprintf("🔺 %s\n   %s\n", c.Name, shortImage(c.Image)))
-	}
-	msg.WriteString("\n💡 可在面板或发送 /update_all 进行更新")
-	if s.notifier != nil {
-		s.notifier.Notify("🔔 容器更新提醒", msg.String())
+	// 调用 Bot 的交互式通知方法（如果 notifier 是 Bot 类型）
+	if botNotifier, ok := s.notifier.(interface {
+		NotifyUpdateWithKeyboard([]MyContainer)
+	}); ok {
+		botNotifier.NotifyUpdateWithKeyboard(pending)
+	} else {
+		// 回退到普通文本通知
+		var msg strings.Builder
+		msg.WriteString(fmt.Sprintf("检测到 %d 个容器有可用更新：\n\n", len(pending)))
+		for _, c := range pending {
+			msg.WriteString(fmt.Sprintf("🔺 %s\n   %s\n", c.Name, shortImage(c.Image)))
+		}
+		msg.WriteString("\n💡 可在面板或发送 /update_all 进行更新")
+		if s.notifier != nil {
+			s.notifier.Notify("🔔 容器更新提醒", msg.String())
+		}
 	}
 }
 
 // MyContainer 更新检测的轻量容器信息。
 type MyContainer struct {
+	ID    string
 	Name  string
 	Image string
 }

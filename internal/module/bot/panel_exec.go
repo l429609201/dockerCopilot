@@ -166,6 +166,14 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 
+	// 优化 ls 命令输出：自动添加 -C 参数实现多列显示（类似真实终端）
+	execCmd := cmd
+	trimmed := strings.TrimSpace(cmd)
+	if trimmed == "ls" || (strings.HasPrefix(trimmed, "ls ") && !strings.Contains(trimmed, " -")) {
+		// 仅对纯 ls 或 ls <路径>（无选项参数）添加 -C
+		execCmd = strings.Replace(cmd, "ls", "ls -C", 1)
+	}
+
 	// 哨兵：用于从输出末尾提取执行后的工作目录，避免与用户输出混淆
 	const marker = "__DC_PWD__:"
 	workDir := s.workDir
@@ -174,7 +182,7 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	}
 	// 组合脚本：cd 到当前目录 -> 执行用户命令 -> 无论成败都打印哨兵+pwd
 	script := fmt.Sprintf("cd %s 2>/dev/null; %s; __ec=$?; printf '\\n%s%%s\\n' \"$(pwd)\"; exit $__ec",
-		shellQuote(workDir), cmd, marker)
+		shellQuote(workDir), execCmd, marker)
 
 	res, err := b.ops.Exec(ctx, s.id, []string{"sh", "-c", script}, "", "", 30, 8000)
 	if err != nil {

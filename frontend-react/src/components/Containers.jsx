@@ -1002,6 +1002,8 @@ export function Containers() {
                       onUpdate={handleUpdateContainer}
                       onOps={(tab) => setOpsTarget({ container, tab })}
                       onFiles={() => setFileTarget(container)}
+                      onEdit={(c) => setEditTarget(c)}
+                      onProcess={(c) => setProcessTarget(c)}
                     />
                   )
                 }
@@ -1853,7 +1855,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 <>
                   <ActionBtn onClick={() => handleContainerAction('stop')} disabled={isActionProcessing || isUpdating}
                     loading={isActionProcessing && currentAction === 'stop'} icon={Square} label="停止" color="red" />
-                  <ActionBtn onClick={() => onEdit(currentContainer)} disabled={isActionProcessing || isUpdating}
+                  <ActionBtn onClick={() => onEdit({ ...currentContainer, ID: currentContainer.id })} disabled={isActionProcessing || isUpdating}
                     icon={Edit3} label="编辑" color="orange" />
                   <ActionBtn onClick={() => handleContainerAction('restart')} disabled={isActionProcessing || isUpdating}
                     loading={isActionProcessing && currentAction === 'restart'} icon={RotateCcw} label="重启" color="yellow" />
@@ -1871,7 +1873,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               {currentContainer.status === 'running' && (
                 <>
                   <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
-                  <ActionBtn onClick={() => onProcess(currentContainer)} icon={Activity} label="进程" color="emerald" />
+                  <ActionBtn onClick={() => onProcess({ ...currentContainer, ID: currentContainer.id })} icon={Activity} label="进程" color="emerald" />
                   <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
                   <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
                 </>
