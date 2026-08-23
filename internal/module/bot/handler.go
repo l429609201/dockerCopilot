@@ -630,7 +630,7 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 	}
 
 	// 触发后台更新检查
-	b.svcCtx.ImageUpdateData.CheckUpdate(images)
+	b.svcCtx.HubImageInfo.CheckUpdate(images)
 
 	// 等待检查完成（最多30秒）
 	time.Sleep(2 * time.Second) // 给予初始检查时间
@@ -655,9 +655,12 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 	if len(needUpdateList) > 0 {
 		text.WriteString("<b>需要更新的容器：</b>\n")
 		for i, c := range needUpdateList {
-			name := c.Name
+			name := ""
 			if len(c.Names) > 0 {
 				name = strings.TrimPrefix(c.Names[0], "/")
+			}
+			if name == "" {
+				name = c.ID[:12] // 使用短ID作为备选
 			}
 			text.WriteString(fmt.Sprintf("%d. <b>%s</b>\n   <code>%s</code>\n", i+1, escapeHTML(name), escapeHTML(shortImage(c.Image))))
 		}
@@ -696,9 +699,12 @@ func (b *Bot) updateAllContainers(chatID int64) {
 	var text strings.Builder
 	text.WriteString(fmt.Sprintf("<b>⚠ 批量更新确认</b>\n\n将更新以下 %d 个容器：\n\n", len(needUpdateList)))
 	for i, c := range needUpdateList {
-		name := c.Name
+		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		if name == "" {
+			name = c.ID[:12] // 使用短ID作为备选
 		}
 		text.WriteString(fmt.Sprintf("%d. <b>%s</b>\n   <code>%s</code>\n", i+1, escapeHTML(name), escapeHTML(shortImage(c.Image))))
 	}
@@ -743,9 +749,12 @@ func (b *Bot) executeBatchUpdate(chatID int64) {
 	successCount := 0
 	var failedList []string
 	for _, c := range needUpdateList {
-		name := c.Name
+		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		if name == "" {
+			name = c.ID[:12] // 使用短ID作为备选
 		}
 
 		taskID, err := b.ops.Update(c.ID, name, c.Image)
