@@ -40,6 +40,13 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 	startErr := l.svcCtx.TaskManager.TryStart(taskID, req.Id, svc.TaskTypeContainerUpdate, func(taskCtx context.Context) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
+		// 更新目标是本程序自身时，走辅助容器方案，避免"自己停自己"导致的半更新卡死。
+		if utiles.IsSelfContainer(l.svcCtx, req.Id) {
+			if e := utiles.SelfUpdate(ctxWithTimeout, l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID, ""); e != nil {
+				l.Errorf("Error in SelfUpdate: %v", e)
+			}
+			return
+		}
 		if e := utiles.UpdateContainerWithContext(ctxWithTimeout, l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID); e != nil {
 			l.Errorf("Error in UpdateContainer: %v", e)
 		}

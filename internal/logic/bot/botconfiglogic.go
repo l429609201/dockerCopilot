@@ -2,8 +2,11 @@ package bot
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/onlyLTY/dockerCopilot/internal/module/appconfig"
+	"github.com/onlyLTY/dockerCopilot/internal/module/telegram"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -62,4 +65,75 @@ func (l *BotConfigLogic) Save(req *types.TelegramConfigReq) (resp *types.Resp, e
 	resp.Msg = "success"
 	resp.Data = map[string]interface{}{}
 	return resp, nil
+}
+
+// Test 发送一条测试消息，验证 Token、代理和白名单 Chat ID 是否可用。
+// Token 为空时使用已保存的配置，便于用户在不重填 Token 的情况下测试连通性。
+func (l *BotConfigLogic) Test(req *types.TelegramConfigReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success", Data: map[string]interface{}{}}
+	cfg := l.svcCtx.AppConfig.Get().Telegram
+
+	// Token：请求传入优先，否则用已存明文
+	token := req.Token
+	if token == "" {
+		token = cfg.Token
+	}
+	if token == "" {
+		resp.Code = 400
+		resp.Msg = "未配置 Bot Token，无法测试"
+		return resp, nil
+	}
+
+	// 代理：请求传入优先，否则沿用已存配置
+	proxy := req.Proxy
+	if proxy == "" {
+		proxy = cfg.Proxy
+	}
+
+	// 白名单：请求传入优先，否则用已存配置
+	chatIDs := req.AllowedChatIDs
+	if len(chatIDs) == 0 {
+		chatIDs = cfg.AllowedChatIDs
+	}
+	if len(chatIDs) == 0 {
+		resp.Code = 400
+		resp.Msg = "未配置白名单 Chat ID，无法投递测试消息"
+		return resp, nil
+	}
+
+	client, e := telegram.NewClient(token, proxy)
+	if e != nil {
+		resp.Code = 500
+		resp.Msg = "创建 Telegram 客户端失败：" + e.Error()
+		return resp, nil
+	}
+
+	text := fmt.Sprintf("<b>dockerCopilot 测试消息</b>\n连接正常，时间：%s",
+		time.Now().Format("2006-01-02 15:04:05"))
+	var okCount int
+	var lastErr error
+	for _, chatID := range chatIDs {
+		if err := client.SendMessage(chatID, text, nil); err != nil {
+			lastErr = err
+			logx.Errorf("Telegram 测试消息发送失败 chat=%d: %v", chatID, err)
+			continue
+		}
+		okCount++
+	}
+
+	if okCount == 0 {
+		resp.Code = 500
+		resp.Msg = "测试消息发送失败：" + errText(lastErr)
+		return resp, nil
+	}
+	resp.Msg = fmt.Sprintf("测试消息已发送（成功 %d/%d 个会话）", okCount, len(chatIDs))
+	return resp, nil
+}
+
+// errText 安全地取错误文本。
+func errText(err error) string {
+	if err == nil {
+		return "未知错误"
+	}
+	return err.Error()
 }

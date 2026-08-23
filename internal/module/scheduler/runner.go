@@ -51,6 +51,16 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 	}
 
+	// 自动清理：把规则里已不存在于当前容器列表的容器名移除并持久化，
+	// 避免规则长期残留已删除的容器名。
+	existingNames := make(map[string]struct{}, len(containers))
+	for _, c := range containers {
+		if n := containerName(c); n != "" {
+			existingNames[n] = struct{}{}
+		}
+	}
+	rule.ContainerNames = pruneMissingContainers(svcCtx, rule, existingNames)
+
 	nameSet := make(map[string]struct{}, len(rule.ContainerNames))
 	for _, n := range rule.ContainerNames {
 		nameSet[n] = struct{}{}
@@ -100,6 +110,12 @@ func runOne(svcCtx *svc.ServiceContext, id, name, image string, delOld bool, reg
 	startErr := svcCtx.TaskManager.TryStart(taskID, id, svc.TaskTypeScheduledUpdate, func(taskCtx context.Context) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
+		// 定时更新命中本程序自身时，同样走辅助容器方案，避免自己停自己卡死。
+		if utiles.IsSelfContainer(svcCtx, id) {
+			e := utiles.SelfUpdate(ctxWithTimeout, svcCtx, id, name, image, delOld, taskID, registryAuth)
+			done <- e == nil
+			return
+		}
 		e := utiles.UpdateContainerWithAuth(ctxWithTimeout, svcCtx, id, name, image, delOld, taskID, registryAuth)
 		done <- e == nil
 	})
@@ -122,6 +138,35 @@ func recordResult(svcCtx *svc.ServiceContext, ruleID, result string) {
 		}
 		return nil
 	})
+}
+
+// pruneMissingContainers 过滤掉规则中已不存在的容器名，并在有变化时持久化。
+// 返回过滤后的容器名列表，供本次执行直接使用。
+func pruneMissingContainers(svcCtx *svc.ServiceContext, rule appconfig.ScheduledUpdateRule, existing map[string]struct{}) []string {
+	kept := make([]string, 0, len(rule.ContainerNames))
+	var removed []string
+	for _, n := range rule.ContainerNames {
+		if _, ok := existing[n]; ok {
+			kept = append(kept, n)
+		} else {
+			removed = append(removed, n)
+		}
+	}
+	if len(removed) == 0 {
+		return kept
+	}
+	logx.Infof("定时更新规则[%s]自动移除已不存在的容器: %s", rule.Name, strings.Join(removed, ", "))
+	// 持久化：把 kept 写回该规则的 ContainerNames
+	_ = svcCtx.AppConfig.Update(func(cfg *appconfig.AppConfig) error {
+		for i := range cfg.ScheduledUpdates {
+			if cfg.ScheduledUpdates[i].ID == rule.ID {
+				cfg.ScheduledUpdates[i].ContainerNames = kept
+				break
+			}
+		}
+		return nil
+	})
+	return kept
 }
 
 // containerName 提取容器主名称（去掉前导斜杠）。

@@ -40,3 +40,17 @@ func SaveConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		writeResp(w, r, resp, err)
 	}
 }
+
+// TestConfigHandler 发送测试消息，验证 Bot 连通性与白名单可达性。
+func TestConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.TelegramConfigReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := bot.NewBotConfigLogic(r.Context(), svcCtx)
+		resp, err := l.Test(&req)
+		writeResp(w, r, resp, err)
+	}
+}

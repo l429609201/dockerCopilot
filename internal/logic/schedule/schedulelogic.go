@@ -36,9 +36,9 @@ func (l *ScheduleLogic) List() (resp *types.Resp, err error) {
 // Save 新建或更新一条规则；ID 为空则新建。保存后触发调度重载。
 func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	if req.Name == "" || req.Cron == "" {
+	if req.Name == "" {
 		resp.Code = 400
-		resp.Msg = "名称和 cron 表达式不能为空"
+		resp.Msg = "规则名称不能为空"
 		resp.Data = map[string]interface{}{}
 		return resp, nil
 	}
@@ -133,6 +133,44 @@ func (l *ScheduleLogic) RunNow(req *types.ScheduledRuleIDReq) (resp *types.Resp,
 	}
 	resp.Code = 200
 	resp.Msg = "已触发执行"
+	resp.Data = map[string]interface{}{}
+	return resp, nil
+}
+
+// GetCron 返回全局定时更新 cron 表达式。
+func (l *ScheduleLogic) GetCron() (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+	cfg := l.svcCtx.AppConfig.Get()
+	cron := cfg.ScheduledUpdateCron
+	if cron == "" {
+		cron = "30 4 * * *"
+	}
+	resp.Data = map[string]string{"cron": cron}
+	return resp, nil
+}
+
+// SaveCron 更新全局定时更新 cron 表达式并触发调度重载。
+func (l *ScheduleLogic) SaveCron(req *types.CronConfigReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{}
+	if req.Cron == "" {
+		resp.Code = 400
+		resp.Msg = "cron 表达式不能为空"
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
+	updateErr := l.svcCtx.AppConfig.Update(func(cfg *appconfig.AppConfig) error {
+		cfg.ScheduledUpdateCron = req.Cron
+		return nil
+	})
+	if updateErr != nil {
+		resp.Code = 500
+		resp.Msg = "保存失败：" + updateErr.Error()
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
+	l.reloadScheduler()
+	resp.Code = 200
+	resp.Msg = "success"
 	resp.Data = map[string]interface{}{}
 	return resp, nil
 }

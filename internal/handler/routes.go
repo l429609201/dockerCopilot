@@ -190,6 +190,16 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: schedule.ListHandler(serverCtx),
 			},
 			{
+				Method:  http.MethodGet,
+				Path:    "/schedules/cron",
+				Handler: schedule.GetCronHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPut,
+				Path:    "/schedules/cron",
+				Handler: schedule.SaveCronHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodPost,
 				Path:    "/schedules",
 				Handler: schedule.SaveHandler(serverCtx),
@@ -277,6 +287,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodPost,
 				Path:    "/bot/telegram",
 				Handler: bot.SaveConfigHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/bot/telegram/test",
+				Handler: bot.TestConfigHandler(serverCtx),
 			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),

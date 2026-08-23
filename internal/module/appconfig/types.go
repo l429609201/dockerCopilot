@@ -7,6 +7,9 @@ type AppConfig struct {
 	Registries []RegistryCredential `json:"registries"`
 	// ScheduledUpdates 定时更新任务列表。
 	ScheduledUpdates []ScheduledUpdateRule `json:"scheduledUpdates"`
+	// ScheduledUpdateCron 全局定时更新 cron 表达式（五段式：分 时 日 月 周）。
+	// 所有启用的规则共用这一个时间，到点统一依次执行；各规则自身的 Cron 字段已废弃。
+	ScheduledUpdateCron string `json:"scheduledUpdateCron"`
 	// Telegram 机器人配置。
 	Telegram TelegramConfig `json:"telegram"`
 }
@@ -27,8 +30,8 @@ type ScheduledUpdateRule struct {
 	Name string `json:"name"` // 规则名称
 	// Enabled 是否启用。
 	Enabled bool `json:"enabled"`
-	// Cron 五段式 cron 表达式（分 时 日 月 周）。
-	Cron string `json:"cron"`
+	// Cron 已废弃：调度改为使用全局 AppConfig.ScheduledUpdateCron，此字段仅为向后兼容保留。
+	Cron string `json:"cron,omitempty"`
 	// ContainerNames 需要纳入本规则的容器名列表。
 	ContainerNames []string `json:"containerNames"`
 	// OnlyWhenUpdate 仅在检测到有新版本时才执行更新。
@@ -66,8 +69,9 @@ type TelegramConfig struct {
 // defaultConfig 返回带合理默认值的空配置。
 func defaultConfig() *AppConfig {
 	return &AppConfig{
-		Registries:       []RegistryCredential{},
-		ScheduledUpdates: []ScheduledUpdateRule{},
+		Registries:          []RegistryCredential{},
+		ScheduledUpdates:    []ScheduledUpdateRule{},
+		ScheduledUpdateCron: "30 4 * * *", // 默认每天 04:30
 		Telegram: TelegramConfig{
 			AllowedChatIDs:  []int64{},
 			PollIntervalSec: 3,

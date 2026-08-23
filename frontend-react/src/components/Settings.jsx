@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Save, Send } from 'lucide-react'
+import { Settings as SettingsIcon, Save, Send, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { botAPI } from '../api/client.js'
+import { RegistrySection } from './RegistrySection.jsx'
 
 // 设置页面：目前包含 Telegram Bot 配置（Token 脱敏，不回显明文）
 export function Settings() {
@@ -12,6 +13,8 @@ export function Settings() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testMsg, setTestMsg] = useState(null) // { ok: boolean, text: string }
 
   useEffect(() => {
     (async () => {
@@ -31,15 +34,37 @@ export function Settings() {
     })()
   }, [])
 
+  // 解析白名单文本为数字数组，供保存和测试复用
+  const parseChatIds = () =>
+    chatIdsText.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n))
+
   const save = async () => {
     setSaving(true); setMsg('')
-    const allowedChatIds = chatIdsText.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n))
     try {
-      await botAPI.saveConfig({ ...cfg, allowedChatIds })
+      await botAPI.saveConfig({ ...cfg, allowedChatIds: parseChatIds() })
       setMsg('已保存')
     } catch (e) {
       setMsg('保存失败：' + (e.message || '未知错误'))
     } finally { setSaving(false) }
+  }
+
+  // 发送测试消息：把当前表单值一并传给后端（Token 为空则后端用已存值）
+  const test = async () => {
+    setTesting(true); setTestMsg(null)
+    try {
+      const resp = await botAPI.testConfig({
+        ...cfg,
+        allowedChatIds: parseChatIds(),
+      })
+      const d = resp.data || {}
+      if (d.code === 200) {
+        setTestMsg({ ok: true, text: d.msg || '测试消息已发送' })
+      } else {
+        setTestMsg({ ok: false, text: d.msg || '测试失败' })
+      }
+    } catch (e) {
+      setTestMsg({ ok: false, text: '测试失败：' + (e.message || '未知错误') })
+    } finally { setTesting(false) }
   }
 
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }))
@@ -87,14 +112,38 @@ export function Settings() {
           推送更新/定时任务通知
         </label>
 
-        <div className="flex items-center gap-3 pt-2">
+        <div className="flex flex-wrap items-center gap-3 pt-2">
           <button onClick={save} disabled={saving}
             className="flex items-center gap-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60">
             <Save className="h-4 w-4" /> {saving ? '保存中...' : '保存'}
           </button>
+          {/* 测试连接：向白名单会话发送一条测试消息，验证 Token/代理/白名单是否可达 */}
+          <button onClick={test} disabled={testing}
+            className="flex items-center gap-1 px-4 py-2 border border-primary-600 text-primary-600 dark:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-60">
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {testing ? '发送中...' : '发送测试消息'}
+          </button>
           {msg && <span className="text-sm text-gray-500">{msg}</span>}
         </div>
+
+        {/* 测试结果反馈 */}
+        {testMsg && (
+          <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
+            testMsg.ok
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400'
+              : 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'}`}>
+            {testMsg.ok ? <CheckCircle className="h-4 w-4 flex-shrink-0" /> : <XCircle className="h-4 w-4 flex-shrink-0" />}
+            <span>{testMsg.text}</span>
+          </div>
+        )}
+
+        <p className="text-xs text-gray-400">
+          提示：测试会使用当前填写的 Token（留空则用已保存的）向白名单 Chat ID 发送一条消息。请先确保已填写白名单 Chat ID。
+        </p>
       </div>
+
+      {/* 仓库凭据卡片：从定时更新页迁移至此，供拉取私有镜像使用 */}
+      <RegistrySection />
     </div>
   )
 }

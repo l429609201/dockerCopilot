@@ -50,21 +50,28 @@ func (s *Scheduler) Reload() {
 	)))
 
 	cfg := s.svcCtx.AppConfig.Get()
-	for _, rule := range cfg.ScheduledUpdates {
-		if !rule.Enabled || rule.Cron == "" {
-			continue
-		}
-		r := rule // 捕获副本，避免闭包共享循环变量
-		_, err := c.AddFunc(r.Cron, func() {
+	globalCron := cfg.ScheduledUpdateCron
+	if globalCron == "" {
+		globalCron = "30 4 * * *" // 兜底默认每天 04:30
+	}
+
+	// 全局唯一定时器：到点统一遍历所有启用的规则依次执行，多规则共用同一时间。
+	_, err := c.AddFunc(globalCron, func() {
+		latest := s.svcCtx.AppConfig.Get()
+		for _, rule := range latest.ScheduledUpdates {
+			if !rule.Enabled {
+				continue
+			}
+			r := rule // 捕获副本，避免闭包共享循环变量
 			RunRule(s.svcCtx, s.notifier, r)
-		})
-		if err != nil {
-			logx.Errorf("定时更新规则[%s] cron 表达式无效(%s): %v", r.Name, r.Cron, err)
 		}
+	})
+	if err != nil {
+		logx.Errorf("全局定时更新 cron 表达式无效(%s): %v", globalCron, err)
 	}
 	c.Start()
 	s.cron = c
-	logx.Infof("定时更新调度已重载，规则数：%d", len(cfg.ScheduledUpdates))
+	logx.Infof("定时更新调度已重载，全局cron：%s，规则数：%d", globalCron, len(cfg.ScheduledUpdates))
 }
 
 // RunNow 立即异步执行一条规则（用于手动触发）。

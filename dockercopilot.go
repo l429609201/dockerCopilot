@@ -45,6 +45,13 @@ func main() {
 	}
 	logx.SetLevel(logx.InfoLevel)
 
+	// 自更新辅助容器模式：以新镜像被拉起后，只负责接管主容器的"停旧→建新→启动→删旧"，
+	// 完成后进程退出（容器 AutoRemove）。不加载业务配置、不启动 HTTP 服务。
+	if utiles.IsHelperMode() {
+		utiles.RunHelper()
+		return
+	}
+
 	flag.Parse()
 	var c config.Config
 	err := conf.Load(*configFile, &c, conf.UseEnv())

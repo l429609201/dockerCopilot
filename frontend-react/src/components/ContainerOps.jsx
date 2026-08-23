@@ -1,25 +1,40 @@
 import React, { useState, useCallback } from 'react'
-import { FileText, Terminal as TerminalIcon, RefreshCw } from 'lucide-react'
+import { FileText, Terminal as TerminalIcon, RefreshCw, Maximize2, Minimize2, X } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 import { Terminal } from './Terminal.jsx'
+import { cn } from '../utils/cn.js'
 
-// 容器运维弹窗：日志查看 + 命令执行（一次性）
+// 容器运维弹窗：日志查看 + 命令执行（一次性）。支持最大化/全屏。
 export function ContainerOps({ container, onClose }) {
   const [tab, setTab] = useState('logs')
+  const [fullscreen, setFullscreen] = useState(false)
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col p-5">
+    <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
+      fullscreen ? 'p-0' : 'p-4')}>
+      <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
+        fullscreen
+          ? 'w-screen h-screen max-w-none max-h-none rounded-none p-4'
+          : 'w-full max-w-3xl max-h-[90vh] rounded-xl p-5')}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">
             运维 · {container.name}
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              {fullscreen ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
+            </button>
+            <button onClick={onClose} title="关闭"
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
         <div className="flex gap-2 mb-3">
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')} icon={FileText} label="日志" />
           <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="控制台" />
         </div>
-        {tab === 'logs' ? <LogsPanel id={container.id} /> : <ExecPanel id={container.id} />}
+        {tab === 'logs' ? <LogsPanel id={container.id} /> : <ExecPanel id={container.id} fullscreen={fullscreen} />}
       </div>
     </div>
   )
@@ -75,7 +90,7 @@ function LogsPanel({ id }) {
 }
 
 // 交互式控制台面板（Portainer 风格）：选 shell + 用户 -> 连接 -> xterm 终端
-function ExecPanel({ id }) {
+function ExecPanel({ id, fullscreen }) {
   const [shell, setShell] = useState('/bin/bash')
   const [custom, setCustom] = useState(false)
   const [customCmd, setCustomCmd] = useState('/bin/bash')
@@ -124,7 +139,7 @@ function ExecPanel({ id }) {
       </div>
 
       {connected ? (
-        <Terminal key={sessionKey} containerId={id} cmd={effectiveCmd} user={user} />
+        <Terminal key={sessionKey} containerId={id} cmd={effectiveCmd} user={user} fullscreen={fullscreen} />
       ) : (
         <div className="flex-1 min-h-[280px] flex items-center justify-center text-gray-400 text-sm bg-gray-900/50 rounded-lg">
           选择 shell 与用户后点击「连接」进入交互式终端

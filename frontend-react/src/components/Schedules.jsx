@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Clock, Plus, Trash2, Play } from 'lucide-react'
 import { scheduleAPI, registryAPI } from '../api/client.js'
 import { RuleEditor } from './RuleEditor.jsx'
-import { RegistrySection } from './RegistrySection.jsx'
+import { CronSetting } from './CronSetting.jsx'
 
 // 定时更新与 Registry 凭据管理页面
 export function Schedules() {
@@ -11,14 +11,16 @@ export function Schedules() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(null) // 正在编辑的规则
+  const [cron, setCron] = useState('') // 全局定时 cron
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [r1, r2] = await Promise.all([scheduleAPI.list(), registryAPI.list()])
+      const [r1, r2, r3] = await Promise.all([scheduleAPI.list(), registryAPI.list(), scheduleAPI.getCron()])
       setRules(r1.data?.data || [])
       setRegistries(r2.data?.data || [])
+      setCron(r3.data?.data?.cron || '30 4 * * *')
     } catch (e) {
       setError('加载失败：' + (e.message || '未知错误'))
     } finally {
@@ -29,7 +31,7 @@ export function Schedules() {
   useEffect(() => { load() }, [load])
 
   const emptyRule = () => ({
-    id: '', name: '', enabled: true, cron: '30 4 * * *',
+    id: '', name: '', enabled: true,
     containerNames: [], onlyWhenUpdate: true, skipInvalidTag: true,
     registryId: '', keepOldContainer: false,
     notifyOnStart: false, notifyOnDone: true, notifyOnError: true,
@@ -69,6 +71,9 @@ export function Schedules() {
       {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
       {loading && <div className="text-gray-500 text-sm">加载中...</div>}
 
+      {/* 全局定时设置：所有规则共用同一执行时间 */}
+      <CronSetting cron={cron} onSaved={setCron} />
+
       <div className="grid gap-3">
         {rules.map((r) => (
           <div key={r.id} className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 flex items-center justify-between">
@@ -79,7 +84,7 @@ export function Schedules() {
                   {r.enabled ? '已启用' : '已禁用'}
                 </span>
               </div>
-              <div className="text-xs text-gray-500 mt-1">cron: {r.cron} · 容器 {r.containerNames?.length || 0} 个</div>
+              <div className="text-xs text-gray-500 mt-1">容器 {r.containerNames?.length || 0} 个 · 使用全局定时时间</div>
               {r.lastResult && <div className="text-xs text-gray-400 mt-0.5">上次：{r.lastResult}</div>}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -91,8 +96,6 @@ export function Schedules() {
         ))}
         {!loading && rules.length === 0 && <div className="text-gray-400 text-sm">暂无定时规则</div>}
       </div>
-
-      <RegistrySection registries={registries} onChanged={load} />
 
       {editing && (
         <RuleEditor rule={editing} registries={registries}

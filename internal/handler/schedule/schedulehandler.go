@@ -60,6 +60,29 @@ func RunNowHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// GetCronHandler 返回全局定时更新 cron 表达式。
+func GetCronHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := schedule.NewScheduleLogic(r.Context(), svcCtx)
+		resp, err := l.GetCron()
+		writeResp(w, r, resp, err)
+	}
+}
+
+// SaveCronHandler 更新全局定时更新 cron 表达式。
+func SaveCronHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.CronConfigReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := schedule.NewScheduleLogic(r.Context(), svcCtx)
+		resp, err := l.SaveCron(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
 // writeResp 统一响应写出：业务错误按 resp.Code 返回，否则 200。
 func writeResp(w http.ResponseWriter, r *http.Request, resp *types.Resp, err error) {
 	if err != nil {

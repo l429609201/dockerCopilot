@@ -171,6 +171,9 @@ export const scheduleAPI = {
   save: (rule) => apiClient.post('/api/schedules', rule),
   remove: (id) => apiClient.delete(`/api/schedules/${id}`),
   runNow: (id) => apiClient.post(`/api/schedules/${id}/run`),
+  // 全局定时更新 cron：所有规则共用同一时间
+  getCron: () => apiClient.get('/api/schedules/cron'),
+  saveCron: (cron) => apiClient.put('/api/schedules/cron', { cron }),
 }
 
 // 阶段2：Registry 凭据API（密码脱敏返回）
@@ -184,6 +187,8 @@ export const registryAPI = {
 export const botAPI = {
   getConfig: () => apiClient.get('/api/bot/telegram'),
   saveConfig: (cfg) => apiClient.post('/api/bot/telegram', cfg),
+  // 发送测试消息：验证 Token/代理/白名单是否可达
+  testConfig: (cfg) => apiClient.post('/api/bot/telegram/test', cfg),
 }
 
 // 阶段3：Compose 项目管理API

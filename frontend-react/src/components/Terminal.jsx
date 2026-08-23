@@ -3,11 +3,14 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
+import { cn } from '../utils/cn.js'
+
 // 交互式终端：用 xterm.js + WebSocket 连接容器 exec，实现类似 Portainer 的控制台。
-export function Terminal({ containerId, cmd, user }) {
+export function Terminal({ containerId, cmd, user, fullscreen = false }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const wsRef = useRef(null)
+  const fitRef = useRef(null) // 暴露 fit 方法给全屏切换时调用
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -52,24 +55,45 @@ export function Terminal({ containerId, cmd, user }) {
       if (ws.readyState === WebSocket.OPEN) ws.send(data)
     })
 
-    // 尺寸调整 -> 发送 resize 控制消息
+    // 尺寸调整 -> 重新 fit 并发送 resize 控制消息
     function sendResize() {
-      fit.fit()
+      try { fit.fit() } catch { /* 容器未就绪时忽略 */ }
       const { cols, rows } = term
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols, rows }))
       }
     }
+    fitRef.current = sendResize
     const onResize = () => sendResize()
     window.addEventListener('resize', onResize)
 
+    // 监听容器自身尺寸变化（如弹窗全屏切换），比只听 window 更准确
+    const ro = new ResizeObserver(() => sendResize())
+    ro.observe(containerRef.current)
+
     return () => {
       window.removeEventListener('resize', onResize)
+      ro.disconnect()
+      fitRef.current = null
       dataDisp.dispose()
       try { ws.close() } catch { /* ignore */ }
       term.dispose()
     }
   }, [containerId, cmd, user])
 
-  return <div ref={containerRef} className="w-full h-[400px] bg-[#1e1e1e] rounded-lg overflow-hidden" />
+  // 全屏状态切换后，等布局稳定再 fit 一次，确保终端填满新区域
+  useEffect(() => {
+    const t = setTimeout(() => fitRef.current?.(), 60)
+    return () => clearTimeout(t)
+  }, [fullscreen])
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        'w-full bg-[#1e1e1e] rounded-lg overflow-hidden',
+        fullscreen ? 'flex-1 min-h-0' : 'h-[400px]',
+      )}
+    />
+  )
 }
