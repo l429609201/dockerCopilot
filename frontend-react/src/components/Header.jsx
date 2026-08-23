@@ -244,49 +244,58 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
 
             {/* 操作按钮 */}
             <div className={cn(
-              "flex items-center gap-2 mb-4",
-              isCollapsed ? "flex-col" : "justify-between"
+              "mb-4",
+              isCollapsed ? "flex flex-col items-center gap-2" : "flex flex-col gap-2"
             )}>
-              <ThemeToggle collapsed={isCollapsed} />
+              {/* 第一行：主题切换（展开态独占一行居中，避免与收起/退出挤在一行换行） */}
+              <div className={cn(isCollapsed ? "" : "flex justify-center")}>
+                <ThemeToggle collapsed={isCollapsed} />
+              </div>
 
-              {/* 收起/展开按钮 - 仅桌面模式显示 */}
-              {windowWidth >= 768 && (
+              {/* 第二行：收起/展开 + 退出，各占一半 */}
+              <div className={cn(
+                "flex items-center gap-2",
+                isCollapsed ? "flex-col w-full" : "w-full"
+              )}>
+                {/* 收起/展开按钮 - 仅桌面模式显示 */}
+                {windowWidth >= 768 && (
+                  <button
+                    onClick={handleToggleCollapse}
+                    className={cn(
+                      "flex items-center justify-center gap-1.5 transition-all duration-200 group active:scale-95 whitespace-nowrap",
+                      isCollapsed
+                        ? "p-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg w-full"
+                        : "px-3 py-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-1"
+                    )}
+                    title={isCollapsed ? "展开菜单" : "收起菜单"}
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <>
+                        <ChevronLeft className="h-4 w-4 flex-shrink-0" />
+                        <span className="text-xs sm:text-sm font-medium">收起</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
                 <button
-                  onClick={handleToggleCollapse}
+                  onClick={onLogout}
                   className={cn(
-                    "flex items-center justify-center gap-2 transition-all duration-200 group active:scale-95",
+                    "flex items-center justify-center gap-1.5 transition-all duration-200 group active:scale-95 whitespace-nowrap",
                     isCollapsed
-                      ? "p-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg w-full"
-                      : "px-3 py-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                      ? "p-2.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg w-full"
+                      : "px-3 py-2.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg flex-1"
                   )}
-                  title={isCollapsed ? "展开菜单" : "收起菜单"}
+                  title={isCollapsed ? "退出登录" : ""}
                 >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-4 w-4 flex-shrink-0" />
-                  ) : (
-                    <>
-                      <ChevronLeft className="h-4 w-4 flex-shrink-0" />
-                      <span className="text-xs sm:text-sm font-medium">收起</span>
-                    </>
+                  <LogOut className="h-4 w-4 flex-shrink-0 group-hover:rotate-12 transition-transform duration-300" />
+                  {!isCollapsed && (
+                    <span className="text-xs sm:text-sm font-medium">退出</span>
                   )}
                 </button>
-              )}
-
-              <button
-                onClick={onLogout}
-                className={cn(
-                  "flex items-center justify-center gap-2 transition-all duration-200 group active:scale-95",
-                  isCollapsed
-                    ? "p-2.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg w-full"
-                    : "px-3 py-2.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg flex-1"
-                )}
-                title={isCollapsed ? "退出登录" : ""}
-              >
-                <LogOut className="h-4 w-4 flex-shrink-0 group-hover:rotate-12 transition-transform duration-300" />
-                {!isCollapsed && (
-                  <span className="text-xs sm:text-sm font-medium">退出</span>
-                )}
-              </button>
+              </div>
             </div>
 
             {/* 版本信息部分 */}

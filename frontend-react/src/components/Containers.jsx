@@ -619,7 +619,7 @@ export function Containers() {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+      <div className="w-full px-4 sm:px-6 py-4">
         <div className="animate-pulse space-y-4">
           {[1, 2, 3].map(i => (
             <div key={i} className="card p-6">
@@ -638,7 +638,7 @@ export function Containers() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div className="w-full px-4 sm:px-6 py-4">
       <style>{`
         @keyframes shimmer {
           0% { background-position: -200% 0; }

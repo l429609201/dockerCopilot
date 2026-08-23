@@ -100,7 +100,7 @@ export function Icons() {
   const categories = ['all', 'custom', 'builtin']
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
       {/* 页面头部 */}
       <div className="px-4 sm:px-6 py-4">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">图标库</h2>

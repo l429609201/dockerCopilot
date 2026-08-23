@@ -23,11 +23,14 @@ export function TaskPanel() {
 
   return (
     <>
-      {/* 右下角常驻悬浮球 */}
+      {/* 右下角常驻悬浮球
+          移动端(<md)底部有胶囊导航栏(约88px)，故抬高到导航栏上方(bottom-24=96px)避免遮挡"设置"按钮；
+          桌面端(md+)无底部导航，恢复 bottom-5。 */}
       <button
         onClick={() => setOpen(true)}
         className={cn(
-          'fixed bottom-5 right-5 z-40 h-14 w-14 rounded-full text-white shadow-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95',
+          'fixed right-5 z-40 h-14 w-14 rounded-full text-white shadow-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95',
+          'bottom-24 md:bottom-5',
           'bg-gradient-to-br from-primary-500 to-primary-700',
           open && 'opacity-0 pointer-events-none'
         )}

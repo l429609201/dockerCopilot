@@ -70,7 +70,7 @@ export function Settings() {
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }))
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* 页面头部 */}
       <div className="px-2 sm:px-6 py-4">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">

@@ -47,7 +47,7 @@ export function Compose() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="w-full space-y-6">
       {/* 页面头部 */}
       <div className="px-2 sm:px-6 py-4">
         <div className="flex items-center justify-between">

@@ -4,7 +4,7 @@ import logoImg from '../assets/DockerCopilot-logo.png'
 
 export function About() {
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full">
 
       <div className="px-2 sm:px-6 py-4 pt-4 sm:pt-4 space-y-6">
         {/* 项目展示卡片 */}
