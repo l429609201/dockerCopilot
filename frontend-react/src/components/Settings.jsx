@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Settings as SettingsIcon, Save, Send, CheckCircle, XCircle, Loader2, Eye, EyeOff } from 'lucide-react'
 import { botAPI } from '../api/client.js'
 import { RegistrySection } from './RegistrySection.jsx'
+import { ImageUpdateCheckCard } from './ImageUpdateCheckCard.jsx'
 
 // 解码后端用登录令牌 XOR 混淆后的 Base64 明文 Token。
 // key 为当前登录 JWT 令牌字符串（与后端混淆时所用密钥一致），失败时返回空串。
@@ -25,6 +26,7 @@ export function Settings() {
   const [cfg, setCfg] = useState({
     enabled: false, token: '', allowedChatIds: [], proxy: '',
     pollIntervalSec: 3, notifyUpdate: true, updateCheckIntervalMinutes: 30,
+    mutedContainers: [],
   })
   const [chatIdsText, setChatIdsText] = useState('')
   const [loading, setLoading] = useState(false)
@@ -48,6 +50,7 @@ export function Settings() {
           allowedChatIds: d.allowedChatIds || [], proxy: d.proxy || '',
           pollIntervalSec: d.pollIntervalSec || 3, notifyUpdate: !!d.notifyUpdate,
           updateCheckIntervalMinutes: d.updateCheckIntervalMinutes || 30,
+          mutedContainers: d.mutedContainers || [],
         })
         setChatIdsText((d.allowedChatIds || []).join(', '))
       } catch (e) {
@@ -60,10 +63,17 @@ export function Settings() {
   const parseChatIds = () =>
     chatIdsText.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => !isNaN(n))
 
+  // 统一保存：始终提交完整配置，避免 Telegram 卡片与《镜像更新检查》卡片
+  // 各自保存时互相覆盖对方字段（后端 Save 接收的是整份 TelegramConfig）。
+  // overrides 用于卡片保存前合并该卡片的最新本地值。
+  const saveAll = async (overrides = {}) => {
+    await botAPI.saveConfig({ ...cfg, ...overrides, allowedChatIds: parseChatIds() })
+  }
+
   const save = async () => {
     setSaving(true); setMsg('')
     try {
-      await botAPI.saveConfig({ ...cfg, allowedChatIds: parseChatIds() })
+      await saveAll()
       setMsg('已保存')
     } catch (e) {
       setMsg('保存失败：' + (e.message || '未知错误'))
@@ -149,11 +159,6 @@ export function Settings() {
             <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">轮询间隔(秒)</label>
             <input type="number" value={cfg.pollIntervalSec} onChange={(e) => set('pollIntervalSec', Number(e.target.value))} className="input" />
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">更新检测周期(分钟)</label>
-            <input type="number" value={cfg.updateCheckIntervalMinutes} onChange={(e) => set('updateCheckIntervalMinutes', Number(e.target.value))} className="input" placeholder="30" />
-            <p className="text-xs text-gray-500 mt-1">内置更新检测推送周期，留空或0使用默认30分钟</p>
-          </div>
         </div>
 
         <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -190,6 +195,15 @@ export function Settings() {
           提示：测试会使用当前填写的 Token（留空则用已保存的）向白名单 Chat ID 发送一条消息。请先确保已填写白名单 Chat ID。
         </p>
       </div>
+
+      {/* 镜像更新检查卡片：更新检查周期 + 屏蔽黑名单，独立保存（内部提交完整配置避免互相覆盖） */}
+      <ImageUpdateCheckCard
+        intervalMinutes={cfg.updateCheckIntervalMinutes}
+        mutedContainers={cfg.mutedContainers}
+        onChangeInterval={(v) => set('updateCheckIntervalMinutes', v)}
+        onChangeMuted={(list) => set('mutedContainers', list)}
+        onSave={saveAll}
+      />
 
       {/* 仓库凭据卡片：从定时更新页迁移至此，供拉取私有镜像使用 */}
       <RegistrySection />

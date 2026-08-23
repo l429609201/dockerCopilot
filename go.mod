@@ -15,6 +15,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/zeromicro/go-zero v1.8.2
 	github.com/zeromicro/x v0.0.0-20240408115609-8224c482b07e
+	golang.org/x/net v0.39.0
 	sigs.k8s.io/yaml v1.3.0
 )
 
@@ -68,7 +69,6 @@ require (
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/mod v0.17.0 // indirect
-	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect

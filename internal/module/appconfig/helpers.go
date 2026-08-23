@@ -79,6 +79,11 @@ func (s *Store) MaskedTelegram() map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t := s.cfg.Telegram
+	// mutedContainers 可能为 nil，回显时统一成空数组，避免前端拿到 null
+	muted := t.MutedContainers
+	if muted == nil {
+		muted = []string{}
+	}
 	return map[string]interface{}{
 		"enabled":         t.Enabled,
 		"token":           maskSecret(t.Token),
@@ -86,5 +91,8 @@ func (s *Store) MaskedTelegram() map[string]interface{} {
 		"proxy":           t.Proxy,
 		"pollIntervalSec": t.PollIntervalSec,
 		"notifyUpdate":    t.NotifyUpdate,
+		// 补充回显：更新检测周期(分钟) 与 屏蔽黑名单，供前端《镜像更新检查》卡片回填
+		"updateCheckIntervalMinutes": t.UpdateCheckIntervalMinutes,
+		"mutedContainers":            muted,
 	}
 }

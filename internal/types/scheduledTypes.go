@@ -53,7 +53,8 @@ type TelegramConfigReq struct {
 	Token           string  `json:"token,optional"`
 	AllowedChatIDs  []int64 `json:"allowedChatIds,optional"`
 	Proxy           string  `json:"proxy,optional"`
-	PollIntervalSec            int  `json:"pollIntervalSec,optional"`
-	NotifyUpdate               bool `json:"notifyUpdate,optional"`
-	UpdateCheckIntervalMinutes int  `json:"updateCheckIntervalMinutes,optional"` // 内置更新检测周期(分钟)，<=0 用默认 30
+	PollIntervalSec            int      `json:"pollIntervalSec,optional"`
+	NotifyUpdate               bool     `json:"notifyUpdate,optional"`
+	UpdateCheckIntervalMinutes int      `json:"updateCheckIntervalMinutes,optional"` // 内置更新检测周期(分钟)，<=0 用默认 30
+	MutedContainers            []string `json:"mutedContainers,optional"`            // 更新检查屏蔽黑名单，命中的容器不推送"有更新"通知
 }

@@ -69,6 +69,8 @@ func (l *BotConfigLogic) Save(req *types.TelegramConfigReq) (resp *types.Resp, e
 		}
 		// UpdateCheckIntervalMinutes：更新检测周期(分钟)，<=0 时 notifier 会用默认 30
 		cfg.Telegram.UpdateCheckIntervalMinutes = req.UpdateCheckIntervalMinutes
+		// MutedContainers：更新检查屏蔽黑名单，命中的容器不推送"有更新"通知
+		cfg.Telegram.MutedContainers = req.MutedContainers
 		// Token 为空表示不修改，避免脱敏回显后被清空
 		if req.Token != "" {
 			cfg.Telegram.Token = req.Token

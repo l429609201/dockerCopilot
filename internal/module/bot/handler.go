@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/module/compose"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	MyType "github.com/l429609201/dockerCopilot/internal/types"
@@ -1290,7 +1291,7 @@ func (b *Bot) replyBackupCenter(chatID int64, messageID int64) {
 // replyDockerInstance Docker 实例信息：显示当前 Docker 守护进程的详细信息。
 func (b *Bot) replyDockerInstance(chatID int64, messageID int64) {
 	// 获取 Docker 信息
-	info, err := b.svcCtx.DockerCli.Info(context.Background())
+	info, err := b.svcCtx.DockerClient.Info(context.Background())
 	if err != nil {
 		text := "❌ 获取 Docker 实例信息失败：" + err.Error()
 		if messageID > 0 {
@@ -1807,12 +1808,12 @@ func (b *Bot) executePruneImages(chatID int64, mode string) {
 }
 
 // sendUpdateNotificationToChat 向指定会话发送带交互式键盘的更新通知（支持分页）。
-func (b *Bot) sendUpdateNotificationToChat(chatID int64, containers []bot.UpdateContainer) {
+func (b *Bot) sendUpdateNotificationToChat(chatID int64, containers []UpdateContainer) {
 	b.sendUpdateNotificationToChatWithPage(chatID, containers, 0, 0)
 }
 
 // sendUpdateNotificationToChatWithPage 向指定会话发送带分页的更新通知。
-func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []bot.UpdateContainer, page int, messageID int64) {
+func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []UpdateContainer, page int, messageID int64) {
 	if len(containers) == 0 {
 		return
 	}
@@ -1965,7 +1966,7 @@ func (b *Bot) executeMuteAll(chatID int64, messageID int64) {
 	var mutedList []string
 	cfg := b.svcCtx.AppConfig.Get()
 	mutedSet := make(map[string]struct{})
-	for _, m := range cfg.Telegram.MuteList {
+	for _, m := range cfg.Telegram.MutedContainers {
 		mutedSet[m] = struct{}{}
 	}
 
@@ -1989,13 +1990,15 @@ func (b *Bot) executeMuteAll(chatID int64, messageID int64) {
 		return
 	}
 
-	// 更新配置
+	// 更新配置：合并所有屏蔽项后经 AppConfig.Update 事务持久化
 	newMuteList := make([]string, 0, len(mutedSet))
 	for name := range mutedSet {
 		newMuteList = append(newMuteList, name)
 	}
-	cfg.Telegram.MuteList = newMuteList
-	if err := b.svcCtx.AppConfig.Save(cfg); err != nil {
+	if err := b.svcCtx.AppConfig.Update(func(c *appconfig.AppConfig) error {
+		c.Telegram.MutedContainers = newMuteList
+		return nil
+	}); err != nil {
 		b.reply(chatID, "❌ 保存配置失败："+err.Error())
 		return
 	}
@@ -2006,10 +2009,12 @@ func (b *Bot) executeMuteAll(chatID int64, messageID int64) {
 // replyUpdateInterval 显示调整检查间隔的选项。
 func (b *Bot) replyUpdateInterval(chatID int64, messageID int64) {
 	cfg := b.svcCtx.AppConfig.Get()
-	currentInterval := cfg.Telegram.CheckInterval
-	if currentInterval == "" {
-		currentInterval = "24h"
+	// 配置以分钟存储(UpdateCheckIntervalMinutes)，展示时换算为小时时长字符串
+	minutes := cfg.Telegram.UpdateCheckIntervalMinutes
+	if minutes <= 0 {
+		minutes = 24 * 60
 	}
+	currentInterval := (time.Duration(minutes) * time.Minute).String()
 
 	var text strings.Builder
 	text.WriteString("<b>⚙️ 调整更新检查间隔</b>\n\n")
@@ -2040,9 +2045,13 @@ func (b *Bot) setUpdateInterval(chatID int64, interval string, messageID int64) 
 		return
 	}
 
-	cfg := b.svcCtx.AppConfig.Get()
-	cfg.Telegram.CheckInterval = interval
-	if err := b.svcCtx.AppConfig.Save(cfg); err != nil {
+	// 将时长字符串(如 24h)换算为分钟后持久化到 UpdateCheckIntervalMinutes
+	dur, _ := time.ParseDuration(interval)
+	minutes := int(dur.Minutes())
+	if err := b.svcCtx.AppConfig.Update(func(c *appconfig.AppConfig) error {
+		c.Telegram.UpdateCheckIntervalMinutes = minutes
+		return nil
+	}); err != nil {
 		text := "❌ 保存配置失败：" + err.Error()
 		if messageID > 0 {
 			b.editMessage(chatID, messageID, text)
@@ -2073,11 +2082,11 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 	// 筛选有更新的容器
 	cfg := b.svcCtx.AppConfig.Get()
 	mutedSet := make(map[string]struct{})
-	for _, m := range cfg.Telegram.MuteList {
+	for _, m := range cfg.Telegram.MutedContainers {
 		mutedSet[m] = struct{}{}
 	}
 
-	var updateContainers []bot.UpdateContainer
+	var updateContainers []UpdateContainer
 	for _, c := range containers {
 		if !c.Update {
 			continue
@@ -2093,7 +2102,7 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 		if _, muted := mutedSet[name]; muted {
 			continue
 		}
-		updateContainers = append(updateContainers, bot.UpdateContainer{
+		updateContainers = append(updateContainers, UpdateContainer{
 			ID:    c.ID,
 			Name:  name,
 			Image: c.Image,

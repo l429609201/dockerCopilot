@@ -12,6 +12,9 @@ type AppConfig struct {
 	Registries []RegistryCredential `json:"registries"`
 	// ScheduledUpdates 定时更新任务列表。
 	ScheduledUpdates []ScheduledUpdateRule `json:"scheduledUpdates"`
+	// ScheduledUpdateCron 全局定时更新的 cron 表达式（供 schedule 模块 GetCron/SaveCron 读写）。
+	// 为空时由业务侧回退默认值（如 "30 4 * * *"）。
+	ScheduledUpdateCron string `json:"scheduledUpdateCron,omitempty"`
 	// Telegram 机器人配置。
 	Telegram TelegramConfig `json:"telegram"`
 	// Compose 项目管理配置（前端可配置，优先级高于静态 yaml）。
