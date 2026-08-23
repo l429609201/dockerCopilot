@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	dockerMsgType "github.com/docker/docker/pkg/jsonmessage"
+
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -102,14 +103,14 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 		return SelfUpdate(serviceContext, id, name, imageNameAndTag, taskID, delOldContainer)
 	}
 
-	// 【改进流程】先创建+启动新容器，成功后再停止删除旧容器
-	// 优点：旧容器保持运行，失败时可回滚；零停机时间更短
+	// 【Misaka 方式】先停止删除旧容器，再用原名创建新容器
+	// 优点：无需重命名，避免重命名失败；逻辑更简单
 	oldTaskProgress.Percentage = 30
 	oldTaskProgress.Message = "正在获取容器配置"
 	oldTaskProgress.DetailMsg = "正在获取容器配置"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
-	// 获取旧容器配置（此时旧容器还在运行）
+	// 获取旧容器配置
 	inspectedContainer, err := serviceContext.DockerClient.ContainerInspect(context.Background(), id)
 	if err != nil {
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "获取容器信息失败", err)
@@ -127,40 +128,9 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 		EndpointsConfig: inspectedContainer.NetworkSettings.Networks,
 	}
 
-	// 生成新容器临时名称（带时间戳）
-	currentDate := time.Now().Format("2006-01-02-15-04-05")
-	tempContainerName := name + "-" + currentDate
-
 	oldTaskProgress.Percentage = 40
-	oldTaskProgress.Message = "正在创建新容器"
-	oldTaskProgress.DetailMsg = fmt.Sprintf("使用临时名称: %s", tempContainerName)
-	serviceContext.UpdateProgress(taskID, oldTaskProgress)
-
-	// 创建新容器（临时名称，避免与旧容器冲突）
-	newContainerResp, err := serviceContext.DockerClient.ContainerCreate(context.Background(), config, hostConfig, networkingConfig, nil, tempContainerName)
-	if err != nil {
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败", err)
-		return err
-	}
-	newContainerID := newContainerResp.ID
-
-	oldTaskProgress.Percentage = 50
-	oldTaskProgress.Message = "正在启动新容器"
-	oldTaskProgress.DetailMsg = "正在启动新容器"
-	serviceContext.UpdateProgress(taskID, oldTaskProgress)
-
-	// 启动新容器
-	err = serviceContext.DockerClient.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
-	if err != nil {
-		// 新容器启动失败，清理新容器，旧容器保持运行
-		_ = serviceContext.DockerClient.ContainerRemove(context.Background(), newContainerID, container.RemoveOptions{Force: true})
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败（旧容器保持运行）", err)
-		return err
-	}
-
-	oldTaskProgress.Percentage = 70
-	oldTaskProgress.Message = "新容器启动成功，正在停止旧容器"
-	oldTaskProgress.DetailMsg = "新容器启动成功，正在停止旧容器"
+	oldTaskProgress.Message = "正在停止旧容器"
+	oldTaskProgress.DetailMsg = "正在停止旧容器"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 从停止旧容器开始进入关键区：此后不再响应取消/超时
@@ -170,39 +140,61 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	}
 	err = serviceContext.DockerClient.ContainerStop(context.Background(), id, stopOptions)
 	if err != nil {
-		// 停止旧容器失败，但新容器已启动，记录警告但继续
-		logx.Warnf("停止旧容器失败，但新容器已启动: %v", err)
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "停止旧容器失败", err)
+		return err
 	}
 
-	oldTaskProgress.Percentage = 80
+	oldTaskProgress.Percentage = 50
 	oldTaskProgress.Message = "正在删除旧容器"
-	oldTaskProgress.DetailMsg = "正在删除旧容器"
+	oldTaskProgress.DetailMsg = "正在删除旧容器（释放容器名）"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
-	// 删除旧容器（如果配置要求保留，则跳过删除，只重命名）
+	// 删除旧容器（释放容器名，如果配置要求保留则重命名）
 	if delOldContainer {
 		err = serviceContext.DockerClient.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
 		if err != nil {
-			logx.Warnf("删除旧容器失败: %v", err)
+			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "删除旧容器失败", err)
+			return err
 		}
+	} else {
+		// 保留旧容器：重命名为带时间戳的备份名
+		currentDate := time.Now().Format("2006-01-02-15-04-05")
+		backupName := name + "-" + currentDate
+		err = serviceContext.DockerClient.ContainerRename(context.Background(), id, backupName)
+		if err != nil {
+			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "重命名旧容器失败", err)
+			return err
+		}
+		logx.Infof("旧容器已重命名为: %s", backupName)
 	}
 
-	oldTaskProgress.Percentage = 90
-	oldTaskProgress.Message = "正在重命名新容器为原名"
-	oldTaskProgress.DetailMsg = fmt.Sprintf("重命名 %s -> %s", tempContainerName, name)
+	oldTaskProgress.Percentage = 70
+	oldTaskProgress.Message = "正在创建新容器"
+	oldTaskProgress.DetailMsg = fmt.Sprintf("使用原名: %s", name)
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
-	// 重命名新容器为原名
-	err = serviceContext.DockerClient.ContainerRename(context.Background(), newContainerID, name)
+	// 用原名创建新容器（旧容器已删除或重命名，名称可用）
+	newContainerResp, err := serviceContext.DockerClient.ContainerCreate(context.Background(), config, hostConfig, networkingConfig, nil, name)
 	if err != nil {
-		// 重命名失败不是致命错误，新容器已在运行
-		logx.Warnf("重命名新容器失败（新容器仍以临时名称运行）: %v", err)
-		oldTaskProgress.Message = "更新完成（新容器使用临时名称）"
-		oldTaskProgress.DetailMsg = fmt.Sprintf("警告：重命名失败，容器名为 %s", tempContainerName)
-	} else {
-		oldTaskProgress.Message = "更新成功"
-		oldTaskProgress.DetailMsg = "更新成功"
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败", err)
+		return err
 	}
+	newContainerID := newContainerResp.ID
+
+	oldTaskProgress.Percentage = 90
+	oldTaskProgress.Message = "正在启动新容器"
+	oldTaskProgress.DetailMsg = "正在启动新容器"
+	serviceContext.UpdateProgress(taskID, oldTaskProgress)
+
+	// 启动新容器
+	err = serviceContext.DockerClient.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
+	if err != nil {
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败", err)
+		return err
+	}
+
+	oldTaskProgress.Message = "更新成功"
+	oldTaskProgress.DetailMsg = "更新成功"
 	oldTaskProgress.Percentage = 100
 	oldTaskProgress.IsDone = true
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)

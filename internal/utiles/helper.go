@@ -49,8 +49,13 @@ func RunHelper() {
 	os.Exit(0)
 }
 
-// doHelperUpdate 执行实际的停旧→建新→启动→删旧流程。
+// doHelperUpdate 执行实际的停旧→删旧→建新→启动流程（Misaka 方式）。
+// 优点：先删除释放名称，再用原名创建，无需重命名，避免重命名失败。
 func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetName, newImage string, delOld bool) error {
+	// 生成固定的时间戳，用于备份名和回滚
+	timestamp := time.Now().Format("20060102-150405")
+	backupName := targetName + "-old-" + timestamp
+
 	// 先 inspect 拿到旧容器完整配置（要在停止/删除前取，配置不受停止影响）
 	inspected, err := cli.ContainerInspect(ctx, targetID)
 	if err != nil {
@@ -64,14 +69,22 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 		return fmt.Errorf("停止主容器失败: %w", err)
 	}
 
-	// 重命名旧容器，腾出原名给新容器
-	backupName := targetName + "-old-" + time.Now().Format("20060102-150405")
-	logx.Infof("[helper] 重命名旧容器为 %s", backupName)
-	if err := cli.ContainerRename(ctx, targetID, backupName); err != nil {
-		return fmt.Errorf("重命名旧容器失败: %w", err)
+	// 【Misaka 方式】删除或备份旧容器，释放名称
+	if delOld {
+		// 直接删除旧容器
+		logx.Info("[helper] 正在删除旧容器（释放容器名）")
+		if err := cli.ContainerRemove(ctx, targetID, container.RemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("删除旧容器失败: %w", err)
+		}
+	} else {
+		// 重命名为备份，保留旧容器
+		logx.Infof("[helper] 重命名旧容器为 %s（保留备份）", backupName)
+		if err := cli.ContainerRename(ctx, targetID, backupName); err != nil {
+			return fmt.Errorf("重命名旧容器失败: %w", err)
+		}
 	}
 
-	// 用原配置 + 新镜像创建新容器
+	// 用原配置 + 新镜像 + 原名创建新容器（无需重命名！）
 	cfg := inspected.Config
 	cfg.Hostname = "" // 清空，由 Docker 按新容器ID重新生成
 	cfg.Image = newImage
@@ -79,13 +92,16 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 	netCfg := &network.NetworkingConfig{
 		EndpointsConfig: inspected.NetworkSettings.Networks,
 	}
-	logx.Info("[helper] 正在用新镜像创建新容器")
+	logx.Infof("[helper] 正在用新镜像创建新容器（使用原名: %s）", targetName)
 	created, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, targetName)
 	if err != nil {
-		// 创建失败：尝试把旧容器改回原名并重启，尽量回滚
+		// 创建失败：尝试恢复旧容器
 		logx.Errorf("[helper] 创建新容器失败，尝试回滚: %v", err)
-		_ = cli.ContainerRename(ctx, targetID, targetName)
-		_ = cli.ContainerStart(ctx, targetID, container.StartOptions{})
+		if !delOld {
+			// 如果旧容器还在（被重命名为备份），尝试改回原名并重启
+			_ = cli.ContainerRename(ctx, backupName, targetName)
+			_ = cli.ContainerStart(ctx, targetID, container.StartOptions{})
+		}
 		return fmt.Errorf("创建新容器失败: %w", err)
 	}
 
@@ -94,18 +110,14 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 	if err := cli.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		logx.Errorf("[helper] 启动新容器失败，尝试回滚: %v", err)
 		_ = cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
-		_ = cli.ContainerRename(ctx, targetID, targetName)
-		_ = cli.ContainerStart(ctx, targetID, container.StartOptions{})
+		if !delOld {
+			// 如果旧容器还在（被重命名为备份），尝试改回原名并重启
+			_ = cli.ContainerRename(ctx, backupName, targetName)
+			_ = cli.ContainerStart(ctx, targetID, container.StartOptions{})
+		}
 		return fmt.Errorf("启动新容器失败: %w", err)
 	}
 
-	// 可选删除旧容器
-	if delOld {
-		logx.Info("[helper] 删除旧容器")
-		if err := cli.ContainerRemove(ctx, targetID, container.RemoveOptions{Force: true}); err != nil {
-			// 删除失败不算致命：新容器已起来
-			logx.Errorf("[helper] 删除旧容器失败（不影响更新结果）: %v", err)
-		}
-	}
+	logx.Infof("[helper] ✅ DC 自我更新成功！新容器 %s 已启动", targetName)
 	return nil
 }

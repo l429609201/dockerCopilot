@@ -1140,13 +1140,23 @@ export function Containers() {
                             </div>
                           </div>
 
-                          {/* 统一高度的信息行 - 显示运行时间或状态 */}
+                          {/* 统一高度的信息行 - 显示运行时间或更新进度 */}
                           <div className="h-5 mt-1">
-                            {containerActions[container.id]?.loading && containerActions[container.id]?.progress ? (
-                              <p className="text-xs text-blue-600 dark:text-blue-400 truncate flex items-center gap-1">
-                                <RefreshCw className="h-3 w-3 animate-spin flex-shrink-0" />
-                                <span>{containerActions[container.id].progress}</span>
-                              </p>
+                            {containerActions[container.id]?.loading && containerActions[container.id]?.percentage !== undefined ? (
+                              <div className="space-y-1">
+                                {/* 简洁进度条 - 只显示百分比和进度条 */}
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 rounded-full"
+                                      style={{ width: `${containerActions[container.id].percentage}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-medium text-blue-600 dark:text-blue-400 min-w-[3ch] text-right">
+                                    {containerActions[container.id].percentage}%
+                                  </span>
+                                </div>
+                              </div>
                             ) : container.status === 'running' ? (
                               <div className="text-xs text-gray-500 dark:text-gray-400">
                                 运行: {formatRunningTime(container.runningTime)}
