@@ -82,3 +82,26 @@ func ActionHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		writeResp(w, r, resp, err)
 	}
 }
+
+// GetConfigHandler 返回当前生效的 Compose 扫描配置（供前端配置卡片回显）。
+func GetConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.GetConfig()
+		writeResp(w, r, resp, err)
+	}
+}
+
+// SaveConfigHandler 保存 Compose 扫描配置到持久化存储。
+func SaveConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeConfigReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.SaveConfig(&req)
+		writeResp(w, r, resp, err)
+	}
+}

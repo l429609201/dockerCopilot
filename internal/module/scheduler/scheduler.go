@@ -40,7 +40,7 @@ func (s *Scheduler) Start() {
 }
 
 // Reload 根据最新配置重建所有 cron 任务。
-// 每次配置增删改后调用，做到"配置即真相"。
+// 每个启用的规则使用自己的 cron 表达式独立调度。
 func (s *Scheduler) Reload() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,28 +53,44 @@ func (s *Scheduler) Reload() {
 	)))
 
 	cfg := s.svcCtx.AppConfig.Get()
-	globalCron := cfg.ScheduledUpdateCron
-	if globalCron == "" {
-		globalCron = "30 4 * * *" // 兜底默认每天 04:30
+	addedCount := 0
+
+	for _, rule := range cfg.ScheduledUpdates {
+		if !rule.Enabled {
+			continue
+		}
+		if rule.Cron == "" {
+			logx.Infof("定时任务 [%s] 已跳过：未配置 cron 表达式", rule.Name)
+			continue
+		}
+
+		// 解析简化配置或标准 cron 表达式
+		cronExpr := appconfig.ParseCronExpression(rule.Cron)
+		if cronExpr == "" {
+			logx.Errorf("定时任务 [%s] 已跳过：cron 表达式无效 (%s)", rule.Name, rule.Cron)
+			continue
+		}
+
+		// 闭包捕获当前规则（避免循环变量问题）
+		r := rule
+		_, err := c.AddFunc(cronExpr, func() {
+			RunRule(s.svcCtx, s.notifier, r)
+		})
+		if err != nil {
+			logx.Errorf("定时任务 [%s] 注册失败: %v (cron=%s)", rule.Name, err, cronExpr)
+			continue
+		}
+		addedCount++
+		logx.Infof("定时任务 [%s] 已注册: %s (原配置: %s)", rule.Name, cronExpr, rule.Cron)
 	}
 
-	// 全局唯一定时器：到点统一遍历所有启用的规则依次执行，多规则共用同一时间。
-	_, err := c.AddFunc(globalCron, func() {
-		latest := s.svcCtx.AppConfig.Get()
-		for _, rule := range latest.ScheduledUpdates {
-			if !rule.Enabled {
-				continue
-			}
-			r := rule // 捕获副本，避免闭包共享循环变量
-			RunRule(s.svcCtx, s.notifier, r)
-		}
-	})
-	if err != nil {
-		logx.Errorf("全局定时更新 cron 表达式无效(%s): %v", globalCron, err)
-	}
 	c.Start()
 	s.cron = c
-	logx.Infof("定时更新调度已重载，全局cron：%s，规则数：%d", globalCron, len(cfg.ScheduledUpdates))
+	if addedCount > 0 {
+		logx.Infof("定时任务调度器已启动，成功注册 %d 个任务", addedCount)
+	} else {
+		logx.Info("定时任务调度器：无有效任务")
+	}
 }
 
 // RunNow 立即异步执行一条规则（用于手动触发）。

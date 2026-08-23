@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
 import { ComposeEditor } from './ComposeEditor.jsx'
+import { ComposeConfigCard } from './ComposeConfigCard.jsx'
 
 // Compose 项目管理页面
 export function Compose() {
@@ -61,9 +62,12 @@ export function Compose() {
       </div>
 
       {/* 内容区域 */}
-      <div className="px-2 sm:px-6">
-        {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm mb-4">{error}</div>}
-        {loading && <div className="text-gray-500 text-sm mb-4">加载中...</div>}
+      <div className="px-2 sm:px-6 space-y-4">
+        {/* 扫描配置卡片：保存后自动刷新项目列表 */}
+        <ComposeConfigCard onSaved={load} />
+
+        {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+        {loading && <div className="text-gray-500 text-sm">加载中...</div>}
 
         <div className="grid gap-3">
         {projects.map((p) => (
@@ -88,7 +92,7 @@ export function Compose() {
           </div>
         ))}
         {!loading && projects.length === 0 && (
-          <div className="text-gray-400 text-sm">未发现 Compose 项目。请确认已挂载目录并配置 Compose.ScanPaths。</div>
+          <div className="text-gray-400 text-sm">未发现 Compose 项目。请在上方「Compose 扫描配置」中填写已挂载进容器的项目目录并保存。</div>
         )}
       </div>
       </div>

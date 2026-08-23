@@ -243,6 +243,9 @@ export const composeAPI = {
   validate: (content) => apiClient.post('/api/compose/validate', { content }),
   action: (id, action, confirmWarnings = false) =>
     apiClient.post(`/api/compose/projects/${id}/action`, { action, confirmWarnings }),
+  // 读取/保存 Compose 扫描配置（扫描目录、深度等）
+  getConfig: () => apiClient.get('/api/compose/config'),
+  saveConfig: (cfg) => apiClient.put('/api/compose/config', cfg),
 }
 
 // 阶段8：favicon 抓取API（按容器暴露端口解析站点图标）

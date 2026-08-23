@@ -34,7 +34,7 @@ func (l *ComposeLogic) Action(req *types.ComposeActionReq) (resp *types.Resp, er
 	composeFile := projects[0].ComposeFile
 
 	// up 操作前做风险检查：读取主文件校验，存在高风险且未确认且未全局允许时拦截
-	if req.Action == "up" && !l.svcCtx.Config.Compose.AllowHighRisk && !req.ConfirmWarnings {
+	if req.Action == "up" && !l.allowHighRisk() && !req.ConfirmWarnings {
 		filePath, _ := composeMod.SafeResolveFile(resolvedDir, composeFile)
 		if content, readErr := os.ReadFile(filePath); readErr == nil {
 			vr := composeMod.Validate(content)
@@ -49,7 +49,7 @@ func (l *ComposeLogic) Action(req *types.ComposeActionReq) (resp *types.Resp, er
 
 	taskID := uuid.New().String()
 	action := req.Action
-	timeoutSec := l.svcCtx.Config.Compose.CommandTimeoutSec
+	timeoutSec := l.commandTimeoutSec()
 	projectName := projects[0].Name
 	// 以项目ID作为资源键，避免同一项目并发部署
 	startErr := l.svcCtx.TaskManager.TryStart(taskID, "compose:"+req.ID, svc.TaskTypeComposeAction, func(taskCtx context.Context) {

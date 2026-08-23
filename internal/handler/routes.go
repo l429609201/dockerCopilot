@@ -263,6 +263,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: compose.ListHandler(serverCtx),
 			},
 			{
+				// 读取 Compose 扫描配置（供前端配置卡片回显）
+				Method:  http.MethodGet,
+				Path:    "/compose/config",
+				Handler: compose.GetConfigHandler(serverCtx),
+			},
+			{
+				// 保存 Compose 扫描配置（写入持久化存储，即时生效）
+				Method:  http.MethodPut,
+				Path:    "/compose/config",
+				Handler: compose.SaveConfigHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodPost,
 				Path:    "/compose/validate",
 				Handler: compose.ValidateHandler(serverCtx),

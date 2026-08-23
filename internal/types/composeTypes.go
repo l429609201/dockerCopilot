@@ -32,3 +32,13 @@ type ComposeActionReq struct {
 type ComposeIDReq struct {
 	ID string `path:"id"`
 }
+
+// ComposeConfigReq 保存 Compose 扫描配置（前端提交，写入持久化 AppConfig）。
+// 所有字段可选：ScanPaths 为项目扫描根目录列表；其余为扫描/执行参数。
+type ComposeConfigReq struct {
+	ScanPaths         []string `json:"scanPaths,optional"`
+	MaxDepth          int      `json:"maxDepth,optional"`
+	MaxFileSize       int64    `json:"maxFileSize,optional"`
+	CommandTimeoutSec int      `json:"commandTimeoutSec,optional"`
+	AllowHighRisk     bool     `json:"allowHighRisk,optional"`
+}

@@ -1,5 +1,10 @@
 package appconfig
 
+import (
+	"fmt"
+	"strings"
+)
+
 // AppConfig 是持久化到 /data/config/config.json 的全局配置。
 // 集中管理定时更新、Registry 凭据和机器人配置，供调度器、拉取登录和 Bot 复用。
 type AppConfig struct {
@@ -7,11 +12,28 @@ type AppConfig struct {
 	Registries []RegistryCredential `json:"registries"`
 	// ScheduledUpdates 定时更新任务列表。
 	ScheduledUpdates []ScheduledUpdateRule `json:"scheduledUpdates"`
-	// ScheduledUpdateCron 全局定时更新 cron 表达式（五段式：分 时 日 月 周）。
-	// 所有启用的规则共用这一个时间，到点统一依次执行；各规则自身的 Cron 字段已废弃。
-	ScheduledUpdateCron string `json:"scheduledUpdateCron"`
 	// Telegram 机器人配置。
 	Telegram TelegramConfig `json:"telegram"`
+	// Compose 项目管理配置（前端可配置，优先级高于静态 yaml）。
+	Compose ComposeConfig `json:"compose"`
+}
+
+// ComposeConfig 是 Compose 项目管理的动态配置（持久化到 config.json，前端可编辑）。
+// 为空的字段在读取时会回退到静态 yaml 配置，保证向后兼容。
+type ComposeConfig struct {
+	// ScanPaths Compose 项目扫描根目录列表；空表示未在前端配置（回退静态 yaml）。
+	ScanPaths []string `json:"scanPaths,omitempty"`
+	// MaxDepth 扫描时的最大目录深度，0 表示回退静态 yaml。
+	MaxDepth int `json:"maxDepth,omitempty"`
+	// MaxFileSize 单个 Compose 文件最大字节数，0 表示回退静态 yaml。
+	MaxFileSize int64 `json:"maxFileSize,omitempty"`
+	// CommandTimeoutSec docker compose 命令执行超时(秒)，0 表示回退静态 yaml。
+	CommandTimeoutSec int `json:"commandTimeoutSec,omitempty"`
+	// AllowHighRisk 是否允许部署包含高风险配置(privileged 等)的项目。
+	AllowHighRisk bool `json:"allowHighRisk,omitempty"`
+	// Configured 标记用户是否已在前端保存过 Compose 配置。
+	// 用于区分"未配置(回退yaml)"与"已配置但清空了某些字段"。
+	Configured bool `json:"composeConfigured,omitempty"`
 }
 
 // RegistryCredential 单个 Registry 的登录凭据。
@@ -46,8 +68,15 @@ type ScheduledUpdateRule struct {
 	Type string `json:"type,omitempty"`
 	// Enabled 是否启用。
 	Enabled bool `json:"enabled"`
-	// Cron 已废弃：调度改为使用全局 AppConfig.ScheduledUpdateCron，此字段仅为向后兼容保留。
-	Cron string `json:"cron,omitempty"`
+	// Cron 该任务的定时表达式（五段式：分 时 日 月 周），支持：
+	// 1. 标准 cron 表达式：如 "30 4 * * *"（每天 04:30）
+	// 2. 简化配置（自动转换为 cron）：
+	//    - "daily:HH:MM" → 每天指定时间，如 "daily:04:30"
+	//    - "weekly:N:HH:MM" → 每周指定星期的时间，如 "weekly:1:10:00"（周一10点）
+	//    - "hourly:MM" → 每小时指定分钟，如 "hourly:30"（每小时30分）
+	//    - "interval:Xh" → 每X小时，如 "interval:6h"（每6小时）
+	// 为空或无效时该规则不会被调度。
+	Cron string `json:"cron"`
 	// PruneMode 镜像清理范围（仅 prune 类型使用）：dangling(无tag) / unused(未使用)。
 	PruneMode string `json:"pruneMode,omitempty"`
 	// ContainerNames 需要纳入本规则的容器名列表。
@@ -94,12 +123,69 @@ type TelegramConfig struct {
 // defaultConfig 返回带合理默认值的空配置。
 func defaultConfig() *AppConfig {
 	return &AppConfig{
-		Registries:          []RegistryCredential{},
-		ScheduledUpdates:    []ScheduledUpdateRule{},
-		ScheduledUpdateCron: "30 4 * * *", // 默认每天 04:30
+		Registries:       []RegistryCredential{},
+		ScheduledUpdates: []ScheduledUpdateRule{},
 		Telegram: TelegramConfig{
 			AllowedChatIDs:  []int64{},
 			PollIntervalSec: 3,
 		},
 	}
+}
+
+// ParseCronExpression 将简化配置或标准 cron 表达式转换为标准五段式 cron。
+// 支持的简化格式：
+//   - "daily:HH:MM" → "MM HH * * *"（每天指定时间）
+//   - "weekly:N:HH:MM" → "MM HH * * N"（每周N，0=周日，1=周一...）
+//   - "hourly:MM" → "MM * * * *"（每小时指定分钟）
+//   - "interval:Xh" → "@every Xh"（robfig/cron 特殊语法）
+//   - 标准 cron → 直接返回
+// 返回空字符串表示无效配置。
+func ParseCronExpression(input string) string {
+	if input == "" {
+		return ""
+	}
+
+	// 已经是标准 cron 表达式（至少包含空格）
+	if strings.Contains(input, " ") || strings.HasPrefix(input, "@") {
+		return input
+	}
+
+	parts := strings.Split(input, ":")
+	if len(parts) < 2 {
+		return input // 无法识别，直接返回原值
+	}
+
+	prefix := parts[0]
+	switch prefix {
+	case "daily":
+		// daily:HH:MM → MM HH * * *
+		if len(parts) == 3 {
+			hh := parts[1]
+			mm := parts[2]
+			return fmt.Sprintf("%s %s * * *", mm, hh)
+		}
+	case "weekly":
+		// weekly:N:HH:MM → MM HH * * N
+		if len(parts) == 4 {
+			weekday := parts[1]
+			hh := parts[2]
+			mm := parts[3]
+			return fmt.Sprintf("%s %s * * %s", mm, hh, weekday)
+		}
+	case "hourly":
+		// hourly:MM → MM * * * *
+		if len(parts) == 2 {
+			mm := parts[1]
+			return fmt.Sprintf("%s * * * *", mm)
+		}
+	case "interval":
+		// interval:Xh → @every Xh
+		if len(parts) == 2 {
+			duration := parts[1]
+			return fmt.Sprintf("@every %s", duration)
+		}
+	}
+
+	// 无法识别的格式，返回原值
+	return input
 }
