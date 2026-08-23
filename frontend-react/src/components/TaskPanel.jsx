@@ -5,21 +5,15 @@ import { progressAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 
 // 任务中心：右下角常驻悬浮球，点开从右侧滑出全高抽屉（MoviePilot 智能助手样式）。
-// 展示所有后台任务（更新/恢复/镜像/Compose/定时更新/清理），有新任务时自动弹开。
+// 展示所有后台任务（更新/恢复/镜像/Compose/定时更新/清理）。
+// 修改：有新任务时不自动弹开，只显示红色角标提示。
 export function TaskPanel() {
   const { tasks, removeTask } = useTasks()
   const [open, setOpen] = useState(false)
-  const prevRunningRef = useRef(0)
 
   const running = tasks.filter(t => !t.isDone)
   const done = tasks.filter(t => t.isDone)
   const runningCount = running.length
-
-  // 有新任务开始运行时自动弹开抽屉（0 -> >0 跳变）
-  if (runningCount > prevRunningRef.current && !open) {
-    setOpen(true)
-  }
-  prevRunningRef.current = runningCount
 
   // 取消运行中任务：调用后端 cancel，SSE 会自动刷新状态
   const handleCancel = async (id) => {
@@ -47,14 +41,7 @@ export function TaskPanel() {
         )}
       </button>
 
-      {/* 遮罩：移除背景模糊效果 */}
-      <div
-        onClick={() => setOpen(false)}
-        className={cn('fixed inset-0 z-40 bg-black/30 transition-opacity',
-          open ? 'opacity-100' : 'opacity-0 pointer-events-none')}
-      />
-
-      {/* 右侧全高抽屉 */}
+      {/* 右侧全高抽屉（移除灰色遮罩） */}
       <aside
         className={cn(
           'fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-2xl flex flex-col transition-transform duration-300 ease-out',

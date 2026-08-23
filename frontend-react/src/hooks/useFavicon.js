@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { faviconAPI } from '../api/client.js'
+import { faviconAPI, imageAPI } from '../api/client.js'
 
 // favicon 结果本地缓存（key: 容器id，value: {url, ts}）
 const CACHE_KEY = 'dc_favicon_cache'
@@ -14,6 +14,7 @@ function writeCache(cache) {
 
 // useFavicon：根据容器暴露端口，探测其站点 favicon。
 // 优先读缓存；未命中时用当前访问 host + 端口，调后端代理抓取。
+// 抓取成功后自动持久化到服务器 /data/images/ 目录。
 // 返回 { faviconUrl, loading }。仅对运行中且有端口的容器尝试。
 export function useFavicon(container) {
   const [faviconUrl, setFaviconUrl] = useState('')
@@ -53,6 +54,11 @@ export function useFavicon(container) {
             next[container.id] = { url, ts: Date.now() }
             writeCache(next)
             setLoading(false)
+
+            // 成功抓取后，自动持久化到服务器 /data/images/ 目录
+            // 后台异步执行，不阻塞 UI
+            persistIconToServer(container, url, `http://${host}:${port}`)
+
             return
           }
         } catch { /* 忽略单端口失败，继续下一个 */ }
@@ -118,6 +124,10 @@ export function useFaviconMap(containers) {
               result[c.id] = url
               cache[c.id] = { url, ts: Date.now() }
               cacheDirty = true
+
+              // 批量抓取时也自动持久化到服务器
+              persistIconToServer(c, url, `http://${host}:${port}`)
+
               break
             }
           } catch { /* 忽略，继续 */ }
@@ -132,4 +142,24 @@ export function useFaviconMap(containers) {
   }, [(containers || []).map((c) => c.id).join(',')])
 
   return map
+}
+
+// persistIconToServer 将抓取到的 favicon 持久化到服务器 /data/images/ 目录。
+// 后台异步执行，失败时静默忽略（不影响前端显示）。
+async function persistIconToServer(container, iconUrl, containerUrl) {
+  try {
+    // 提取镜像名称（去掉 tag）
+    const imageName = container.image.split(':')[0]
+
+    // 调用后端接口下载并保存
+    await imageAPI.fetchIcon({
+      imageName: imageName,
+      url: containerUrl
+    })
+
+    console.log(`✅ 图标已持久化: ${imageName} -> ${iconUrl}`)
+  } catch (error) {
+    // 静默失败，不影响用户体验
+    console.debug(`图标持久化失败 (${container.name}):`, error.message)
+  }
 }

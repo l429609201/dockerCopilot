@@ -7,7 +7,9 @@ import {
   Info,
   Clock,
   Layers,
-  Settings
+  Settings,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import { ThemeToggle } from './ThemeToggle.jsx'
 import { UpdatePrompt } from './UpdatePrompt.jsx'
@@ -246,6 +248,30 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
               isCollapsed ? "flex-col" : "justify-between"
             )}>
               <ThemeToggle collapsed={isCollapsed} />
+
+              {/* 收起/展开按钮 - 仅桌面模式显示 */}
+              {windowWidth >= 768 && (
+                <button
+                  onClick={handleToggleCollapse}
+                  className={cn(
+                    "flex items-center justify-center gap-2 transition-all duration-200 group active:scale-95",
+                    isCollapsed
+                      ? "p-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg w-full"
+                      : "px-3 py-2.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                  )}
+                  title={isCollapsed ? "展开菜单" : "收起菜单"}
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-4 w-4 flex-shrink-0" />
+                  ) : (
+                    <>
+                      <ChevronLeft className="h-4 w-4 flex-shrink-0" />
+                      <span className="text-xs sm:text-sm font-medium">收起</span>
+                    </>
+                  )}
+                </button>
+              )}
+
               <button
                 onClick={onLogout}
                 className={cn(

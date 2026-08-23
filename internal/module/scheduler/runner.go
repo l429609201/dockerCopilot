@@ -69,6 +69,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	}
 
 	var updated, skipped, failed int
+	var updatedList, skippedList, failedList []string // 记录详细列表
 	timeoutSec := svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 1800
@@ -82,12 +83,14 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		// 策略：仅在有更新时执行
 		if rule.OnlyWhenUpdate && !c.Update {
 			skipped++
+			skippedList = append(skippedList, fmt.Sprintf("%s (已是最新版本)", name))
 			continue
 		}
 		// 策略：跳过无 tag 或 digest 形式镜像
 		if rule.SkipInvalidTag && !isValidImageRef(c.Image) {
 			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, name, c.Image)
 			skipped++
+			skippedList = append(skippedList, fmt.Sprintf("%s (镜像标签无效: %s)", name, shortImage(c.Image)))
 			continue
 		}
 		// 自适应模式：按当前容器镜像匹配凭据；否则用预编码的复用凭据
@@ -97,8 +100,10 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 		if runOne(svcCtx, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			updated++
+			updatedList = append(updatedList, fmt.Sprintf("%s → %s", name, shortImage(c.Image)))
 		} else {
 			failed++
+			failedList = append(failedList, fmt.Sprintf("%s (更新失败)", name))
 		}
 	}
 
@@ -106,7 +111,36 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	recordResult(svcCtx, rule.ID, summary)
 	logx.Infof("定时更新规则[%s]执行完成：%s", rule.Name, summary)
 	if notifier != nil && rule.NotifyOnDone {
-		notifier.Notify("定时更新完成", fmt.Sprintf("规则「%s」：%s", rule.Name, summary))
+		// 构建详细消息
+		var msg strings.Builder
+		msg.WriteString(fmt.Sprintf("规则「%s」执行完成\n\n", rule.Name))
+		msg.WriteString(fmt.Sprintf("📊 统计：%s\n", summary))
+
+		// 更新成功列表
+		if len(updatedList) > 0 {
+			msg.WriteString("\n✅ 更新成功：\n")
+			for _, item := range updatedList {
+				msg.WriteString(fmt.Sprintf("  • %s\n", item))
+			}
+		}
+
+		// 跳过列表（含原因）
+		if len(skippedList) > 0 {
+			msg.WriteString("\n⏭ 跳过：\n")
+			for _, item := range skippedList {
+				msg.WriteString(fmt.Sprintf("  • %s\n", item))
+			}
+		}
+
+		// 失败列表
+		if len(failedList) > 0 {
+			msg.WriteString("\n❌ 失败：\n")
+			for _, item := range failedList {
+				msg.WriteString(fmt.Sprintf("  • %s\n", item))
+			}
+		}
+
+		notifier.Notify("定时更新完成", msg.String())
 	}
 }
 
@@ -190,4 +224,19 @@ func isValidImageRef(image string) bool {
 		return false
 	}
 	return strings.Contains(image, ":")
+}
+
+// shortImage 返回镜像的简短显示名称，去掉 registry 前缀。
+// 例如：docker.io/library/nginx:latest → nginx:latest
+func shortImage(image string) string {
+	// 移除常见 registry 前缀
+	image = strings.TrimPrefix(image, "docker.io/")
+	image = strings.TrimPrefix(image, "docker.io/library/")
+
+	// 如果还有多级路径，只保留最后两段（名称:标签）
+	parts := strings.Split(image, "/")
+	if len(parts) > 2 {
+		return strings.Join(parts[len(parts)-2:], "/")
+	}
+	return image
 }
