@@ -37,16 +37,34 @@ func (b *Bot) handleUpdate(u telegram.Update) {
 		return
 	}
 	if u.Message != nil {
-		b.handleCommand(chatID, strings.TrimSpace(u.Message.Text))
+		b.handleCommand(chatID, strings.TrimSpace(u.Message.Text), u.Message.MessageID)
 	}
 }
 
-// handleCommand 处理文本指令。
-func (b *Bot) handleCommand(chatID int64, text string) {
-	// 优先处理等待输入的会话动作（重命名/命令行）
+// handleCommand 处理文本指令。msgID 为该文本消息的 ID（用于 Shell 会话删除命令消息）。
+func (b *Bot) handleCommand(chatID int64, text string, msgID int64) {
+	trimmed := strings.TrimSpace(text)
+	// 最高优先级：若处于 Shell 会话中，除退出指令外的所有文本都作为命令执行。
+	if s := b.getShell(chatID); s != nil {
+		switch trimmed {
+		case "/exit", "/quit", "/cancel":
+			// 删除用户这条退出指令消息，保持对话干净；结果消息更新为已退出提示
+			b.deleteMsg(chatID, msgID)
+			b.finishShell(chatID, s)
+		case "/menu", "/start":
+			b.deleteMsg(chatID, msgID)
+			b.clearShell(chatID)
+			b.reply(chatID, fmt.Sprintf("已退出容器 <b>%s</b> 的 Shell 会话。", escapeHTML(s.name)))
+			b.sendMainMenu(chatID)
+		default:
+			b.runShellCommand(chatID, s, trimmed, msgID)
+		}
+		return
+	}
+	// 其次处理等待输入的一次性会话动作（重命名/切标签）
 	if p := b.takePending(chatID); p != nil {
 		// /cancel 可取消待输入
-		if strings.TrimSpace(text) == "/cancel" {
+		if trimmed == "/cancel" {
 			b.reply(chatID, "已取消。")
 			return
 		}
@@ -139,9 +157,20 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			b.replySystemOverview(chatID)
 		case "compose":
 			b.listComposeProjects(chatID, messageID)
+		case "mute":
+			// 更新通知设置面板
+			b.sendMuteSettings(chatID, messageID)
+		case "home":
+			// 返回主菜单：编辑原消息为主菜单
+			b.editMainMenu(chatID, messageID)
 		case "help":
 			b.reply(chatID, helpText())
 		}
+		return
+	}
+	// 更新通知屏蔽切换：mute|<容器名>
+	if parts[0] == "mute" && len(parts) == 2 {
+		b.toggleMute(chatID, parts[1], messageID)
 		return
 	}
 	// 单容器操作面板：panel|<id>|<name>
@@ -156,6 +185,10 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		case "logs":
 			b.sendContainerLogs(chatID, id, name, messageID)
 			return
+		case "logdl":
+			// 下载完整日志：作为文档发送
+			b.sendContainerLogFile(chatID, id, name)
+			return
 		case "inspect":
 			b.sendContainerInspect(chatID, id, name, messageID)
 			return
@@ -167,6 +200,22 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			return
 		case "execp":
 			b.promptExec(chatID, id, name)
+			return
+		case "shexit":
+			// 退出 Shell 会话按钮：若会话仍在则优雅结束（更新终端消息为已退出）
+			if s := b.getShell(chatID); s != nil {
+				b.finishShell(chatID, s)
+			} else if messageID > 0 {
+				b.editMessageKeyboard(chatID, messageID, fmt.Sprintf("✅ 容器 <b>%s</b> 的 Shell 会话已结束。", escapeHTML(name)), nil)
+			}
+			return
+		case "shhist":
+			// 查看历史命令按钮
+			if s := b.getShell(chatID); s != nil {
+				b.showShellHistory(chatID, s)
+			} else if messageID > 0 {
+				b.editMessage(chatID, messageID, "会话已结束，无法查看历史。")
+			}
 			return
 		case "rename":
 			b.promptRename(chatID, id, name)
@@ -374,18 +423,32 @@ func (b *Bot) sendContainerPanel(chatID int64, id, name string, messageID int64)
 	}
 }
 
-// sendMainMenu 推送主菜单（按钮式交互入口）。
-func (b *Bot) sendMainMenu(chatID int64) {
-	kb := &telegram.InlineKeyboardMarkup{
+// mainMenuKeyboard 返回主菜单按钮布局（发送与编辑共用）。
+func mainMenuKeyboard() *telegram.InlineKeyboardMarkup {
+	return &telegram.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telegram.InlineKeyboardButton{
 			{{Text: "▶ 运行中容器", CallbackData: "menu|run|0"}},
 			{{Text: "📦 全部容器", CallbackData: "menu|ps|0"}},
 			{{Text: "🖼 镜像信息", CallbackData: "menu|images"}, {Text: "💻 系统概览", CallbackData: "menu|sys"}},
 			{{Text: "🧩 Compose 项目", CallbackData: "menu|compose"}},
+			{{Text: "🔕 更新通知设置", CallbackData: "menu|mute"}},
 			{{Text: "❓ 帮助", CallbackData: "menu|help"}},
 		},
 	}
-	b.replyKeyboard(chatID, "<b>DockerCopilot 控制台</b>\n请选择操作：", kb)
+}
+
+// sendMainMenu 推送主菜单（按钮式交互入口）。
+func (b *Bot) sendMainMenu(chatID int64) {
+	b.replyKeyboard(chatID, "<b>DockerCopilot 控制台</b>\n请选择操作：", mainMenuKeyboard())
+}
+
+// editMainMenu 将现有消息编辑为主菜单（用于"返回主菜单"按钮）。
+func (b *Bot) editMainMenu(chatID int64, messageID int64) {
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, "<b>DockerCopilot 控制台</b>\n请选择操作：", mainMenuKeyboard())
+	} else {
+		b.sendMainMenu(chatID)
+	}
 }
 
 // askConfirm 对指定容器操作弹出二次确认按钮。

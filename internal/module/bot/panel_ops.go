@@ -48,12 +48,47 @@ func (b *Bot) sendContainerLogs(chatID int64, id, name string, messageID int64) 
 		out = out[len(out)-3500:]
 	}
 	text := fmt.Sprintf("<b>📄 %s 最近日志</b>\n<pre>%s</pre>", escapeHTML(name), escapeHTML(out))
-	kb := b.backToPanelKb(id, name)
+	// 键盘：下载完整日志 + 返回管理
+	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
+		{{Text: "⬇ 下载完整日志", CallbackData: fmt.Sprintf("logdl|%s|%s", id, name)}},
+		{{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s", id, name)}},
+	}}
 	// 如果有 messageID，编辑原消息；否则发送新消息
 	if messageID > 0 {
 		b.editMessageKeyboard(chatID, messageID, text, kb)
 	} else {
 		b.replyKeyboard(chatID, text, kb)
+	}
+}
+
+// sendContainerLogFile 拉取更多行日志并作为 .log 文档发送（突破 TG 文本消息 4096 上限）。
+func (b *Bot) sendContainerLogFile(chatID int64, id, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// 文件形式可容纳更多内容：取最近 2000 行，上限 2MB
+	out, err := b.ops.Logs(ctx, id, 2000, "", true, 2*1024*1024)
+	if err != nil {
+		b.reply(chatID, fmt.Sprintf("❌ 获取日志失败：%s", err.Error()))
+		return
+	}
+	if strings.TrimSpace(out) == "" {
+		b.reply(chatID, "⚠️ 该容器暂无日志输出")
+		return
+	}
+	// 生成安全文件名：容器名_时间戳.log
+	safeName := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ' ' || r == ':' {
+			return '_'
+		}
+		return r
+	}, name)
+	if safeName == "" {
+		safeName = shortID(id)
+	}
+	filename := fmt.Sprintf("%s_%s.log", safeName, time.Now().Format("20060102-150405"))
+	caption := fmt.Sprintf("📄 <b>%s</b> 日志（最近 2000 行）", escapeHTML(name))
+	if err := b.client.SendDocument(chatID, filename, []byte(out), caption); err != nil {
+		b.reply(chatID, fmt.Sprintf("❌ 发送日志文件失败：%s", err.Error()))
 	}
 }
 

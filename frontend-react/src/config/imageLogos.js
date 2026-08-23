@@ -156,3 +156,27 @@ export const hasBuiltInLogo = (imageName) => {
   }
   return false;
 };
+
+/**
+ * 统一解析容器图标 URL（卡片/列表/详情共用，保证优先级一致）。
+ * 优先级：容器自定义 iconUrl > 站点抓取的 favicon > 内置logo/用户自定义logo（含模糊匹配）。
+ * 说明：getImageLogo 第二参 customLogos 内部已包含"内置 + 自定义 + 模糊匹配"逻辑，
+ *      因此这里直接把 customIcons 传入即可，避免各处重复且不一致的匹配代码。
+ * @param {object} container 容器对象（需含 id / iconUrl / usingImage）
+ * @param {object} faviconMap 由 useFaviconMap 生成的 {容器id: url} 映射
+ * @param {object} customIcons 用户自定义图标配置 {镜像名: url}
+ * @returns {string|null} 解析出的图标地址，无则返回 null
+ */
+export const resolveContainerIcon = (container, faviconMap = {}, customIcons = {}) => {
+  if (!container) return null;
+  // 1. 容器自身已设置的自定义图标优先级最高
+  if (container.iconUrl) return container.iconUrl;
+  // 2. 从容器站点抓取到的 favicon
+  if (faviconMap && faviconMap[container.id]) return faviconMap[container.id];
+  // 3. 内置logo / 用户自定义logo（getImageLogo 内部已做模糊匹配）
+  if (container.usingImage) {
+    const logo = getImageLogo(container.usingImage, customIcons || {});
+    if (logo) return logo;
+  }
+  return null;
+};

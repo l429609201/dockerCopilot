@@ -11,18 +11,26 @@ import {
   X,
   Info,
   LayoutGrid,
-  List
+  List,
+  Edit3,
+  Activity,
+  FileText,
+  TerminalSquare,
+  FolderOpen,
+  Pencil
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getImageLogo } from '../config/imageLogos.js'
+import { resolveContainerIcon } from '../config/imageLogos.js'
 import { ContainerOps } from './ContainerOps.jsx'
 import { useFaviconMap } from '../hooks/useFavicon.js'
 import { ContainerListRow } from './ContainerListRow.jsx'
 import { formatRunningTime } from '../utils/format.js'
 import { useTasks } from '../hooks/useTasks.jsx'
 import { useContainerStats } from '../hooks/useContainerStats.js'
+import { ContainerEditModal } from './ContainerEditModal.jsx'
+import { ContainerProcessModal } from './ContainerProcessModal.jsx'
 import { ContainerStats } from './ContainerStats.jsx'
 import { StatsChart } from './StatsChart.jsx'
 import { FileText, TerminalSquare, FolderOpen, Pencil } from 'lucide-react'
@@ -68,6 +76,9 @@ export function Containers() {
     type: 'info' // info, warning, danger
   })
 
+  // 编辑/进程弹窗状态
+  const [editTarget, setEditTarget] = useState(null)
+  const [processTarget, setProcessTarget] = useState(null)
 
 
   // 使用React Query获取容器列表
@@ -974,22 +985,8 @@ export function Containers() {
                 const isSelected = selectedContainers.includes(container.id)
                 // 列表模式：渲染横向一条的列表行
                 if (viewMode === 'list') {
-                  // 列表模式头像优先级：container.iconUrl > faviconMap > 内置logo > 自定义logo
-                  let iconUrl = container.iconUrl
-                  if (!iconUrl && faviconMap[container.id]) {
-                    iconUrl = faviconMap[container.id]
-                  }
-                  if (!iconUrl && container.usingImage) {
-                    const builtInLogo = getImageLogo(container.usingImage)
-                    if (builtInLogo) {
-                      iconUrl = builtInLogo
-                    } else if (customIcons && Object.keys(customIcons).length > 0) {
-                      // 尝试从自定义图标配置中查找
-                      const baseImageName = container.usingImage.split(':')[0]
-                      const simpleName = baseImageName.split('/').pop()
-                      iconUrl = customIcons[baseImageName] || customIcons[simpleName]
-                    }
-                  }
+                  // 列表模式与卡片模式共用同一解析逻辑，保证图标一致
+                  const iconUrl = resolveContainerIcon(container, faviconMap, customIcons)
 
                   return (
                     <ContainerListRow
@@ -1066,30 +1063,8 @@ export function Containers() {
                         {/* 图标 */}
                         <div className="flex-shrink-0">
                           {(() => {
-                            let iconUrl = container.iconUrl;
-                            // 阶段8：优先使用从容器站点抓取的 favicon
-                            if (!iconUrl && faviconMap[container.id]) {
-                              iconUrl = faviconMap[container.id];
-                            }
-                            if (!iconUrl && container.usingImage) {
-                              const builtInLogo = getImageLogo(container.usingImage);
-                              if (builtInLogo) {
-                                iconUrl = builtInLogo;
-                              } else {
-                                // 如果没有内置logo，则尝试从用户自定义中查找
-                                // const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}');
-                                // 使用 React Query 获取的数据
-                                const imageLogos = customIcons;
-
-                                for (const [imageName, logoUrl] of Object.entries(imageLogos)) {
-                                  if (container.usingImage.startsWith(imageName) ||
-                                    container.usingImage.includes(`${imageName}:`)) {
-                                    iconUrl = logoUrl;
-                                    break;
-                                  }
-                                }
-                              }
-                            }
+                            // 与列表模式共用同一解析逻辑，保证图标一致
+                            const iconUrl = resolveContainerIcon(container, faviconMap, customIcons);
 
                             if (iconUrl) {
                               return (
@@ -1322,16 +1297,40 @@ export function Containers() {
             onRename={handleRenameContainer}
             onUpdate={handleUpdateContainer}
             onAction={handleContainerAction}
+            onEdit={(c) => setEditTarget(c)}
+            onProcess={(c) => setProcessTarget(c)}
           />
         )
       }
+
+      {/* 编辑弹窗 */}
+      {editTarget && (
+        <ContainerEditModal
+          container={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSuccess={() => {
+            setEditTarget(null)
+            refetch()
+          }}
+        />
+      )}
+
+      {/* 进程弹窗 */}
+      {processTarget && (
+        <ContainerProcessModal
+          container={processTarget}
+          onClose={() => setProcessTarget(null)}
+        />
+      )}
     </div >
   )
 }
 
 // 容器详情弹窗组件
-function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction, stat }) {
+function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction, stat, onEdit, onProcess }) {
   const queryClient = useQueryClient()
+  // Tab 分页状态
+  const [activeTab, setActiveTab] = useState('basic')
   const [name, setName] = useState(container.name)
   const [imageNameAndTag, setImageNameAndTag] = useState(container.usingImage)
   const [isUpdating, setIsUpdating] = useState(false)
@@ -1542,36 +1541,9 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     return statusConfig[status?.toLowerCase()] || 'bg-gray-500'
   }
 
-  // 获取容器图标 - 与列表显示逻辑一致
+  // 获取容器图标 - 与列表/卡片显示逻辑一致（详情弹窗无 faviconMap，传空对象）
   const getContainerIcon = () => {
-    let iconUrl = currentContainer.iconUrl;
-
-    // 如果容器没有自定义图标，则查找镜像图标
-    if (!iconUrl && currentContainer.usingImage) {
-      // 优先使用内置logo配置（不依赖localStorage）
-      const builtInLogo = getImageLogo(currentContainer.usingImage);
-      if (builtInLogo) {
-        iconUrl = builtInLogo;
-      } else {
-        // 如果没有内置logo，则尝试从用户自定义中查找
-        // const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}');
-        const imageLogos = customIcons;
-        const imageFullName = currentContainer.usingImage;
-
-        if (imageLogos[imageFullName]) {
-          iconUrl = imageLogos[imageFullName];
-        } else {
-          // 降级匹配逻辑
-          const imageName = imageFullName.split(':')[0];
-          for (const [imageId, logoUrl] of Object.entries(imageLogos)) {
-            if (imageId === imageName || imageFullName.startsWith(imageId)) {
-              iconUrl = logoUrl;
-              break;
-            }
-          }
-        }
-      }
-    }
+    const iconUrl = resolveContainerIcon(currentContainer, {}, customIcons);
 
     const IconContent = () => {
       if (iconUrl) {
@@ -1683,6 +1655,33 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           </div>
         </div>
 
+        {/* Tab 导航 */}
+        <div className="border-b border-gray-200 dark:border-gray-700">
+          <nav className="flex px-6 -mb-px space-x-4">
+            {[
+              { id: 'basic', label: '基本信息' },
+              { id: 'network', label: '网络' },
+              { id: 'mounts', label: '挂载' },
+              { id: 'env', label: '环境变量' },
+              { id: 'resources', label: '资源限制' },
+              { id: 'other', label: '其他' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'py-2 px-1 border-b-2 font-medium text-sm transition-colors',
+                  activeTab === tab.id
+                    ? 'border-primary-600 text-primary-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+
         {/* 【新】独立的日志弹窗（详情弹窗内打开） */}
         {showLogs && (
           <ContainerLogs
@@ -1709,7 +1708,10 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
         {/* 弹窗内容 */}
         <div className="px-6 py-4 space-y-4">
-          {/* 实时资源图表（仅运行中容器） */}
+          {/* Tab: 基本信息（现有全部内容） */}
+          {activeTab === 'basic' && (
+            <>
+              {/* 实时资源图表（仅运行中容器） */}
           {currentContainer.status === 'running' && (
             <StatsChart stat={stat} />
           )}
@@ -1787,128 +1789,125 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
           <div className="flex flex-wrap items-center justify-between gap-2">
 
-            {/* 左侧：日志 / 控制台 / 文件管理 快捷入口（统一彩色风格） */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowLogs(true)}
-                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-sky-600 hover:bg-sky-700 dark:bg-sky-500 dark:hover:bg-sky-600 transition-colors"
-                title="查看日志"
-              >
-                <FileText className="h-4 w-4" /> <span className="hidden sm:inline">日志</span>
-              </button>
-              <button
-                onClick={() => setShowConsole(true)}
-                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-teal-600 hover:bg-teal-700 dark:bg-teal-500 dark:hover:bg-teal-600 transition-colors"
-                title="控制台"
-              >
-                <TerminalSquare className="h-4 w-4" /> <span className="hidden sm:inline">控制台</span>
-              </button>
-              <button
-                onClick={() => setShowFileMgr(true)}
-                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-amber-500 hover:bg-amber-600 dark:bg-amber-500 dark:hover:bg-amber-600 transition-colors"
-                title="文件管理"
-              >
-                <FolderOpen className="h-4 w-4" /> <span className="hidden sm:inline">文件</span>
-              </button>
-            </div>
-
-            <div className="flex gap-2 w-full sm:w-auto">
-              <button
-                onClick={() => onUpdate(container.id)}
-                disabled={isActionProcessing || isUpdating}
-                className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'update'
-                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                  : 'bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600'
-                  }`}
-                title="更新"
-              >
-                {isActionProcessing && currentAction === 'update' ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                    <span>更新中</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4 flex-shrink-0" />
-                    <span>更新</span>
-                  </>
-                )}
-              </button>
-
+            {/* 操作按钮区：4列×2行 Grid 布局 */}
+            <div className="w-full grid grid-cols-4 gap-2">
+              {/* 第一行：停止/编辑/重启/更新 */}
               {currentContainer.status === 'running' ? (
                 <>
-                  <button
-                    onClick={() => handleContainerAction('stop')}
-                    disabled={isActionProcessing || isUpdating}
-                    className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'stop'
-                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                      : 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600'
-                      }`}
-                    title="停止"
-                  >
-                    {isActionProcessing && currentAction === 'stop' ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                        <span>停止中</span>
-                      </>
-                    ) : (
-                      <>
-                        <Square className="h-4 w-4 flex-shrink-0" />
-                        <span>停止</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleContainerAction('restart')}
-                    disabled={isActionProcessing || isUpdating}
-                    className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'restart'
-                      ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                      : 'bg-yellow-500 text-white hover:bg-yellow-600 dark:bg-yellow-500 dark:hover:bg-yellow-600'
-                      }`}
-                    title="重启"
-                  >
-                    {isActionProcessing && currentAction === 'restart' ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                        <span>重启中</span>
-                      </>
-                    ) : (
-                      <>
-                        <RotateCcw className="h-4 w-4 flex-shrink-0" />
-                        <span>重启</span>
-                      </>
-                    )}
-                  </button>
+                  <ActionBtn onClick={() => handleContainerAction('stop')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'stop'} icon={Square} label="停止" color="red" />
+                  <ActionBtn onClick={() => onEdit(currentContainer)} disabled={isActionProcessing || isUpdating}
+                    icon={Edit3} label="编辑" color="orange" />
+                  <ActionBtn onClick={() => handleContainerAction('restart')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'restart'} icon={RotateCcw} label="重启" color="yellow" />
+                  <ActionBtn onClick={() => onUpdate(container.id)} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'update'} icon={Upload} label="更新" color="purple" />
                 </>
               ) : (
-                <button
-                  onClick={() => handleContainerAction('start')}
-                  disabled={isActionProcessing || isUpdating}
-                  className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'start'
-                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
-                    : 'bg-green-600 text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600'
-                    }`}
-                  title="启动"
-                >
-                  {isActionProcessing && currentAction === 'start' ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                      <span>启动中</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4 flex-shrink-0" />
-                      <span>启动</span>
-                    </>
-                  )}
-                </button>
+                <div className="col-span-4">
+                  <ActionBtn onClick={() => handleContainerAction('start')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'start'} icon={Play} label="启动" color="green" fullWidth />
+                </div>
+              )}
+
+              {/* 第二行：日志/进程/控制台/文件（仅运行中容器显示） */}
+              {currentContainer.status === 'running' && (
+                <>
+                  <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
+                  <ActionBtn onClick={() => onProcess(currentContainer)} icon={Activity} label="进程" color="emerald" />
+                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
+                  <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
+                </>
               )}
             </div>
 
-
           </div>
+            </>
+          )}
+
+          {/* Tab: 网络 */}
+          {activeTab === 'network' && (
+            <div className="space-y-3">
+              <InfoRow label="网络模式" value={currentContainer?.inspect?.HostConfig?.NetworkMode || '—'} />
+              <InfoRow label="IP地址" value={currentContainer?.inspect?.NetworkSettings?.IPAddress || '—'} />
+              <InfoRow label="网关" value={currentContainer?.inspect?.NetworkSettings?.Gateway || '—'} />
+              <InfoRow label="MAC地址" value={currentContainer?.inspect?.NetworkSettings?.MacAddress || '—'} />
+            </div>
+          )}
+
+          {/* Tab: 挂载 */}
+          {activeTab === 'mounts' && (
+            <div className="space-y-2">
+              {(currentContainer?.inspect?.Mounts || []).length === 0 ? (
+                <p className="text-gray-500 text-sm">无挂载</p>
+              ) : (
+                currentContainer.inspect.Mounts.map((m, i) => (
+                  <div key={i} className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded text-sm space-y-1">
+                    <div><b>类型:</b> {m.Type}</div>
+                    <div><b>源:</b> <code className="text-xs">{m.Source}</code></div>
+                    <div><b>目标:</b> <code className="text-xs">{m.Destination}</code></div>
+                    <div><b>读写:</b> {m.RW ? '读写' : '只读'}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Tab: 环境变量 */}
+          {activeTab === 'env' && (
+            <div className="space-y-1 font-mono text-xs">
+              {(currentContainer?.inspect?.Config?.Env || []).map((line, i) => (
+                <div key={i} className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded">{line}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Tab: 资源限制 */}
+          {activeTab === 'resources' && (
+            <div className="space-y-3">
+              <InfoRow label="CPU限制" value={currentContainer?.inspect?.HostConfig?.NanoCpus ? `${currentContainer.inspect.HostConfig.NanoCpus / 1e9} 核` : '无限制'} />
+              <InfoRow label="内存限制" value={currentContainer?.inspect?.HostConfig?.Memory ? `${(currentContainer.inspect.HostConfig.Memory / 1024 / 1024).toFixed(0)} MB` : '无限制'} />
+            </div>
+          )}
+
+          {/* Tab: 其他 */}
+          {activeTab === 'other' && (
+            <div className="space-y-3">
+              <InfoRow label="主机名" value={currentContainer?.inspect?.Config?.Hostname || '—'} />
+              <InfoRow label="工作目录" value={currentContainer?.inspect?.Config?.WorkingDir || '/'} />
+              <InfoRow label="入口点" value={(currentContainer?.inspect?.Config?.Entrypoint || []).join(' ') || '—'} />
+              <InfoRow label="命令" value={(currentContainer?.inspect?.Config?.Cmd || []).join(' ') || '—'} />
+            </div>
+          )}
+
         </div>
       </div>
     </div>
   )
 }
+
+// ActionBtn 辅助组件（用于详情弹窗底部按钮）
+function ActionBtn({ onClick, disabled, loading, icon: Icon, label, color, fullWidth }) {
+  const colorMap = {
+    red: 'bg-red-600 hover:bg-red-700 dark:bg-red-500',
+    orange: 'bg-orange-600 hover:bg-orange-700 dark:bg-orange-500',
+    yellow: 'bg-yellow-500 hover:bg-yellow-600 dark:bg-yellow-500',
+    green: 'bg-green-600 hover:bg-green-700 dark:bg-green-500',
+    blue: 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500',
+    purple: 'bg-purple-600 hover:bg-purple-700 dark:bg-purple-500',
+    sky: 'bg-sky-600 hover:bg-sky-700 dark:bg-sky-500',
+    teal: 'bg-teal-600 hover:bg-teal-700 dark:bg-teal-500',
+    emerald: 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500',
+    amber: 'bg-amber-500 hover:bg-amber-600 dark:bg-amber-500',
+  }
+  return (
+    <button onClick={onClick} disabled={disabled || loading}
+      className={`${fullWidth ? 'w-full' : ''} px-3 py-2 text-sm rounded-lg text-white transition-colors flex items-center justify-center gap-1.5 ${
+        disabled || loading ? 'bg-gray-300 dark:bg-gray-700 cursor-not-allowed' : colorMap[color]
+      }`}>
+      {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+      <span>{loading ? '处理中' : label}</span>
+    </button>
+  )
+}
+

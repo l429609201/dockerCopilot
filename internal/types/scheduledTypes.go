@@ -7,6 +7,8 @@ package types
 type ScheduledRuleReq struct {
 	ID               string   `json:"id,optional"`
 	Name             string   `json:"name"`
+	Type             string   `json:"type,optional"`      // 任务类型：update/prune/backup，空按 update
+	PruneMode        string   `json:"pruneMode,optional"` // 清理范围：dangling/unused（仅 prune）
 	Enabled          bool     `json:"enabled,optional"`
 	Cron             string   `json:"cron,optional"` // 已废弃：调度改用全局 cron，保留仅为兼容
 	ContainerNames   []string `json:"containerNames,optional"`
@@ -51,6 +53,7 @@ type TelegramConfigReq struct {
 	Token           string  `json:"token,optional"`
 	AllowedChatIDs  []int64 `json:"allowedChatIds,optional"`
 	Proxy           string  `json:"proxy,optional"`
-	PollIntervalSec int     `json:"pollIntervalSec,optional"`
-	NotifyUpdate    bool    `json:"notifyUpdate,optional"`
+	PollIntervalSec            int  `json:"pollIntervalSec,optional"`
+	NotifyUpdate               bool `json:"notifyUpdate,optional"`
+	UpdateCheckIntervalMinutes int  `json:"updateCheckIntervalMinutes,optional"` // 内置更新检测周期(分钟)，<=0 用默认 30
 }

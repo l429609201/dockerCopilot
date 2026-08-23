@@ -24,14 +24,32 @@ type RegistryCredential struct {
 	Password string `json:"password"` // 密码或访问令牌（敏感）
 }
 
-// ScheduledUpdateRule 定时更新一批容器的规则。
+// 定时任务类型常量。老数据无 Type 字段时按 update 处理，保证向后兼容。
+const (
+	RuleTypeUpdate = "update" // 自动更新容器
+	RuleTypePrune  = "prune"  // 自动清理镜像
+	RuleTypeBackup = "backup" // 自动备份容器配置
+)
+
+// 镜像清理范围常量（仅 prune 类型使用）。
+const (
+	PruneModeDangling = "dangling" // 仅清理无 tag 的悬空镜像
+	PruneModeUnused   = "unused"   // 清理所有未被容器使用的镜像
+)
+
+// ScheduledUpdateRule 定时任务规则（历史名称保留，现已支持更新/清理/备份多种类型）。
 type ScheduledUpdateRule struct {
 	ID   string `json:"id"`   // 唯一标识
 	Name string `json:"name"` // 规则名称
+	// Type 任务类型：update(自动更新) / prune(自动清理镜像) / backup(自动备份)。
+	// 为空时按 update 处理，兼容历史数据。
+	Type string `json:"type,omitempty"`
 	// Enabled 是否启用。
 	Enabled bool `json:"enabled"`
 	// Cron 已废弃：调度改为使用全局 AppConfig.ScheduledUpdateCron，此字段仅为向后兼容保留。
 	Cron string `json:"cron,omitempty"`
+	// PruneMode 镜像清理范围（仅 prune 类型使用）：dangling(无tag) / unused(未使用)。
+	PruneMode string `json:"pruneMode,omitempty"`
 	// ContainerNames 需要纳入本规则的容器名列表。
 	ContainerNames []string `json:"containerNames"`
 	// OnlyWhenUpdate 仅在检测到有新版本时才执行更新。
@@ -64,6 +82,13 @@ type TelegramConfig struct {
 	PollIntervalSec int `json:"pollIntervalSec"`
 	// 通知总开关及分类开关。
 	NotifyUpdate bool `json:"notifyUpdate"`
+	// UpdateCheckIntervalMinutes 内置更新检测周期（分钟），<=0 时用默认 30。
+	UpdateCheckIntervalMinutes int `json:"updateCheckIntervalMinutes,omitempty"`
+	// MutedContainers 已屏蔽"有更新"周期通知的容器名列表，命中则不推送。
+	MutedContainers []string `json:"mutedContainers,omitempty"`
+	// NotifiedVersions 记录已推送过更新通知的容器→镜像版本，用于去重避免刷屏。
+	// key 为容器名，value 为该次通知对应的镜像引用；镜像变化才会重新推送。
+	NotifiedVersions map[string]string `json:"notifiedVersions,omitempty"`
 }
 
 // defaultConfig 返回带合理默认值的空配置。

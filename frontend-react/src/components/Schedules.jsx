@@ -31,7 +31,7 @@ export function Schedules() {
   useEffect(() => { load() }, [load])
 
   const emptyRule = () => ({
-    id: '', name: '', enabled: true,
+    id: '', name: '', type: 'update', pruneMode: 'dangling', enabled: true,
     containerNames: [], onlyWhenUpdate: true, skipInvalidTag: true,
     registryId: '', keepOldContainer: false,
     notifyOnStart: false, notifyOnDone: true, notifyOnError: true,
@@ -56,13 +56,28 @@ export function Schedules() {
     try { await scheduleAPI.runNow(id); alert('已触发执行') } catch (e) { alert('执行失败：' + e.message) }
   }
 
+  // 任务类型元信息：标签 + 徽标配色
+  const TYPE_META = {
+    update: { label: '自动更新', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+    prune: { label: '自动清理镜像', cls: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+    backup: { label: '自动备份', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+  }
+  const typeMeta = (t) => TYPE_META[t || 'update'] || TYPE_META.update
+  // 按任务类型生成副标题描述
+  const ruleSubtitle = (r) => {
+    const t = r.type || 'update'
+    if (t === 'prune') return `清理范围：${r.pruneMode === 'unused' ? '所有未使用镜像' : '无tag悬空镜像'} · 使用全局定时时间`
+    if (t === 'backup') return '备份所有容器配置 · 使用全局定时时间'
+    return `容器 ${r.containerNames?.length || 0} 个 · 使用全局定时时间${r.registryId === 'auto' ? ' · 凭证自适应' : ''}`
+  }
+
   return (
     <div className="w-full space-y-6">
       {/* 页面头部 */}
       <div className="px-2 sm:px-6 py-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <Clock className="h-5 w-5" /> 定时更新
+            <Clock className="h-5 w-5" /> 定时任务
           </h2>
           <button onClick={() => setEditing(emptyRule())}
             className="flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm">
@@ -83,18 +98,21 @@ export function Schedules() {
         {rules.map((r) => (
           <div key={r.id} className="card flex items-center justify-between">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-gray-900 dark:text-white truncate">{r.name}</span>
+                {/* 任务类型徽标 */}
+                <span className={`text-xs px-2 py-0.5 rounded-full ${typeMeta(r.type).cls}`}>
+                  {typeMeta(r.type).label}
+                </span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${r.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
                   {r.enabled ? '已启用' : '已禁用'}
                 </span>
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                容器 {r.containerNames?.length || 0} 个 · 使用全局定时时间
-                {r.registryId === 'auto' && ' · 凭证自适应'}
+                {ruleSubtitle(r)}
               </div>
-              {/* 展示该规则选中的容器名 */}
-              {r.containerNames?.length > 0 && (
+              {/* 展示该规则选中的容器名（仅自动更新类型） */}
+              {(r.type || 'update') === 'update' && r.containerNames?.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
                   {r.containerNames.slice(0, 8).map((n) => (
                     <span key={n} className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">

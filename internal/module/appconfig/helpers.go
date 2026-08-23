@@ -66,6 +66,14 @@ func (s *Store) MaskedRegistries() []map[string]interface{} {
 	return result
 }
 
+// RawTelegramToken 返回明文 Bot Token。
+// 仅供需要"可查看明文"的场景使用（如混淆后回显给已登录用户），调用方需自行保证安全。
+func (s *Store) RawTelegramToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.Telegram.Token
+}
+
 // MaskedTelegram 返回脱敏后的 Telegram 配置。
 func (s *Store) MaskedTelegram() map[string]interface{} {
 	s.mu.RLock()

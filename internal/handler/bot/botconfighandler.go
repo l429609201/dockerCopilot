@@ -2,6 +2,7 @@ package bot
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/l429609201/dockerCopilot/internal/logic/bot"
 	"github.com/l429609201/dockerCopilot/internal/svc"
@@ -18,11 +19,13 @@ func writeResp(w http.ResponseWriter, r *http.Request, resp *types.Resp, err err
 	httpx.OkJsonCtx(r.Context(), w, resp)
 }
 
-// GetConfigHandler 返回脱敏后的 Bot 配置。
+// GetConfigHandler 返回脱敏后的 Bot 配置，并附带用登录令牌混淆的明文 Token。
 func GetConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := bot.NewBotConfigLogic(r.Context(), svcCtx)
-		resp, err := l.Get()
+		// 从 Authorization 头取出 JWT 令牌字符串作为 Token 混淆密钥（前端持有同一令牌可解码）
+		jwtToken := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		resp, err := l.Get(jwtToken)
 		writeResp(w, r, resp, err)
 	}
 }

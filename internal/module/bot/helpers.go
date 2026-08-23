@@ -33,6 +33,17 @@ func escapeHTML(s string) string {
 	return replacer.Replace(s)
 }
 
+// deleteMsg 删除指定消息（失败仅记录日志，不影响主流程）。
+// 用于交互式 Shell 会话：执行后删除用户发送的命令消息，保持对话干净。
+func (b *Bot) deleteMsg(chatID, messageID int64) {
+	if b.client == nil || messageID == 0 {
+		return
+	}
+	if err := b.client.DeleteMessage(chatID, messageID); err != nil {
+		logx.Errorf("Telegram 删除消息失败 chat=%d msg=%d: %v", chatID, messageID, err)
+	}
+}
+
 // helpText 返回帮助文案。
 func helpText() string {
 	return "<b>DockerCopilot 机器人</b>\n\n" +

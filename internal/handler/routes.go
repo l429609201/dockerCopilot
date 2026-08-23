@@ -354,6 +354,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: ops.ExecHandler(serverCtx),
 			},
 			{
+				// 获取容器进程列表（docker top）
+				Method:  http.MethodGet,
+				Path:    "/container/:id/top",
+				Handler: ops.TopHandler(serverCtx),
+			},
+			{
 				// 参数编辑（任务化重建），返回 taskID
 				Method:  http.MethodPut,
 				Path:    "/container/:id/edit",

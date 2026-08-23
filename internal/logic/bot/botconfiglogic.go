@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -27,10 +28,31 @@ func NewBotConfigLogic(ctx context.Context, svcCtx *svc.ServiceContext) *BotConf
 	}
 }
 
-// Get 返回脱敏后的 Bot 配置。
-func (l *BotConfigLogic) Get() (resp *types.Resp, err error) {
+// xorObfuscate 用 key 对 data 逐字节 XOR 后做 Base64 编码。
+// key 为空或 data 为空时返回空串。用于将明文 Token 混淆后回传给已登录前端，
+// 前端持有同一 key（登录 JWT 令牌字符串）即可解回明文，服务器签名密钥不出后端。
+func xorObfuscate(data, key string) string {
+	if data == "" || key == "" {
+		return ""
+	}
+	kb := []byte(key)
+	db := []byte(data)
+	out := make([]byte, len(db))
+	for i := 0; i < len(db); i++ {
+		out[i] = db[i] ^ kb[i%len(kb)]
+	}
+	return base64.StdEncoding.EncodeToString(out)
+}
+
+// Get 返回脱敏后的 Bot 配置；jwtToken 非空时额外返回 XOR 混淆后的明文 Token。
+func (l *BotConfigLogic) Get(jwtToken string) (resp *types.Resp, err error) {
 	resp = &types.Resp{Code: 200, Msg: "success"}
-	resp.Data = l.svcCtx.AppConfig.MaskedTelegram()
+	data := l.svcCtx.AppConfig.MaskedTelegram()
+	// 用登录令牌作密钥混淆明文 Token，供前端"点击查看"解码，避免明文直接暴露在响应中
+	if jwtToken != "" {
+		data["tokenObf"] = xorObfuscate(l.svcCtx.AppConfig.RawTelegramToken(), jwtToken)
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -45,6 +67,8 @@ func (l *BotConfigLogic) Save(req *types.TelegramConfigReq) (resp *types.Resp, e
 		if req.PollIntervalSec > 0 {
 			cfg.Telegram.PollIntervalSec = req.PollIntervalSec
 		}
+		// UpdateCheckIntervalMinutes：更新检测周期(分钟)，<=0 时 notifier 会用默认 30
+		cfg.Telegram.UpdateCheckIntervalMinutes = req.UpdateCheckIntervalMinutes
 		// Token 为空表示不修改，避免脱敏回显后被清空
 		if req.Token != "" {
 			cfg.Telegram.Token = req.Token

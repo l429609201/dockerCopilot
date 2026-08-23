@@ -15,15 +15,26 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// RunRule 执行一条定时更新规则：匹配容器 -> 策略过滤 -> 逐个提交更新任务。
+// RunRule 执行一条定时任务规则：按类型分发到更新/清理/备份。
 // 该函数可被 cron 调度和"立即执行"接口复用（单一职责：只负责编排一条规则的执行）。
 func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfig.ScheduledUpdateRule) {
 	defer func() {
 		if r := recover(); r != nil {
-			logx.Errorf("定时更新规则[%s]执行 panic 已恢复: %v", rule.Name, r)
+			logx.Errorf("定时任务规则[%s]执行 panic 已恢复: %v", rule.Name, r)
 		}
 	}()
 
+	// 按任务类型分发；空类型按 update 处理，兼容历史数据。
+	switch rule.Type {
+	case appconfig.RuleTypePrune:
+		runPrune(svcCtx, notifier, rule)
+		return
+	case appconfig.RuleTypeBackup:
+		runBackup(svcCtx, notifier, rule)
+		return
+	}
+
+	// 默认：自动更新容器
 	if notifier != nil && rule.NotifyOnStart {
 		notifier.Notify("定时更新开始", fmt.Sprintf("规则「%s」开始执行，容器数：%d", rule.Name, len(rule.ContainerNames)))
 	}

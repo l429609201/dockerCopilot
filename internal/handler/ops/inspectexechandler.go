@@ -50,3 +50,17 @@ func ExecHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		writeResp(w, r, resp, err)
 	}
 }
+
+// TopHandler 获取容器进程列表。
+func TopHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.IdReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := ops.NewInspectExecLogic(r.Context(), svcCtx)
+		resp, err := l.Top(&req)
+		writeResp(w, r, resp, err)
+	}
+}

@@ -17,6 +17,8 @@ type Scheduler struct {
 	svcCtx   *svc.ServiceContext
 	notifier notify.Notifier
 	cron     *cron.Cron
+	// notifyStop 用于停止固定周期的更新检测通知 goroutine。
+	notifyStop chan struct{}
 }
 
 // New 创建调度器。notifier 可为 nil（此时不发送通知）。
@@ -31,9 +33,10 @@ func (s *Scheduler) SetNotifier(n notify.Notifier) {
 	s.notifier = n
 }
 
-// Start 首次加载配置并启动调度。
+// Start 首次加载配置并启动调度，同时启动固定周期的更新检测通知器。
 func (s *Scheduler) Start() {
 	s.Reload()
+	s.startUpdateNotifier()
 }
 
 // Reload 根据最新配置重建所有 cron 任务。
@@ -89,12 +92,16 @@ func (s *Scheduler) RunNowByID(ruleID string) bool {
 	return true
 }
 
-// Stop 停止调度。
+// Stop 停止调度与更新检测通知器。
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cron != nil {
 		s.cron.Stop()
 		s.cron = nil
+	}
+	if s.notifyStop != nil {
+		close(s.notifyStop)
+		s.notifyStop = nil
 	}
 }

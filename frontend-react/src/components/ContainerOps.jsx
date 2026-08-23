@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react'
-import { FileText, Terminal as TerminalIcon, RefreshCw, Maximize2, Minimize2, X } from 'lucide-react'
+import React, { useState, useCallback, useMemo } from 'react'
+import { FileText, Terminal as TerminalIcon, RefreshCw, Maximize2, Minimize2, X, Search, Download } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 import { Terminal } from './Terminal.jsx'
 import { cn } from '../utils/cn.js'
@@ -35,7 +35,7 @@ export function ContainerOps({ container, onClose, initialTab = 'logs' }) {
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')} icon={FileText} label="日志" />
           <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="控制台" />
         </div>
-        {tab === 'logs' ? <LogsPanel id={container.id} /> : <ExecPanel id={container.id} fullscreen={fullscreen} />}
+        {tab === 'logs' ? <LogsPanel id={container.id} name={container.name} /> : <ExecPanel id={container.id} fullscreen={fullscreen} />}
       </div>
     </div>
   )
@@ -76,7 +76,7 @@ export function ContainerLogs({ container, onClose }) {
             </button>
           </div>
         </div>
-        <LogsPanel id={container.id} />
+        <LogsPanel id={container.id} name={container.name} />
       </div>
     </div>
   )
@@ -114,12 +114,29 @@ export function ContainerConsole({ container, onClose }) {
   )
 }
 
-// 日志面板
-function LogsPanel({ id }) {
+// 转义正则特殊字符，避免搜索词包含 . * 等导致高亮异常
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// 将一行日志按关键词（不区分大小写）拆分并高亮匹配片段
+function highlightLine(text, keyword) {
+  if (!keyword) return text
+  const parts = text.split(new RegExp(`(${escapeRegExp(keyword)})`, 'gi'))
+  return parts.map((part, i) =>
+    part.toLowerCase() === keyword.toLowerCase()
+      ? <mark key={i} className="bg-yellow-400 text-black rounded px-0.5">{part}</mark>
+      : part
+  )
+}
+
+// 日志面板：支持行数/时间戳、关键词搜索过滤+高亮、日志下载
+function LogsPanel({ id, name }) {
   const [logs, setLogs] = useState('')
   const [tail, setTail] = useState(200)
   const [timestamps, setTimestamps] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('') // 搜索关键词
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -133,9 +150,34 @@ function LogsPanel({ id }) {
 
   React.useEffect(() => { load() }, [load])
 
+  // 按关键词过滤出需要展示的行（不区分大小写），空关键词时展示全部
+  const shownLines = useMemo(() => {
+    const lines = logs.split('\n')
+    const kw = search.trim()
+    if (!kw) return lines
+    const lower = kw.toLowerCase()
+    return lines.filter((l) => l.toLowerCase().includes(lower))
+  }, [logs, search])
+
+  // 下载当前完整日志为 .log 文件（不受搜索过滤影响，导出全部内容）
+  const download = () => {
+    const blob = new Blob([logs], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    a.href = url
+    a.download = `${(name || id).slice(0, 40)}_${ts}.log`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const kw = search.trim()
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex items-center gap-3 mb-2 text-sm">
+      <div className="flex flex-wrap items-center gap-3 mb-2 text-sm">
         <label className="flex items-center gap-1">行数
           <input type="number" value={tail} onChange={(e) => setTail(Number(e.target.value))}
             className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900" />
@@ -143,12 +185,31 @@ function LogsPanel({ id }) {
         <label className="flex items-center gap-1">
           <input type="checkbox" checked={timestamps} onChange={(e) => setTimestamps(e.target.checked)} /> 时间戳
         </label>
+        {/* 搜索框：实时过滤并高亮匹配行 */}
+        <div className="relative flex-1 min-w-[160px]">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索日志…"
+            className="w-full pl-7 pr-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900" />
+        </div>
         <button onClick={load} className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
           <RefreshCw className="h-3.5 w-3.5" /> 刷新
         </button>
+        <button onClick={download} title="下载日志"
+          className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
+          <Download className="h-3.5 w-3.5" /> 下载
+        </button>
       </div>
+      {kw && (
+        <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
+      )}
       <pre className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg whitespace-pre-wrap">
-        {loading ? '加载中...' : logs}
+        {loading
+          ? '加载中...'
+          : (kw && shownLines.length === 0)
+            ? '(无匹配行)'
+            : shownLines.map((line, i) => (
+                <div key={i}>{highlightLine(line, kw)}</div>
+              ))}
       </pre>
     </div>
   )

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
@@ -13,6 +13,10 @@ export function ContainerListRow({
   const running = container.status === 'running'
   const loading = actionState?.loading
   const [menuOpen, setMenuOpen] = useState(false)
+  // 图标加载失败标记：失败后回退到首字母占位，避免直接隐藏留空
+  const [iconError, setIconError] = useState(false)
+  // iconUrl 变化时重置失败标记（如 favicon 后续才抓取到），让新地址有机会重新加载
+  useEffect(() => { setIconError(false) }, [iconUrl])
 
   return (
     <div
@@ -34,12 +38,12 @@ export function ContainerListRow({
           className="rounded border-gray-300 flex-shrink-0" />
       )}
 
-      {/* 图标 */}
+      {/* 图标：有 url 且未加载失败时显示图片，否则回退首字母占位 */}
       <div className="flex-shrink-0">
-        {iconUrl ? (
+        {iconUrl && !iconError ? (
           <img src={iconUrl} alt={container.name}
             className="h-9 w-9 rounded-lg object-cover"
-            onError={(e) => { e.target.style.display = 'none' }} />
+            onError={() => setIconError(true)} />
         ) : (
           <div className="h-9 w-9 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold">
             {(container.name || '?').charAt(0).toUpperCase()}

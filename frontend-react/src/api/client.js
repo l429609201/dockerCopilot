@@ -135,6 +135,7 @@ export const containerAPI = {
     apiClient.get(`/api/container/${id}/logs?tail=${tail}&timestamps=${timestamps}&since=${encodeURIComponent(since)}`),
   execContainer: (id, cmd, workDir = '', user = '') =>
     apiClient.post(`/api/container/${id}/exec`, { cmd, workDir, user }),
+  topContainer: (id) => apiClient.get(`/api/container/${id}/top`),
   editContainer: (id, spec) => apiClient.put(`/api/container/${id}/edit`, spec),
 }
 

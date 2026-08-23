@@ -8,6 +8,7 @@ import (
 
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // sendTagSwitch 展示可切换的镜像标签：列出本地与当前镜像同名的其它 tag 作为按钮，
@@ -98,10 +99,33 @@ func (b *Bot) promptRename(chatID int64, id, name string) {
 	b.reply(chatID, fmt.Sprintf("✏ 请发送容器 <b>%s</b> 的新名称（发送 /cancel 取消）：", escapeHTML(name)))
 }
 
-// promptExec 进入命令行等待：提示用户发送要在容器内执行的命令。
+// promptExec 进入容器的交互式 Shell 会话。
+// 进入后用户连续发送的每条文本都作为命令在该容器内执行，直到发送 /exit 退出。
+// 会话采用"单屏终端"形态：发送一条常驻"终端消息"，之后每条命令的结果都编辑更新到这条消息上，
+// 并删除用户发送的命令消息，保持对话干净。
 func (b *Bot) promptExec(chatID int64, id, name string) {
-	b.setPending(chatID, &pendingAction{kind: "exec", id: id, name: name})
-	b.reply(chatID, fmt.Sprintf("💻 请发送要在容器 <b>%s</b> 内执行的命令（发送 /cancel 取消）：\n例如：<code>ls -al /</code>", escapeHTML(name)))
+	welcome := fmt.Sprintf(
+		"🖥 <b>%s</b> Shell 会话已就绪\n\n"+
+			"• 直接发送命令即可连续执行（支持管道/重定向）\n"+
+			"• <code>cd</code> 会在会话内保持工作目录\n"+
+			"• 结果会更新在本条消息，命令消息将被自动清理\n\n"+
+			"等待输入命令…", escapeHTML(name))
+	// 发送终端消息并记录其 ID，后续所有结果都编辑到这一条上
+	msgID, err := b.client.SendMessageReturnID(chatID, welcome, b.shellKb(id, name))
+	if err != nil {
+		logx.Errorf("Telegram 发送 Shell 终端消息失败 chat=%d: %v", chatID, err)
+		b.reply(chatID, "❌ 无法进入 Shell 会话，请稍后重试。")
+		return
+	}
+	b.setShell(chatID, &shellSession{id: id, name: name, workDir: "", resultMsgID: msgID})
+}
+
+// shellKb 返回 Shell 会话终端消息下方的内联键盘：查看历史命令 / 退出交互。
+func (b *Bot) shellKb(id, name string) *telegram.InlineKeyboardMarkup {
+	return &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+		{Text: "📜 历史命令", CallbackData: fmt.Sprintf("shhist|%s|%s", id, name)},
+		{Text: "⏹ 退出交互", CallbackData: fmt.Sprintf("shexit|%s|%s", id, name)},
+	}}}
 }
 
 // promptTagInput 进入标签输入等待：提示用户发送目标标签。
@@ -124,8 +148,6 @@ func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 			return
 		}
 		b.reply(chatID, fmt.Sprintf("✅ 容器已重命名为 <b>%s</b>", escapeHTML(input)))
-	case "exec":
-		b.doExec(chatID, p.id, p.name, input)
 	case "tag":
 		b.doSwitchTag(chatID, p.id, p.name, input)
 	default:
@@ -133,25 +155,102 @@ func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 	}
 }
 
-// doExec 在容器内执行命令并返回输出。
-// 通过 sh -c 包裹用户命令，以支持管道/重定向等常见用法。
-func (b *Bot) doExec(chatID int64, id, name, cmd string) {
+// runShellCommand 在 Shell 会话中执行一条命令，并保持工作目录连续。
+// 单屏终端形态：先删除用户的命令消息，执行后把结果编辑更新到常驻的"终端消息"上。
+// cd 连续性：sh -c 里先 cd 到会话记录的目录再执行命令，末尾打印哨兵+pwd，
+// 从输出里解析出执行后的工作目录并回写。
+func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgID int64) {
+	// 立即删除用户发送的命令消息，保持"单屏"干净
+	b.deleteMsg(chatID, cmdMsgID)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
-	res, err := b.ops.Exec(ctx, id, []string{"sh", "-c", cmd}, "", "", 30, 3500)
+
+	// 哨兵：用于从输出末尾提取执行后的工作目录，避免与用户输出混淆
+	const marker = "__DC_PWD__:"
+	workDir := s.workDir
+	if workDir == "" {
+		workDir = "." // 容器默认工作目录
+	}
+	// 组合脚本：cd 到当前目录 -> 执行用户命令 -> 无论成败都打印哨兵+pwd
+	script := fmt.Sprintf("cd %s 2>/dev/null; %s; __ec=$?; printf '\\n%s%%s\\n' \"$(pwd)\"; exit $__ec",
+		shellQuote(workDir), cmd, marker)
+
+	res, err := b.ops.Exec(ctx, s.id, []string{"sh", "-c", script}, "", "", 30, 8000)
 	if err != nil {
-		b.reply(chatID, fmt.Sprintf("❌ 执行失败：%s", err.Error()))
+		b.updateShellMsg(chatID, s, fmt.Sprintf("❌ 执行失败：%s", escapeHTML(err.Error())))
 		return
 	}
-	out := strings.TrimSpace(res.Output)
+
+	// 从输出中剥离哨兵行，解析新的工作目录
+	out := res.Output
+	newDir := s.workDir
+	if idx := strings.LastIndex(out, marker); idx >= 0 {
+		tail := out[idx+len(marker):]
+		if nl := strings.IndexByte(tail, '\n'); nl >= 0 {
+			tail = tail[:nl]
+		}
+		if d := strings.TrimSpace(tail); d != "" {
+			newDir = d
+		}
+		// 去掉哨兵行及其前导换行，保留纯净的命令输出
+		out = strings.TrimRight(out[:idx], "\r\n")
+	}
+	if newDir != "" {
+		s.workDir = newDir
+	}
+	// 记录命令历史（最多保留 20 条）
+	s.history = append(s.history, cmd)
+	if len(s.history) > 20 {
+		s.history = s.history[len(s.history)-20:]
+	}
+	b.setShell(chatID, s)
+
+	out = strings.TrimSpace(out)
 	if out == "" {
 		out = "(无输出)"
 	}
 	if len(out) > 3500 {
-		out = out[:3500]
+		out = out[:3500] + "\n...(输出过长已截断)"
 	}
-	text := fmt.Sprintf("<b>💻 %s 命令输出</b>（退出码 %d）\n<code>%s</code>\n<pre>%s</pre>",
-		escapeHTML(name), res.ExitCode, escapeHTML(cmd), escapeHTML(out))
-	kb := b.backToPanelKb(id, name)
-	b.replyKeyboard(chatID, text, kb)
+	dirLabel := s.workDir
+	if dirLabel == "" {
+		dirLabel = "~"
+	}
+	body := fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>（退出码 %d）\n<pre>%s</pre>",
+		escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), res.ExitCode, escapeHTML(out))
+	b.updateShellMsg(chatID, s, body)
+}
+
+// updateShellMsg 把内容编辑更新到会话的终端消息上（始终保持单屏），并带上会话键盘。
+func (b *Bot) updateShellMsg(chatID int64, s *shellSession, text string) {
+	b.editMessageKeyboard(chatID, s.resultMsgID, text, b.shellKb(s.id, s.name))
+}
+
+// finishShell 结束 Shell 会话：清除会话状态，并把终端消息更新为已退出提示。
+func (b *Bot) finishShell(chatID int64, s *shellSession) {
+	b.clearShell(chatID)
+	text := fmt.Sprintf("✅ 已退出容器 <b>%s</b> 的 Shell 会话。", escapeHTML(s.name))
+	// 退出后移除键盘
+	b.editMessageKeyboard(chatID, s.resultMsgID, text, nil)
+}
+
+// showShellHistory 把历史命令列表编辑更新到终端消息上。
+func (b *Bot) showShellHistory(chatID int64, s *shellSession) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📜 <b>%s</b> 历史命令（最近 %d 条）\n\n", escapeHTML(s.name), len(s.history)))
+	if len(s.history) == 0 {
+		sb.WriteString("（暂无历史命令）")
+	} else {
+		for i, h := range s.history {
+			sb.WriteString(fmt.Sprintf("%d. <code>%s</code>\n", i+1, escapeHTML(h)))
+		}
+	}
+	sb.WriteString("\n继续发送命令即可执行。")
+	b.updateShellMsg(chatID, s, sb.String())
+}
+
+// shellQuote 用单引号安全包裹路径，转义其中的单引号，防止命令注入/路径含空格出错。
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

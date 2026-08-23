@@ -22,17 +22,32 @@ type Bot struct {
 	cfg     appconfig.TelegramConfig
 	running atomic.Bool
 	stopCh  chan struct{}
-	// pending 记录每个会话待完成的输入型动作（重命名/命令行等），
+	// pending 记录每个会话待完成的输入型动作（重命名/切标签等一次性动作），
 	// 用户点击按钮后进入等待，下一条文本消息作为输入完成动作。
 	pendingMu sync.Mutex
 	pending   map[int64]*pendingAction
+	// shells 记录每个会话进入的"交互式 Shell 会话"（持续，直到 /exit）。
+	// 与 pending 区分：pending 是一次性动作，shells 是连续命令会话，需保持工作目录。
+	shellMu sync.Mutex
+	shells  map[int64]*shellSession
 }
 
 // pendingAction 描述一个等待用户文本输入的动作。
 type pendingAction struct {
-	kind string // rename / exec
+	kind string // rename / tag
 	id   string // 目标容器ID
 	name string // 目标容器名
+}
+
+// shellSession 描述一个持续的容器 Shell 会话。
+// 进入后用户连续发送的每条文本都会作为命令在该容器内执行，直到 /exit 退出。
+// workDir 记录当前工作目录，使连续的 cd 生效（通过每次命令末尾回写 pwd 实现）。
+type shellSession struct {
+	id          string   // 目标容器ID
+	name        string   // 目标容器名
+	workDir     string   // 当前工作目录（空表示容器默认目录）
+	resultMsgID int64    // "终端消息"ID：结果始终更新在这一条上
+	history     []string // 已执行命令历史（用于"查看历史命令"）
 }
 
 // New 创建 Bot 服务实例（未启动）。
@@ -41,6 +56,7 @@ func New(svcCtx *svc.ServiceContext) *Bot {
 		svcCtx:  svcCtx,
 		ops:     containerops.New(svcCtx),
 		pending: make(map[int64]*pendingAction),
+		shells:  make(map[int64]*shellSession),
 	}
 }
 
@@ -58,6 +74,27 @@ func (b *Bot) takePending(chatID int64) *pendingAction {
 	p := b.pending[chatID]
 	delete(b.pending, chatID)
 	return p
+}
+
+// getShell 返回会话当前的 Shell 会话（不存在则返回 nil）。
+func (b *Bot) getShell(chatID int64) *shellSession {
+	b.shellMu.Lock()
+	defer b.shellMu.Unlock()
+	return b.shells[chatID]
+}
+
+// setShell 进入/更新一个 Shell 会话。
+func (b *Bot) setShell(chatID int64, s *shellSession) {
+	b.shellMu.Lock()
+	b.shells[chatID] = s
+	b.shellMu.Unlock()
+}
+
+// clearShell 退出并清除 Shell 会话。
+func (b *Bot) clearShell(chatID int64) {
+	b.shellMu.Lock()
+	delete(b.shells, chatID)
+	b.shellMu.Unlock()
 }
 
 // Notify 实现 notify.Notifier：向所有白名单会话推送通知。

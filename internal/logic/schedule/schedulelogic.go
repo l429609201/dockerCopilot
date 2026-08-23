@@ -45,6 +45,8 @@ func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err
 	rule := appconfig.ScheduledUpdateRule{
 		ID:               req.ID,
 		Name:             req.Name,
+		Type:             req.Type,
+		PruneMode:        req.PruneMode,
 		Enabled:          req.Enabled,
 		Cron:             req.Cron,
 		ContainerNames:   req.ContainerNames,

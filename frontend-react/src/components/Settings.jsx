@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Save, Send, CheckCircle, XCircle, Loader2 } from 'lucide-react'
+import { Settings as SettingsIcon, Save, Send, CheckCircle, XCircle, Loader2, Eye, EyeOff } from 'lucide-react'
 import { botAPI } from '../api/client.js'
 import { RegistrySection } from './RegistrySection.jsx'
 
-// 设置页面：目前包含 Telegram Bot 配置（Token 脱敏，不回显明文）
+// 解码后端用登录令牌 XOR 混淆后的 Base64 明文 Token。
+// key 为当前登录 JWT 令牌字符串（与后端混淆时所用密钥一致），失败时返回空串。
+function deobfuscateToken(obf, key) {
+  if (!obf || !key) return ''
+  try {
+    const bin = atob(obf) // Base64 -> 原始字节字符串
+    const kb = key
+    let out = ''
+    for (let i = 0; i < bin.length; i++) {
+      out += String.fromCharCode(bin.charCodeAt(i) ^ kb.charCodeAt(i % kb.length))
+    }
+    return out
+  } catch (e) {
+    return ''
+  }
+}
+
+// 设置页面：Telegram Bot 配置（Token 默认隐藏，可点击眼睛查看明文）
 export function Settings() {
   const [cfg, setCfg] = useState({
     enabled: false, token: '', allowedChatIds: [], proxy: '',
-    pollIntervalSec: 3, notifyUpdate: true,
+    pollIntervalSec: 3, notifyUpdate: true, updateCheckIntervalMinutes: 30,
   })
   const [chatIdsText, setChatIdsText] = useState('')
   const [loading, setLoading] = useState(false)
@@ -15,6 +32,7 @@ export function Settings() {
   const [msg, setMsg] = useState('')
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState(null) // { ok: boolean, text: string }
+  const [showToken, setShowToken] = useState(false) // Token 明文显隐切换
 
   useEffect(() => {
     (async () => {
@@ -22,10 +40,14 @@ export function Settings() {
       try {
         const r = await botAPI.getConfig()
         const d = r.data?.data || {}
+        // 用登录令牌解码后端混淆的明文 Token，回填到输入框（默认以密码形式隐藏）
+        const jwt = localStorage.getItem('docker_copilot_token') || ''
+        const plainToken = deobfuscateToken(d.tokenObf, jwt)
         setCfg({
-          enabled: !!d.enabled, token: '', // 脱敏返回不回填明文，留空表示不修改
+          enabled: !!d.enabled, token: plainToken,
           allowedChatIds: d.allowedChatIds || [], proxy: d.proxy || '',
           pollIntervalSec: d.pollIntervalSec || 3, notifyUpdate: !!d.notifyUpdate,
+          updateCheckIntervalMinutes: d.updateCheckIntervalMinutes || 30,
         })
         setChatIdsText((d.allowedChatIds || []).join(', '))
       } catch (e) {
@@ -92,8 +114,25 @@ export function Settings() {
         </label>
 
         <div>
-          <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Bot Token（留空表示不修改）</label>
-          <input type="password" value={cfg.token} onChange={(e) => set('token', e.target.value)} className="input" placeholder="123456:ABC-..." />
+          <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Bot Token（默认隐藏，点击右侧眼睛查看；留空表示不修改）</label>
+          <div className="relative">
+            <input
+              type={showToken ? 'text' : 'password'}
+              value={cfg.token}
+              onChange={(e) => set('token', e.target.value)}
+              className="input pr-10"
+              placeholder="123456:ABC-..."
+            />
+            {/* 显隐切换按钮 */}
+            <button
+              type="button"
+              onClick={() => setShowToken((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              title={showToken ? '隐藏 Token' : '查看 Token'}
+            >
+              {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
 
         <div>
@@ -109,6 +148,11 @@ export function Settings() {
           <div>
             <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">轮询间隔(秒)</label>
             <input type="number" value={cfg.pollIntervalSec} onChange={(e) => set('pollIntervalSec', Number(e.target.value))} className="input" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">更新检测周期(分钟)</label>
+            <input type="number" value={cfg.updateCheckIntervalMinutes} onChange={(e) => set('updateCheckIntervalMinutes', Number(e.target.value))} className="input" placeholder="30" />
+            <p className="text-xs text-gray-500 mt-1">内置更新检测推送周期，留空或0使用默认30分钟</p>
           </div>
         </div>
 

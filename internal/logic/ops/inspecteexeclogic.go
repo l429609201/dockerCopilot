@@ -72,3 +72,19 @@ func (l *InspectExecLogic) Exec(req *types.ContainerExecReq) (*types.Resp, error
 	}
 	return resp, nil
 }
+
+// Top 获取容器进程列表。
+func (l *InspectExecLogic) Top(req *types.IdReq) (*types.Resp, error) {
+	resp := &types.Resp{}
+	result, err := l.ops.Top(l.ctx, req.Id)
+	if err != nil {
+		return fail(resp, err.Error()), nil
+	}
+	resp.Code = 200
+	resp.Msg = "success"
+	resp.Data = map[string]interface{}{
+		"titles":    result.Titles,
+		"processes": result.Processes,
+	}
+	return resp, nil
+}
