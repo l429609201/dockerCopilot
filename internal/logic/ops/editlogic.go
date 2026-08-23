@@ -37,6 +37,14 @@ func (l *EditLogic) Edit(req *types.ContainerEditReq) (*types.Resp, error) {
 		RestartPolicy: req.RestartPolicy,
 		PortBindings:  req.PortBindings,
 		KeepOld:       req.KeepOldContainer,
+		Binds:         req.Binds,
+		NetworkMode:   req.NetworkMode,
+		Labels:        req.Labels,
+		Cmd:           req.Cmd,
+		Entrypoint:    req.Entrypoint,
+		Memory:        req.Memory,
+		MemorySwap:    req.MemorySwap,
+		NanoCPUs:      req.NanoCPUs,
 	}
 	taskID := uuid.New().String()
 	id := req.Id

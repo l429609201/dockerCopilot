@@ -11,13 +11,30 @@ import (
 	"github.com/docker/go-connections/nat"
 )
 
-// EditSpec 承载容器重建时的可编辑字段。nil 字段表示保留原值。
+// EditSpec 承载容器重建时的可编辑字段。
+// nil 切片 / 空字符串 / 零值指针表示"保留原值"，非零值则整体覆盖对应配置。
 type EditSpec struct {
 	Image         string
 	Env           []string
 	RestartPolicy string
 	PortBindings  []string
 	KeepOld       bool
+	// Binds 卷/绑定挂载列表（形如 "/host:/container:ro"），非 nil 时整体替换。
+	Binds []string
+	// NetworkMode 网络模式（bridge/host/none/container:xxx/自定义网络名），空表示不改。
+	NetworkMode string
+	// Labels 容器标签，非 nil 时整体替换。
+	Labels map[string]string
+	// Cmd 启动命令（覆盖镜像 CMD），非 nil 时整体替换。
+	Cmd []string
+	// Entrypoint 入口点（覆盖镜像 ENTRYPOINT），非 nil 时整体替换。
+	Entrypoint []string
+	// Memory 内存硬限制（字节），指针非 nil 时应用（0 表示不限制）。
+	Memory *int64
+	// MemorySwap 内存+swap 限制（字节），指针非 nil 时应用。
+	MemorySwap *int64
+	// NanoCPUs CPU 限额（cpus × 1e9），指针非 nil 时应用（0 表示不限制）。
+	NanoCPUs *int64
 }
 
 // Recreate 通过"停止旧容器 -> 重命名旧容器 -> 用新配置创建 -> 启动 -> 可选删除旧容器"
@@ -49,6 +66,17 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	if spec.Env != nil {
 		newConfig.Env = spec.Env
 	}
+	// 启动命令 / 入口点：非 nil 时整体覆盖
+	if spec.Cmd != nil {
+		newConfig.Cmd = spec.Cmd
+	}
+	if spec.Entrypoint != nil {
+		newConfig.Entrypoint = spec.Entrypoint
+	}
+	// 标签：非 nil 时整体替换
+	if spec.Labels != nil {
+		newConfig.Labels = spec.Labels
+	}
 	newConfig.Hostname = ""
 
 	newHostConfig := *inspected.HostConfig
@@ -69,7 +97,30 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 			newConfig.ExposedPorts[p] = struct{}{}
 		}
 	}
+	// 挂载：非 nil 时整体替换 Binds（形如 "/host:/container:ro"）
+	if spec.Binds != nil {
+		newHostConfig.Binds = spec.Binds
+	}
+	// 网络模式：非空时覆盖
+	if spec.NetworkMode != "" {
+		newHostConfig.NetworkMode = container.NetworkMode(spec.NetworkMode)
+	}
+	// 资源限制：指针非 nil 时应用（0 表示不限制）
+	if spec.Memory != nil {
+		newHostConfig.Memory = *spec.Memory
+	}
+	if spec.MemorySwap != nil {
+		newHostConfig.MemorySwap = *spec.MemorySwap
+	}
+	if spec.NanoCPUs != nil {
+		newHostConfig.NanoCPUs = *spec.NanoCPUs
+	}
+
+	// 网络端点配置：若改了网络模式，原 EndpointsConfig 可能与新模式冲突，需清空由 Docker 重建
 	networkingConfig := &network.NetworkingConfig{EndpointsConfig: inspected.NetworkSettings.Networks}
+	if spec.NetworkMode != "" {
+		networkingConfig = &network.NetworkingConfig{}
+	}
 
 	report(30, "停止旧容器")
 	timeout := 10

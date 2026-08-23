@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Search, Check } from 'lucide-react'
+import { Search, Check, Clock } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 
 // 任务类型选项：自动更新 / 自动清理镜像 / 自动备份
@@ -9,8 +9,29 @@ const TASK_TYPES = [
   { value: 'backup', label: '自动备份', desc: '定时备份所有容器配置为JSON' },
 ]
 
+// 将标准五段式 cron 反解析为可视化模式（尽力而为），供编辑回填。
+// 返回 { mode, hour, minute, everyHours }。无法识别时回退 advanced 模式。
+function parseCronToVisual(cron) {
+  const def = { mode: 'daily', hour: 4, minute: 30, everyHours: 6 }
+  if (!cron) return def
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return { ...def, mode: 'advanced' }
+  const [m, h, dom, , dow] = parts
+  // 每隔 N 小时：时为 */N，日、周为 *
+  if (dom === '*' && dow === '*' && /^\*\/\d+$/.test(h)) {
+    return { mode: 'interval', hour: 4, minute: Number(m) || 0, everyHours: Number(h.slice(2)) || 6 }
+  }
+  // 每天 HH:MM
+  if (dom === '*' && dow === '*' && /^\d+$/.test(h) && /^\d+$/.test(m)) {
+    return { mode: 'daily', hour: Number(h), minute: Number(m), everyHours: 6 }
+  }
+  return { ...def, mode: 'advanced' }
+}
+
 // 定时规则编辑弹窗
 export function RuleEditor({ rule, registries, onCancel, onSave }) {
+  // 由规则已有 cron 反解析出可视化初值
+  const initVisual = parseCronToVisual(rule.cron)
   const [form, setForm] = useState({
     ...rule,
     // 任务类型，默认 update（兼容历史数据无 type 的情况）
@@ -19,7 +40,15 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     pruneMode: rule.pruneMode || 'dangling',
     // 已选容器名集合（数组），从规则初始化
     containerNames: rule.containerNames || [],
+    // 该规则独立的 cron 定时（默认每天 04:30）
+    cron: rule.cron || '30 4 * * *',
   })
+  // cron 可视化编辑状态：模式 + 各输入项
+  const [cronMode, setCronMode] = useState(initVisual.mode)
+  const [cronHour, setCronHour] = useState(initVisual.hour)
+  const [cronMinute, setCronMinute] = useState(initVisual.minute)
+  const [cronEvery, setCronEvery] = useState(initVisual.everyHours)
+  const [cronExpr, setCronExpr] = useState(rule.cron || '30 4 * * *')
   // 从后端拉取的可选容器名列表
   const [allContainers, setAllContainers] = useState([])
   const [loadErr, setLoadErr] = useState('')
@@ -54,6 +83,18 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     return allContainers.filter((n) => n.toLowerCase().includes(kw))
   }, [allContainers, keyword])
 
+  // 由可视化控件推导出最终 cron 表达式
+  const buildCron = () => {
+    if (cronMode === 'daily') return `${cronMinute} ${cronHour} * * *`
+    if (cronMode === 'interval') return `${cronMinute} */${cronEvery} * * *`
+    return cronExpr.trim()
+  }
+  // 可视化控件变化时，实时同步到 form.cron
+  const cronPreview = buildCron()
+  useEffect(() => {
+    setForm((f) => ({ ...f, cron: cronPreview }))
+  }, [cronPreview])
+
   // 切换某个容器的选中状态
   const toggle = (name) => {
     setForm((f) => {
@@ -81,7 +122,13 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
       alert('请至少选择一个容器')
       return
     }
-    onSave({ ...form })
+    // 校验定时表达式非空（高级模式手输可能清空）
+    const finalCron = buildCron()
+    if (!finalCron) {
+      alert('请设置该规则的执行时间（cron 不能为空）')
+      return
+    }
+    onSave({ ...form, cron: finalCron })
   }
 
   return (
@@ -114,7 +161,49 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
           </p>
         </Field>
 
-        <div className="text-xs text-gray-400 -mt-1">执行时间由「全局定时设置」统一控制，到点依次执行所有启用的规则。</div>
+        {/* 该规则独立的执行时间设置 */}
+        <Field label="执行时间">
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+            {/* 模式切换 */}
+            <div className="flex flex-wrap gap-2">
+              <CronModeBtn active={cronMode === 'daily'} onClick={() => setCronMode('daily')} label="每天固定时间" />
+              <CronModeBtn active={cronMode === 'interval'} onClick={() => setCronMode('interval')} label="每隔几小时" />
+              <CronModeBtn active={cronMode === 'advanced'} onClick={() => setCronMode('advanced')} label="高级(cron)" />
+            </div>
+
+            {cronMode === 'daily' && (
+              <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <span>每天</span>
+                <CronNum value={cronHour} min={0} max={23} onChange={setCronHour} />
+                <span>时</span>
+                <CronNum value={cronMinute} min={0} max={59} onChange={setCronMinute} />
+                <span>分</span>
+              </div>
+            )}
+
+            {cronMode === 'interval' && (
+              <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <span>每隔</span>
+                <CronNum value={cronEvery} min={1} max={23} onChange={setCronEvery} />
+                <span>小时（在第</span>
+                <CronNum value={cronMinute} min={0} max={59} onChange={setCronMinute} />
+                <span>分执行）</span>
+              </div>
+            )}
+
+            {cronMode === 'advanced' && (
+              <div>
+                <input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)}
+                  className="input font-mono" placeholder="分 时 日 月 周，如 30 4 * * *" />
+                <p className="text-xs text-gray-400 mt-1">五段式 cron：分 时 日 月 周。</p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 font-mono pt-1 border-t border-gray-100 dark:border-gray-700/50">
+              <Clock className="h-3.5 w-3.5" /> 当前表达式：{cronPreview || '（空）'}
+            </div>
+          </div>
+        </Field>
 
         {/* 自动清理镜像：清理范围选择 */}
         {form.type === 'prune' && (
@@ -243,5 +332,30 @@ function CheckField({ label, checked, onChange }) {
         className="rounded border-gray-300" />
       {label}
     </label>
+  )
+}
+
+// cron 模式切换按钮
+function CronModeBtn({ active, onClick, label }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={`px-3 py-1.5 rounded-lg text-sm ${active
+        ? 'bg-primary-600 text-white'
+        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}>
+      {label}
+    </button>
+  )
+}
+
+// cron 数值输入框（带范围钳制）
+function CronNum({ value, min, max, onChange }) {
+  return (
+    <input type="number" value={value} min={min} max={max}
+      onChange={(e) => {
+        let v = Number(e.target.value)
+        if (isNaN(v)) v = min
+        onChange(Math.max(min, Math.min(max, v)))
+      }}
+      className="w-16 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900 text-center" />
   )
 }

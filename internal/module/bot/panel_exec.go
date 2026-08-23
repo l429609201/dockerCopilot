@@ -73,10 +73,11 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
 }
 
 // doSwitchTag 用指定 tag 重建容器：拼出 repo:tag 后走更新流程。
-func (b *Bot) doSwitchTag(chatID int64, id, name, tag string) {
+// messageID > 0 时把进度编辑到原消息（面板点击），否则发新消息（文本输入切标签）。
+func (b *Bot) doSwitchTag(chatID int64, id, name, tag string, messageID int64) {
 	c, ok := b.findContainer(id)
 	if !ok {
-		b.reply(chatID, "❌ 容器不存在或已被删除")
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 容器不存在或已被删除", b.backToPanelKb(id, name))
 		return
 	}
 	repo := c.Image
@@ -86,11 +87,12 @@ func (b *Bot) doSwitchTag(chatID int64, id, name, tag string) {
 	target := repo + ":" + strings.TrimSpace(tag)
 	taskID, err := b.ops.Update(c.ID, name, target)
 	if err != nil {
-		b.reply(chatID, fmt.Sprintf("❌ 提交切换失败：%s", err.Error()))
+		b.editOrReplyKeyboard(chatID, messageID,
+			fmt.Sprintf("❌ 提交切换失败：%s", escapeHTML(err.Error())), b.backToPanelKb(id, name))
 		return
 	}
-	b.reply(chatID, fmt.Sprintf("🚀 容器 <b>%s</b> 切换标签任务已提交\n目标镜像：<code>%s</code>\n任务ID：<code>%s</code>\n后台执行中，请稍后用 /ps 查看。",
-		escapeHTML(name), escapeHTML(target), taskID[:8]))
+	// 复用更新进度监听：把切标签进度持续编辑到原消息上
+	go b.watchUpdateProgress(chatID, messageID, taskID, name, target)
 }
 
 // promptRename 进入重命名等待：提示用户发送新名称。
@@ -135,6 +137,7 @@ func (b *Bot) promptTagInput(chatID int64, id, name string) {
 }
 
 // completePending 根据待输入动作类型完成操作。
+// 由文本消息触发，无原始面板 messageID，故结果发新消息并附「返回管理」键盘（用新名称定位面板）。
 func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -144,12 +147,14 @@ func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 	switch p.kind {
 	case "rename":
 		if err := b.ops.Rename(p.id, input); err != nil {
-			b.reply(chatID, fmt.Sprintf("❌ 重命名失败：%s", err.Error()))
+			b.replyKeyboard(chatID, fmt.Sprintf("❌ 重命名失败：%s", escapeHTML(err.Error())), b.backToPanelKb(p.id, p.name))
 			return
 		}
-		b.reply(chatID, fmt.Sprintf("✅ 容器已重命名为 <b>%s</b>", escapeHTML(input)))
+		// 重命名成功后容器名已变，用新名称构造返回面板按钮
+		b.replyKeyboard(chatID, fmt.Sprintf("✅ 容器已重命名为 <b>%s</b>", escapeHTML(input)), b.backToPanelKb(p.id, input))
 	case "tag":
-		b.doSwitchTag(chatID, p.id, p.name, input)
+		// 文本输入切标签无面板 messageID，传 0 发新消息
+		b.doSwitchTag(chatID, p.id, p.name, input, 0)
 	default:
 		b.reply(chatID, "未知的待处理动作")
 	}

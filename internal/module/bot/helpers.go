@@ -1,11 +1,39 @@
 package bot
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// buildPager 生成通用分页键盘：一行「上一页/页码/下一页」+ 一行「返回」。
+// prefix 为翻页回调前缀（如 "imgpg"，翻页回调为 prefix|<page>）；
+// page 当前页(从0开始)；totalPages 总页数；backData 返回按钮的回调数据。
+// 仅在多页时显示翻页行；首页无「上一页」、尾页无「下一页」，中间页码按钮回调当前页(无动作占位)。
+func buildPager(prefix string, page, totalPages int, backData string) [][]telegram.InlineKeyboardButton {
+	var rows [][]telegram.InlineKeyboardButton
+	if totalPages > 1 {
+		var nav []telegram.InlineKeyboardButton
+		if page > 0 {
+			nav = append(nav, telegram.InlineKeyboardButton{
+				Text: "⬅ 上一页", CallbackData: fmt.Sprintf("%s|%d", prefix, page-1)})
+		}
+		// 页码指示按钮（点击无动作，回调当前页）
+		nav = append(nav, telegram.InlineKeyboardButton{
+			Text: fmt.Sprintf("%d/%d", page+1, totalPages), CallbackData: fmt.Sprintf("%s|%d", prefix, page)})
+		if page < totalPages-1 {
+			nav = append(nav, telegram.InlineKeyboardButton{
+				Text: "下一页 ➡", CallbackData: fmt.Sprintf("%s|%d", prefix, page+1)})
+		}
+		rows = append(rows, nav)
+	}
+	rows = append(rows, []telegram.InlineKeyboardButton{
+		{Text: "⬅ 返回主菜单", CallbackData: backData},
+	})
+	return rows
+}
 
 // reply 发送纯文本回复。
 func (b *Bot) reply(chatID int64, text string) {

@@ -88,7 +88,7 @@ func (b *Bot) handleCommand(chatID int64, text string, msgID int64) {
 	case "/ps", "/containers":
 		b.replyContainerList(chatID, false, 0, 0)
 	case "/images":
-		b.replyImageList(chatID, 0)
+		b.replyImageList(chatID, 0, 0)
 	case "/sys":
 		b.replySystemOverview(chatID, 0)
 	case "/check_updates":
@@ -96,7 +96,7 @@ func (b *Bot) handleCommand(chatID int64, text string, msgID int64) {
 	case "/update_all":
 		b.updateAllContainers(chatID)
 	case "/compose":
-		b.listComposeProjects(chatID, 0)
+		b.listComposeProjects(chatID, 0, 0)
 	case "/start_c":
 		b.doAction(chatID, args, "start")
 	case "/stop_c":
@@ -157,12 +157,12 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		case "stopped":
 			b.replyContainerListStopped(chatID, page, messageID)
 		case "images":
-			b.replyImageList(chatID, messageID)
+			b.replyImageList(chatID, messageID, 0)
 		case "sys":
 			b.replySystemOverview(chatID, messageID)
 		case "updates":
 			// 更新中心：显示所有有更新的容器
-			b.replyUpdateCenter(chatID, messageID)
+			b.replyUpdateCenter(chatID, messageID, 0)
 		case "backup":
 			// 备份中心：显示备份管理面板
 			b.replyBackupCenter(chatID, messageID)
@@ -173,7 +173,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			// 设置中心：整合多个设置入口
 			b.replySettingsCenter(chatID, messageID)
 		case "compose":
-			b.listComposeProjects(chatID, messageID)
+			b.listComposeProjects(chatID, messageID, 0)
 		case "mute":
 			// 更新通知设置面板
 			b.sendMuteSettings(chatID, messageID)
@@ -181,7 +181,11 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			// 返回主菜单：编辑原消息为主菜单
 			b.editMainMenu(chatID, messageID)
 		case "help":
-			b.reply(chatID, helpText())
+			// 帮助：编辑原消息展示，并带返回主菜单键盘，保持单条消息流
+			backKb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+			}}}
+			b.editOrReplyKeyboard(chatID, messageID, helpText(), backKb)
 		}
 		return
 	}
@@ -244,7 +248,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// 切换 tag 执行：dotag|<id>|<name>|<tag>
 	if parts[0] == "dotag" && len(parts) == 4 {
-		b.doSwitchTag(chatID, parts[1], parts[2], parts[3])
+		b.doSwitchTag(chatID, parts[1], parts[2], parts[3], messageID)
 		return
 	}
 	// 列表操作按钮：act|<action>|<id>|<name>
@@ -266,12 +270,24 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// 批量更新确认：batchupdate|confirm
 	if parts[0] == "batchupdate" && len(parts) == 2 && parts[1] == "confirm" {
-		b.executeBatchUpdate(chatID)
+		b.executeBatchUpdate(chatID, messageID)
 		return
 	}
-	// Compose 项目列表：cmpls
+	// 镜像列表翻页：imgpg|<page>
+	if parts[0] == "imgpg" && len(parts) == 2 {
+		page, _ := strconv.Atoi(parts[1])
+		b.replyImageList(chatID, messageID, page)
+		return
+	}
+	// Compose 项目列表：cmpls（回到第 0 页）
 	if parts[0] == "cmpls" {
-		b.listComposeProjects(chatID, messageID)
+		b.listComposeProjects(chatID, messageID, 0)
+		return
+	}
+	// Compose 项目列表翻页：cmppg|<page>
+	if parts[0] == "cmppg" && len(parts) == 2 {
+		page, _ := strconv.Atoi(parts[1])
+		b.listComposeProjects(chatID, messageID, page)
 		return
 	}
 	// Compose 项目面板：cmpp|<projectID>
@@ -281,7 +297,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// Compose 执行动作：cmpa|<projectID>|<action>
 	if parts[0] == "cmpa" && len(parts) == 3 {
-		b.executeComposeAction(chatID, parts[1], parts[2])
+		b.executeComposeAction(chatID, parts[1], parts[2], messageID)
 		return
 	}
 	// Compose 危险动作确认：cmpaconf|<projectID>|<action>
@@ -299,10 +315,20 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			}
 		}
 		if target == nil {
-			b.reply(chatID, "❌ 项目不存在或已被移除")
+			b.editOrReplyKeyboard(chatID, messageID, "❌ 项目不存在或已被移除", &telegram.InlineKeyboardMarkup{
+				InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+					{Text: "⬅ 返回项目列表", CallbackData: "cmpls"},
+				}},
+			})
 			return
 		}
-		b.doComposeAction(chatID, target, parts[2])
+		b.doComposeAction(chatID, target, parts[2], messageID)
+		return
+	}
+	// 更新中心待更新列表翻页：updpg|<page>
+	if parts[0] == "updpg" && len(parts) == 2 {
+		page, _ := strconv.Atoi(parts[1])
+		b.replyUpdateCenter(chatID, messageID, page)
 		return
 	}
 	// 更新中心操作：updc|<action>
@@ -356,7 +382,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		case "prune_exec":
 			// 执行清理：settings|prune_exec|<mode>
 			if len(parts) == 3 {
-				b.executePruneImages(chatID, parts[2])
+				b.executePruneImages(chatID, parts[2], messageID)
 			}
 		}
 		return
@@ -415,11 +441,24 @@ func (b *Bot) execAction(chatID int64, action, id, name string, messageID int64)
 		b.reply(chatID, "不支持的操作")
 		return
 	}
+	// 删除类操作后容器已不存在，返回列表；其余操作返回该容器管理面板
+	var backKb *telegram.InlineKeyboardMarkup
+	if action == "remove" {
+		backKb = &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: "⬅ 返回列表", CallbackData: "menu|ps|0"},
+		}}}
+	} else {
+		backKb = b.backToPanelKb(id, name)
+	}
 	if err != nil {
-		b.reply(chatID, fmt.Sprintf("❌ 容器 %s 执行「%s」失败：%s", name, actionLabel(action), err.Error()))
+		b.editOrReplyKeyboard(chatID, messageID,
+			fmt.Sprintf("❌ 容器 <b>%s</b> 执行「%s」失败：%s", escapeHTML(name), actionLabel(action), escapeHTML(err.Error())),
+			backKb)
 		return
 	}
-	b.reply(chatID, fmt.Sprintf("✅ 容器 %s 已%s", name, actionLabel(action)))
+	b.editOrReplyKeyboard(chatID, messageID,
+		fmt.Sprintf("✅ 容器 <b>%s</b> 已%s", escapeHTML(name), actionLabel(action)),
+		backKb)
 }
 
 // findContainer 按 id 前缀查找容器，返回容器信息与是否找到。
@@ -529,7 +568,7 @@ func mainMenuKeyboard() *telegram.InlineKeyboardMarkup {
 			// 第一行：概览 | 容器
 			{{Text: "📊 概览", CallbackData: "menu|sys"}, {Text: "📦 容器", CallbackData: "menu|ps|0"}},
 			// 第二行：更新 | 镜像
-			{{Text: "🆙 更新", CallbackData: "menu|updates"}, {Text: "�️ 镜像", CallbackData: "menu|images"}},
+			{{Text: "🆙 更新", CallbackData: "menu|updates"}, {Text: "🐳 镜像", CallbackData: "menu|images"}},
 			// 第三行：备份 | 实例
 			{{Text: "📋 备份", CallbackData: "menu|backup"}, {Text: "💻 实例", CallbackData: "menu|instance"}},
 			// 第四行：设置 | 帮助
@@ -694,17 +733,23 @@ func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int, messa
 	}
 }
 
-// replyImageList 推送镜像详细列表：每行显示 镜像名:标签 + 大小 + 是否在用。
+// imagesPageSize 镜像列表每页展示条数（避免单条消息过长）。
+const imagesPageSize = 15
+
+// replyImageList 分页推送镜像详细列表：每行显示 镜像名:标签 + 大小 + 是否在用。
 // 按镜像大小倒序排列，大镜像在前方便用户识别存储占用大户。
-// messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) replyImageList(chatID int64, messageID int64) {
+// page 从 0 开始；messageID > 0 时编辑原消息（翻页），否则发送新消息。
+func (b *Bot) replyImageList(chatID int64, messageID int64, page int) {
 	list, err := utiles.GetImagesList(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取镜像列表失败："+err.Error())
 		return
 	}
 	if len(list) == 0 {
-		b.reply(chatID, "📦 当前没有任何镜像")
+		b.editOrReplyKeyboard(chatID, messageID, "📦 当前没有任何镜像",
+			&telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+			}}})
 		return
 	}
 
@@ -713,22 +758,35 @@ func (b *Bot) replyImageList(chatID int64, messageID int64) {
 		return list[i].Size > list[j].Size
 	})
 
-	var text strings.Builder
-	text.WriteString(fmt.Sprintf("<b>📦 镜像列表（共 %d 个）</b>\n\n", len(list)))
+	// 分页计算：页码钳制到有效范围
+	total := len(list)
+	totalPages := (total + imagesPageSize - 1) / imagesPageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+	start := page * imagesPageSize
+	end := start + imagesPageSize
+	if end > total {
+		end = total
+	}
 
-	for _, img := range list {
+	var text strings.Builder
+	text.WriteString(fmt.Sprintf("<b>📦 镜像列表（共 %d 个）</b>  第 %d/%d 页\n\n", total, page+1, totalPages))
+
+	for _, img := range list[start:end] {
 		// 镜像名:标签
 		imageFull := img.ImageName + ":" + img.ImageTag
 		if img.ImageName == "None" || img.ImageTag == "None" {
 			imageFull = "&lt;none&gt;" // 无标签镜像
 		}
-
 		// 状态图标：是否在用
 		statusIcon := "⚪"
 		if img.InUsed {
 			statusIcon = "🟢"
 		}
-
 		text.WriteString(fmt.Sprintf("%s <code>%s</code>\n", statusIcon, escapeHTML(imageFull)))
 		text.WriteString(fmt.Sprintf("   📊 大小: %s", img.SizeFormat))
 		if img.InUsed {
@@ -738,15 +796,11 @@ func (b *Bot) replyImageList(chatID int64, messageID int64) {
 		}
 		text.WriteString("\n\n")
 	}
-
 	text.WriteString("💡 <i>提示：🟢 使用中 | ⚪ 未使用</i>")
 
-	// 如果有 messageID，编辑原消息；否则发送新消息
-	if messageID > 0 {
-		b.editMessage(chatID, messageID, text.String())
-	} else {
-		b.reply(chatID, text.String())
-	}
+	// 翻页 + 返回键盘
+	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: buildPager("imgpg", page, totalPages, "menu|home")}
+	b.editOrReplyKeyboard(chatID, messageID, text.String(), kb)
 }
 
 // replySystemOverview 推送系统资源概览：容器/镜像统计 + 磁盘占用汇总。
@@ -890,7 +944,17 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 		text.WriteString("✅ 所有容器镜像均为最新版本")
 	}
 
-	b.reply(chatID, text.String())
+	// 附带操作键盘：有更新则给批量更新入口，始终带返回主菜单
+	var rows [][]telegram.InlineKeyboardButton
+	if len(needUpdateList) > 0 {
+		rows = append(rows, []telegram.InlineKeyboardButton{
+			{Text: "✅ 批量更新全部", CallbackData: "batchupdate|confirm"},
+		})
+	}
+	rows = append(rows, []telegram.InlineKeyboardButton{
+		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+	})
+	b.replyKeyboard(chatID, text.String(), &telegram.InlineKeyboardMarkup{InlineKeyboard: rows})
 }
 
 // updateAllContainers 批量更新所有有可用更新的容器（高风险操作，需二次确认）。
@@ -943,11 +1007,15 @@ func (b *Bot) updateAllContainers(chatID int64) {
 }
 
 // executeBatchUpdate 执行批量更新：依次为所有有更新的容器提交更新任务。
-func (b *Bot) executeBatchUpdate(chatID int64) {
+// messageID > 0 时把结果编辑到原消息（内联按钮触发），否则发新消息。
+func (b *Bot) executeBatchUpdate(chatID int64, messageID int64) {
+	backHomeKb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+	}}}
 	// 获取所有需要更新的容器
 	containers, err := utiles.GetContainerList(b.svcCtx)
 	if err != nil {
-		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 获取容器列表失败："+escapeHTML(err.Error()), backHomeKb)
 		return
 	}
 	containers = utiles.CheckImageUpdate(b.svcCtx, containers)
@@ -960,11 +1028,12 @@ func (b *Bot) executeBatchUpdate(chatID int64) {
 	}
 
 	if len(needUpdateList) == 0 {
-		b.reply(chatID, "✅ 没有容器需要更新")
+		b.editOrReplyKeyboard(chatID, messageID, "✅ 没有容器需要更新", backHomeKb)
 		return
 	}
 
-	b.reply(chatID, fmt.Sprintf("🚀 开始批量更新 %d 个容器...\n", len(needUpdateList)))
+	// 执行前：编辑原消息为"开始批量更新"，不另发新消息
+	b.editOrReplyKeyboard(chatID, messageID, fmt.Sprintf("🚀 开始批量更新 %d 个容器...\n", len(needUpdateList)), nil)
 
 	// 依次提交更新任务
 	successCount := 0
@@ -1001,12 +1070,16 @@ func (b *Bot) executeBatchUpdate(chatID int64) {
 		text.WriteString("\n💡 所有更新任务已在后台执行，请稍后用 /ps 查看状态。")
 	}
 
-	b.reply(chatID, text.String())
+	// 结果编辑到原消息并带返回主菜单
+	b.editOrReplyKeyboard(chatID, messageID, text.String(), backHomeKb)
 }
 
-// listComposeProjects 列出所有扫描到的 Compose 项目，每个项目一个按钮进入管理面板。
-// messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
+// composePageSize Compose 项目列表每页展示条数（每项占一个按钮）。
+const composePageSize = 8
+
+// listComposeProjects 分页列出扫描到的 Compose 项目，每个项目一个按钮进入管理面板。
+// page 从 0 开始；messageID > 0 时编辑原消息（翻页），否则发送新消息。
+func (b *Bot) listComposeProjects(chatID int64, messageID int64, page int) {
 	// 从配置获取扫描路径和深度
 	scanPaths := b.svcCtx.Config.Compose.ScanPaths
 	maxDepth := b.svcCtx.Config.Compose.MaxDepth
@@ -1029,20 +1102,36 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
 		return
 	}
 
+	// 分页计算：页码钳制到有效范围
+	total := len(projects)
+	totalPages := (total + composePageSize - 1) / composePageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+	start := page * composePageSize
+	end := start + composePageSize
+	if end > total {
+		end = total
+	}
+
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("<b>🧩 Compose 项目列表（共 %d 个）</b>\n\n", len(projects)))
+	text.WriteString(fmt.Sprintf("<b>🧩 Compose 项目列表（共 %d 个）</b>  第 %d/%d 页\n\n", total, page+1, totalPages))
 
 	var rows [][]telegram.InlineKeyboardButton
-	for i, proj := range projects {
+	for i := start; i < end; i++ {
+		proj := projects[i]
 		text.WriteString(fmt.Sprintf("%d. <b>%s</b>\n   <code>%s</code>\n\n", i+1, escapeHTML(proj.Name), escapeHTML(proj.Dir)))
 		rows = append(rows, []telegram.InlineKeyboardButton{
 			{Text: fmt.Sprintf("%d. ⚙ 管理 %s", i+1, proj.Name), CallbackData: fmt.Sprintf("cmpp|%s", proj.ID)},
 		})
 	}
-	// 列表末尾追加返回主菜单
-	rows = append(rows, []telegram.InlineKeyboardButton{
-		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
-	})
+	// 追加翻页行 + 返回主菜单
+	for _, row := range buildPager("cmppg", page, totalPages, "menu|home") {
+		rows = append(rows, row)
+	}
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
 	b.editOrReplyKeyboard(chatID, messageID, text.String(), kb)
@@ -1108,7 +1197,7 @@ func (b *Bot) showComposeProjectPanel(chatID int64, projectID string, messageID 
 }
 
 // executeComposeAction 执行 Compose 动作（危险操作如 down 需二次确认）。
-func (b *Bot) executeComposeAction(chatID int64, projectID, action string) {
+func (b *Bot) executeComposeAction(chatID int64, projectID, action string, messageID int64) {
 	// 重新扫描找到项目
 	scanPaths := b.svcCtx.Config.Compose.ScanPaths
 	maxDepth := b.svcCtx.Config.Compose.MaxDepth
@@ -1123,7 +1212,7 @@ func (b *Bot) executeComposeAction(chatID int64, projectID, action string) {
 		}
 	}
 	if target == nil {
-		b.replyKeyboard(chatID, "❌ 项目不存在或已被移除", &telegram.InlineKeyboardMarkup{
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 项目不存在或已被移除", &telegram.InlineKeyboardMarkup{
 			InlineKeyboard: [][]telegram.InlineKeyboardButton{{
 				{Text: "⬅ 返回项目列表", CallbackData: "cmpls"},
 			}},
@@ -1142,18 +1231,19 @@ func (b *Bot) executeComposeAction(chatID int64, projectID, action string) {
 				},
 			},
 		}
-		b.replyKeyboard(chatID, text, kb)
+		b.editOrReplyKeyboard(chatID, messageID, text, kb)
 		return
 	}
 
 	// 非危险操作直接执行
-	b.doComposeAction(chatID, target, action)
+	b.doComposeAction(chatID, target, action, messageID)
 }
 
 // doComposeAction 实际执行 Compose 动作并回报结果。
-func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string) {
+// messageID > 0 时先把「正在执行」编辑到原消息，执行完再编辑为结果，保持单条消息流。
+func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string, messageID int64) {
 	if !compose.IsSupportedAction(action) {
-		b.replyKeyboard(chatID, "❌ 不支持的操作："+action, &telegram.InlineKeyboardMarkup{
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 不支持的操作："+action, &telegram.InlineKeyboardMarkup{
 			InlineKeyboard: [][]telegram.InlineKeyboardButton{{
 				{Text: "⬅ 返回项目管理", CallbackData: fmt.Sprintf("cmpp|%s", proj.ID)},
 			}},
@@ -1170,7 +1260,8 @@ func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string
 		"start":   "启动",
 	}[action]
 
-	b.reply(chatID, fmt.Sprintf("🚀 正在执行 <b>%s</b> - %s...", escapeHTML(proj.Name), actionLabel))
+	// 执行前：编辑原消息为"正在执行"，不再另发新消息刷屏
+	b.editOrReplyKeyboard(chatID, messageID, fmt.Sprintf("🚀 正在执行 <b>%s</b> - %s...", escapeHTML(proj.Name), actionLabel), nil)
 
 	// 执行 Compose 命令（超时 5 分钟）
 	ctx := context.Background()
@@ -1204,7 +1295,8 @@ func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string
 			{{Text: "⬅ 返回项目管理", CallbackData: fmt.Sprintf("cmpp|%s", proj.ID)}},
 		},
 	}
-	b.replyKeyboard(chatID, text.String(), kb)
+	// 编辑原消息展示结果（与执行前的"正在执行"同一条消息）
+	b.editOrReplyKeyboard(chatID, messageID, text.String(), kb)
 }
 
 // ========== 消息编辑辅助函数 ==========
@@ -1235,17 +1327,19 @@ func (b *Bot) editOrReplyKeyboard(chatID int64, messageID int64, text string, ke
 
 // ========== 新增主菜单功能 ==========
 
-// replyUpdateCenter 更新中心：显示所有有可用更新的容器列表，提供一键检查和批量更新。
-func (b *Bot) replyUpdateCenter(chatID int64, messageID int64) {
+// updateCenterPageSize 更新中心"待更新容器"列表每页展示条数。
+const updateCenterPageSize = 20
+
+// replyUpdateCenter 更新中心：分页显示所有有可用更新的容器列表，提供一键检查和批量更新。
+// page 从 0 开始（仅对待更新列表分页）；messageID > 0 时编辑原消息。
+func (b *Bot) replyUpdateCenter(chatID int64, messageID int64, page int) {
 	// 获取所有容器并检查更新状态
 	containers, err := utiles.GetContainerList(b.svcCtx)
 	if err != nil {
-		text := "❌ 获取容器列表失败：" + err.Error()
-		if messageID > 0 {
-			b.editMessage(chatID, messageID, text)
-		} else {
-			b.reply(chatID, text)
-		}
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 获取容器列表失败："+escapeHTML(err.Error()),
+			&telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+			}}})
 		return
 	}
 	containers = utiles.CheckImageUpdate(b.svcCtx, containers)
@@ -1258,14 +1352,33 @@ func (b *Bot) replyUpdateCenter(chatID int64, messageID int64) {
 		}
 	}
 
+	// 分页计算（仅对待更新列表）
+	total := len(needUpdateList)
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + updateCenterPageSize - 1) / updateCenterPageSize
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
 	var text strings.Builder
 	text.WriteString("<b>🆙 更新中心</b>\n\n")
 	text.WriteString(fmt.Sprintf("总容器数: %d\n", len(containers)))
-	text.WriteString(fmt.Sprintf("🔺 有可用更新: %d\n\n", len(needUpdateList)))
+	text.WriteString(fmt.Sprintf("🔺 有可用更新: %d\n\n", total))
 
-	if len(needUpdateList) > 0 {
-		text.WriteString("<b>需要更新的容器：</b>\n")
-		for i, c := range needUpdateList {
+	if total > 0 {
+		start := page * updateCenterPageSize
+		end := start + updateCenterPageSize
+		if end > total {
+			end = total
+		}
+		text.WriteString(fmt.Sprintf("<b>需要更新的容器（第 %d/%d 页）：</b>\n", page+1, totalPages))
+		for i := start; i < end; i++ {
+			c := needUpdateList[i]
 			name := ""
 			if len(c.Names) > 0 {
 				name = strings.TrimPrefix(c.Names[0], "/")
@@ -1279,12 +1392,23 @@ func (b *Bot) replyUpdateCenter(chatID int64, messageID int64) {
 		text.WriteString("✅ 所有容器镜像均为最新版本")
 	}
 
-	// 构建按钮
+	// 构建按钮：翻页行（仅多页时）+ 检查/批量更新 + 返回
 	var rows [][]telegram.InlineKeyboardButton
+	if total > 0 && totalPages > 1 {
+		var nav []telegram.InlineKeyboardButton
+		if page > 0 {
+			nav = append(nav, telegram.InlineKeyboardButton{Text: "⬅ 上一页", CallbackData: fmt.Sprintf("updpg|%d", page-1)})
+		}
+		nav = append(nav, telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d/%d", page+1, totalPages), CallbackData: fmt.Sprintf("updpg|%d", page)})
+		if page < totalPages-1 {
+			nav = append(nav, telegram.InlineKeyboardButton{Text: "下一页 ➡", CallbackData: fmt.Sprintf("updpg|%d", page+1)})
+		}
+		rows = append(rows, nav)
+	}
 	rows = append(rows, []telegram.InlineKeyboardButton{
 		{Text: "🔍 重新检查更新", CallbackData: "updc|check"},
 	})
-	if len(needUpdateList) > 0 {
+	if total > 0 {
 		rows = append(rows, []telegram.InlineKeyboardButton{
 			{Text: "✅ 批量更新全部", CallbackData: "batchupdate|confirm"},
 		})
@@ -1293,13 +1417,7 @@ func (b *Bot) replyUpdateCenter(chatID int64, messageID int64) {
 		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
 	})
 
-	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-
-	if messageID > 0 {
-		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
-	} else {
-		b.replyKeyboard(chatID, text.String(), kb)
-	}
+	b.editOrReplyKeyboard(chatID, messageID, text.String(), &telegram.InlineKeyboardMarkup{InlineKeyboard: rows})
 }
 
 // replyBackupCenter 备份中心：显示备份管理面板。
@@ -1531,7 +1649,7 @@ func (b *Bot) recheckUpdates(chatID int64, messageID int64) {
 	time.Sleep(2 * time.Second)
 
 	// 刷新更新中心页面
-	b.replyUpdateCenter(chatID, messageID)
+	b.replyUpdateCenter(chatID, messageID, 0)
 }
 
 // createBackup 创建容器配置备份。
@@ -1555,9 +1673,8 @@ func (b *Bot) createBackup(chatID int64, messageID int64) {
 		return
 	}
 
-	// 备份成功，返回备份列表
-	b.reply(chatID, "✅ 备份创建成功")
-	b.listBackups(chatID, 0)
+	// 备份成功：直接把原消息编辑为最新备份列表（不再另发新消息）
+	b.listBackups(chatID, messageID)
 }
 
 // listBackups 显示备份文件列表。
@@ -1621,21 +1738,29 @@ func (b *Bot) listBackups(chatID int64, messageID int64) {
 }
 
 // restoreBackup 从备份恢复容器（提交后台任务）。
+// messageID > 0 时把进度/结果编辑到原消息，保持单条消息流。
 func (b *Bot) restoreBackup(chatID int64, filename string, messageID int64) {
+	backKb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+		{Text: "⬅ 返回备份列表", CallbackData: "backup|list"},
+	}}}
 	// 生成任务ID
 	taskID := fmt.Sprintf("restore_%d_%d", chatID, time.Now().Unix())
 
-	// 提交恢复任务
+	// 执行前：编辑原消息为"正在恢复"
+	b.editOrReplyKeyboard(chatID, messageID,
+		fmt.Sprintf("🔄 正在从备份 <code>%s</code> 恢复容器...\n\n任务ID: <code>%s</code>\n请稍候，完成后会更新结果。", escapeHTML(filename), taskID), nil)
+
+	// 提交恢复任务，完成后编辑原消息为结果
 	go func() {
 		err := utiles.RestoreContainer(b.svcCtx, filename, taskID)
 		if err != nil {
-			b.reply(chatID, fmt.Sprintf("❌ 恢复备份 <code>%s</code> 失败：%s", escapeHTML(filename), err.Error()))
+			b.editOrReplyKeyboard(chatID, messageID,
+				fmt.Sprintf("❌ 恢复备份 <code>%s</code> 失败：%s", escapeHTML(filename), escapeHTML(err.Error())), backKb)
 		} else {
-			b.reply(chatID, fmt.Sprintf("✅ 备份 <code>%s</code> 恢复成功", escapeHTML(filename)))
+			b.editOrReplyKeyboard(chatID, messageID,
+				fmt.Sprintf("✅ 备份 <code>%s</code> 恢复成功", escapeHTML(filename)), backKb)
 		}
 	}()
-
-	b.reply(chatID, fmt.Sprintf("🔄 正在从备份 <code>%s</code> 恢复容器...\n\n任务ID: <code>%s</code>\n请稍候，完成后会收到通知。", escapeHTML(filename), taskID))
 }
 
 // confirmDeleteBackup 确认删除备份（二次确认）。
@@ -1680,9 +1805,8 @@ func (b *Bot) deleteBackup(chatID int64, filename string, messageID int64) {
 		return
 	}
 
-	b.reply(chatID, fmt.Sprintf("✅ 备份 <code>%s</code> 已删除", escapeHTML(filename)))
-	// 刷新备份列表
-	b.listBackups(chatID, 0)
+	// 删除成功：直接把原消息编辑为刷新后的备份列表（不再另发新消息）
+	b.listBackups(chatID, messageID)
 }
 
 // replyPruneImageOptions 清理镜像选择页面：让用户选择清理范围。
@@ -1800,11 +1924,16 @@ func (b *Bot) confirmPruneImages(chatID int64, mode string, messageID int64) {
 }
 
 // executePruneImages 执行清理镜像（提交后台任务）。
-func (b *Bot) executePruneImages(chatID int64, mode string) {
+// messageID > 0 时把"正在清理"编辑到原消息，完成后编辑为结果并带返回设置键盘。
+func (b *Bot) executePruneImages(chatID int64, mode string, messageID int64) {
+	// 返回设置中心的键盘
+	backKb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+		{Text: "⬅ 返回设置", CallbackData: "menu|settings"},
+	}}}
 	// 获取镜像列表
 	images, err := utiles.GetImagesList(b.svcCtx)
 	if err != nil {
-		b.reply(chatID, "❌ 获取镜像列表失败："+err.Error())
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 获取镜像列表失败："+escapeHTML(err.Error()), backKb)
 		return
 	}
 
@@ -1823,27 +1952,29 @@ func (b *Bot) executePruneImages(chatID int64, mode string) {
 	}
 
 	if len(imageIDs) == 0 {
-		b.reply(chatID, "✅ 没有需要清理的镜像")
+		b.editOrReplyKeyboard(chatID, messageID, "✅ 没有需要清理的镜像", backKb)
 		return
 	}
 
 	// 生成任务ID
 	taskID := fmt.Sprintf("prune_%d_%d", chatID, time.Now().Unix())
 
-	// 提交清理任务
-	go func() {
-		taskCtx := context.Background()
-		utiles.PruneImages(taskCtx, b.svcCtx, taskID, imageIDs, false)
-
-		// 完成后发送通知
-		b.reply(chatID, fmt.Sprintf("🗑️ 镜像清理任务已完成\n\n任务ID: <code>%s</code>\n共清理 %d 个镜像", taskID, len(imageIDs)))
-	}()
-
 	modeText := "悬空镜像"
 	if mode == "unused" {
 		modeText = "未使用镜像"
 	}
-	b.reply(chatID, fmt.Sprintf("🔄 正在清理%s...\n\n任务ID: <code>%s</code>\n共 %d 个镜像\n请稍候，完成后会收到通知。", modeText, taskID, len(imageIDs)))
+	// 执行前：编辑原消息为"正在清理"
+	b.editOrReplyKeyboard(chatID, messageID,
+		fmt.Sprintf("🔄 正在清理%s...\n\n任务ID: <code>%s</code>\n共 %d 个镜像\n请稍候，完成后会更新结果。", modeText, taskID, len(imageIDs)), nil)
+
+	// 提交清理任务
+	go func() {
+		taskCtx := context.Background()
+		utiles.PruneImages(taskCtx, b.svcCtx, taskID, imageIDs, false)
+		// 完成后编辑原消息为结果
+		b.editOrReplyKeyboard(chatID, messageID,
+			fmt.Sprintf("🗑 镜像清理任务已完成\n\n任务ID: <code>%s</code>\n共清理 %d 个镜像", taskID, len(imageIDs)), backKb)
+	}()
 }
 
 // sendUpdateNotificationToChat 向指定会话发送带交互式键盘的更新通知（支持分页）。

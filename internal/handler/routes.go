@@ -202,16 +202,6 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: schedule.ListHandler(serverCtx),
 			},
 			{
-				Method:  http.MethodGet,
-				Path:    "/schedules/cron",
-				Handler: schedule.GetCronHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodPut,
-				Path:    "/schedules/cron",
-				Handler: schedule.SaveCronHandler(serverCtx),
-			},
-			{
 				Method:  http.MethodPost,
 				Path:    "/schedules",
 				Handler: schedule.SaveHandler(serverCtx),

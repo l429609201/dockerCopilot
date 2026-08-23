@@ -2,7 +2,23 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Clock, Plus, Trash2, Play } from 'lucide-react'
 import { scheduleAPI, registryAPI } from '../api/client.js'
 import { RuleEditor } from './RuleEditor.jsx'
-import { CronSetting } from './CronSetting.jsx'
+
+// 将 cron 表达式转为人性化描述，用于规则副标题展示。
+// 识别"每天 HH:MM"和"每隔 N 小时"两种常见形态，其余原样展示表达式。
+function describeCron(cron) {
+  if (!cron) return '未设置执行时间'
+  const parts = cron.trim().split(/\s+/)
+  if (parts.length !== 5) return `cron：${cron}`
+  const [m, h, dom, , dow] = parts
+  const pad = (n) => String(n).padStart(2, '0')
+  if (dom === '*' && dow === '*' && /^\*\/\d+$/.test(h)) {
+    return `每隔 ${h.slice(2)} 小时（第 ${m} 分）`
+  }
+  if (dom === '*' && dow === '*' && /^\d+$/.test(h) && /^\d+$/.test(m)) {
+    return `每天 ${pad(h)}:${pad(m)}`
+  }
+  return `cron：${cron}`
+}
 
 // 定时更新与 Registry 凭据管理页面
 export function Schedules() {
@@ -11,16 +27,14 @@ export function Schedules() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(null) // 正在编辑的规则
-  const [cron, setCron] = useState('') // 全局定时 cron
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [r1, r2, r3] = await Promise.all([scheduleAPI.list(), registryAPI.list(), scheduleAPI.getCron()])
+      const [r1, r2] = await Promise.all([scheduleAPI.list(), registryAPI.list()])
       setRules(r1.data?.data || [])
       setRegistries(r2.data?.data || [])
-      setCron(r3.data?.data?.cron || '30 4 * * *')
     } catch (e) {
       setError('加载失败：' + (e.message || '未知错误'))
     } finally {
@@ -63,12 +77,13 @@ export function Schedules() {
     backup: { label: '自动备份', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
   }
   const typeMeta = (t) => TYPE_META[t || 'update'] || TYPE_META.update
-  // 按任务类型生成副标题描述
+  // 按任务类型生成副标题描述，含该规则自己的执行时间
   const ruleSubtitle = (r) => {
     const t = r.type || 'update'
-    if (t === 'prune') return `清理范围：${r.pruneMode === 'unused' ? '所有未使用镜像' : '无tag悬空镜像'} · 使用全局定时时间`
-    if (t === 'backup') return '备份所有容器配置 · 使用全局定时时间'
-    return `容器 ${r.containerNames?.length || 0} 个 · 使用全局定时时间${r.registryId === 'auto' ? ' · 凭证自适应' : ''}`
+    const timeDesc = describeCron(r.cron)
+    if (t === 'prune') return `清理范围：${r.pruneMode === 'unused' ? '所有未使用镜像' : '无tag悬空镜像'} · ${timeDesc}`
+    if (t === 'backup') return `备份所有容器配置 · ${timeDesc}`
+    return `容器 ${r.containerNames?.length || 0} 个 · ${timeDesc}${r.registryId === 'auto' ? ' · 凭证自适应' : ''}`
   }
 
   return (
@@ -90,9 +105,6 @@ export function Schedules() {
       <div className="px-2 sm:px-6">
         {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm mb-4">{error}</div>}
         {loading && <div className="text-gray-500 text-sm mb-4">加载中...</div>}
-
-        {/* 全局定时设置：所有规则共用同一执行时间 */}
-        <CronSetting cron={cron} onSaved={setCron} />
 
         <div className="grid gap-3 mt-4">
         {rules.map((r) => (

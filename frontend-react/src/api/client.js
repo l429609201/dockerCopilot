@@ -208,15 +208,12 @@ export const progressAPI = {
   cancelProgress: (taskid) => apiClient.post(`/api/progress/${taskid}/cancel`),
 }
 
-// 阶段2：定时更新规则API
+// 阶段2：定时更新规则API（每条规则拥有独立的 cron 定时）
 export const scheduleAPI = {
   list: () => apiClient.get('/api/schedules'),
   save: (rule) => apiClient.post('/api/schedules', rule),
   remove: (id) => apiClient.delete(`/api/schedules/${id}`),
   runNow: (id) => apiClient.post(`/api/schedules/${id}/run`),
-  // 全局定时更新 cron：所有规则共用同一时间
-  getCron: () => apiClient.get('/api/schedules/cron'),
-  saveCron: (cron) => apiClient.put('/api/schedules/cron', { cron }),
 }
 
 // 阶段2：Registry 凭据API（密码脱敏返回）

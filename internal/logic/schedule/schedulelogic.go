@@ -139,44 +139,6 @@ func (l *ScheduleLogic) RunNow(req *types.ScheduledRuleIDReq) (resp *types.Resp,
 	return resp, nil
 }
 
-// GetCron 返回全局定时更新 cron 表达式。
-func (l *ScheduleLogic) GetCron() (resp *types.Resp, err error) {
-	resp = &types.Resp{Code: 200, Msg: "success"}
-	cfg := l.svcCtx.AppConfig.Get()
-	cron := cfg.ScheduledUpdateCron
-	if cron == "" {
-		cron = "30 4 * * *"
-	}
-	resp.Data = map[string]string{"cron": cron}
-	return resp, nil
-}
-
-// SaveCron 更新全局定时更新 cron 表达式并触发调度重载。
-func (l *ScheduleLogic) SaveCron(req *types.CronConfigReq) (resp *types.Resp, err error) {
-	resp = &types.Resp{}
-	if req.Cron == "" {
-		resp.Code = 400
-		resp.Msg = "cron 表达式不能为空"
-		resp.Data = map[string]interface{}{}
-		return resp, nil
-	}
-	updateErr := l.svcCtx.AppConfig.Update(func(cfg *appconfig.AppConfig) error {
-		cfg.ScheduledUpdateCron = req.Cron
-		return nil
-	})
-	if updateErr != nil {
-		resp.Code = 500
-		resp.Msg = "保存失败：" + updateErr.Error()
-		resp.Data = map[string]interface{}{}
-		return resp, nil
-	}
-	l.reloadScheduler()
-	resp.Code = 200
-	resp.Msg = "success"
-	resp.Data = map[string]interface{}{}
-	return resp, nil
-}
-
 // reloadScheduler 在配置变更后触发调度器重载。
 func (l *ScheduleLogic) reloadScheduler() {
 	if l.svcCtx.Scheduler != nil {

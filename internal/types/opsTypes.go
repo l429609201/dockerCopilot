@@ -42,8 +42,7 @@ type ContainerInspectReq struct {
 }
 
 // ContainerEditReq 容器参数编辑请求。
-// 仅包含首期支持安全编辑的字段；未提供的字段保留原容器配置。
-// 编辑通过"重建"完成（Docker 不支持这些字段原地修改）。
+// 未提供的字段保留原容器配置；编辑通过"重建"完成（Docker 不支持这些字段原地修改）。
 type ContainerEditReq struct {
 	Id string `path:"id"`
 	// Image 新镜像（可选，为空保留原镜像）。
@@ -56,7 +55,23 @@ type ContainerEditReq struct {
 	PortBindings []string `json:"portBindings,optional"`
 	// KeepOldContainer 重建后是否保留旧容器（默认删除）。
 	KeepOldContainer bool `json:"keepOldContainer,optional"`
-	// ConfirmWarnings 是否已确认高风险变更。
+	// Binds 卷/绑定挂载（形如 "/host:/container:ro"），非 nil 时整体替换。
+	Binds []string `json:"binds,optional"`
+	// NetworkMode 网络模式（bridge/host/none/自定义网络名），空表示不改。
+	NetworkMode string `json:"networkMode,optional"`
+	// Labels 容器标签键值对，非 nil 时整体替换。
+	Labels map[string]string `json:"labels,optional"`
+	// Cmd 启动命令，非 nil 时整体覆盖。
+	Cmd []string `json:"cmd,optional"`
+	// Entrypoint 入口点，非 nil 时整体覆盖。
+	Entrypoint []string `json:"entrypoint,optional"`
+	// Memory 内存硬限制（字节），指针非 nil 时应用（0=不限制）。
+	Memory *int64 `json:"memory,optional"`
+	// MemorySwap 内存+swap 限制（字节），指针非 nil 时应用。
+	MemorySwap *int64 `json:"memorySwap,optional"`
+	// NanoCPUs CPU 限额（cpus×1e9），指针非 nil 时应用（0=不限制）。
+	NanoCPUs *int64 `json:"nanoCpus,optional"`
+	// ConfirmWarnings 是否已确认高风险变更（如挂载改动）。
 	ConfirmWarnings bool `json:"confirmWarnings,optional"`
 }
 

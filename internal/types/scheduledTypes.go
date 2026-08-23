@@ -10,7 +10,7 @@ type ScheduledRuleReq struct {
 	Type             string   `json:"type,optional"`      // 任务类型：update/prune/backup，空按 update
 	PruneMode        string   `json:"pruneMode,optional"` // 清理范围：dangling/unused（仅 prune）
 	Enabled          bool     `json:"enabled,optional"`
-	Cron             string   `json:"cron,optional"` // 已废弃：调度改用全局 cron，保留仅为兼容
+	Cron             string   `json:"cron,optional"` // 该规则独立的定时表达式（五段式cron或简化写法daily/hourly/interval）
 	ContainerNames   []string `json:"containerNames,optional"`
 	OnlyWhenUpdate   bool     `json:"onlyWhenUpdate,optional"`
 	SkipInvalidTag   bool     `json:"skipInvalidTag,optional"`
@@ -24,11 +24,6 @@ type ScheduledRuleReq struct {
 // ScheduledRuleIDReq 按 ID 操作规则的请求（删除、立即执行）。
 type ScheduledRuleIDReq struct {
 	ID string `path:"id"`
-}
-
-// CronConfigReq 全局定时更新 cron 配置的更新请求。
-type CronConfigReq struct {
-	Cron string `json:"cron"`
 }
 
 // RegistryReq Registry 凭据的创建/更新请求。
