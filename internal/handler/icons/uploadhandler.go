@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
@@ -49,8 +49,8 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 3. 确保目录存在 (防御性编程)
-		dataPath := imageUploadDir
+		// 3. 确保目录存在 (防御性编程)。统一持久化到 /data/images
+		dataPath := persistImagesDir
 		if err := os.MkdirAll(dataPath, 0o755); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "failed to prepare upload dir")
 			return
@@ -135,6 +135,14 @@ func writeUploadError(w http.ResponseWriter, statusCode int, msg string) {
 }
 
 func updateImageLogosJS(filePath, imageName, filename string) error {
+	// 上传文件场景：统一存 /data/images，前端通过 /images/ 静态路由访问
+	containerPath := fmt.Sprintf("/images/%s", filename)
+	return writeImageLogoValue(filePath, imageName, containerPath)
+}
+
+// writeImageLogoValue 将 imageName -> value 映射写入 imageLogos.js。
+// value 可以是本地图标路径，也可以是外部图标 URL（http/https）。
+func writeImageLogoValue(filePath, imageName, value string) error {
 	// 读取文件
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -142,8 +150,7 @@ func updateImageLogosJS(filePath, imageName, filename string) error {
 	}
 	content := string(contentBytes)
 
-	// 前端使用的容器路径
-	containerPath := fmt.Sprintf("/src/config/image/%s", filename)
+	containerPath := value
 
 	if strings.Contains(content, fmt.Sprintf(`"%s"`, imageName)) {
 		// 更新现有行

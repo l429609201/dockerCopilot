@@ -3,7 +3,7 @@ package bot
 import (
 	"strings"
 
-	"github.com/onlyLTY/dockerCopilot/internal/module/telegram"
+	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 

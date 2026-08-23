@@ -59,3 +59,51 @@ type ContainerEditReq struct {
 	// ConfirmWarnings 是否已确认高风险变更。
 	ConfirmWarnings bool `json:"confirmWarnings,optional"`
 }
+
+
+// ===== 容器文件管理相关请求 =====
+
+// FileListReq 列出容器内目录。
+type FileListReq struct {
+	Id   string `path:"id"`
+	Path string `form:"path,default=/"`
+}
+
+// FileReadReq 读取文本文件（在线预览/编辑）。
+type FileReadReq struct {
+	Id   string `path:"id"`
+	Path string `form:"path"`
+}
+
+// FileDownloadReq 下载文件。
+type FileDownloadReq struct {
+	Id   string `path:"id"`
+	Path string `form:"path"`
+}
+
+// FileWriteReq 写入/保存文本文件内容。
+type FileWriteReq struct {
+	Id      string `path:"id"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// FileMkdirReq 新建目录。
+type FileMkdirReq struct {
+	Id   string `path:"id"`
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// FileDeleteReq 删除文件/目录。
+type FileDeleteReq struct {
+	Id   string `path:"id"`
+	Path string `json:"path"`
+}
+
+// FileRenameReq 重命名/移动。
+type FileRenameReq struct {
+	Id  string `path:"id"`
+	Src string `json:"src"`
+	Dst string `json:"dst"`
+}

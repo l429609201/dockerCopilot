@@ -3,8 +3,8 @@ package version
 import (
 	"context"
 
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 

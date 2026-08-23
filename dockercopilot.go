@@ -10,12 +10,12 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/onlyLTY/dockerCopilot/internal/config"
-	"github.com/onlyLTY/dockerCopilot/internal/handler"
-	"github.com/onlyLTY/dockerCopilot/internal/module/bot"
-	"github.com/onlyLTY/dockerCopilot/internal/module/scheduler"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
+	"github.com/l429609201/dockerCopilot/internal/config"
+	"github.com/l429609201/dockerCopilot/internal/handler"
+	"github.com/l429609201/dockerCopilot/internal/module/bot"
+	"github.com/l429609201/dockerCopilot/internal/module/scheduler"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -88,6 +88,10 @@ func main() {
 	dataDir := "/data/config/image"
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		logx.Errorf("Failed to create data directory: %v", err)
+	}
+	// 持久化图标目录：favicon 自动抓取下载与手动上传统一存放
+	if err := os.MkdirAll("/data/images", 0755); err != nil {
+		logx.Errorf("Failed to create images directory: %v", err)
 	}
 
 	imageLogosPath := "/data/config/imageLogos.js"
@@ -170,8 +174,10 @@ func RegisterHandlers(engine *rest.Server) {
 
 	assetsHandler := http.FileServer(http.FS(frontFS))
 
-	// Serve custom icons
+	// Serve custom icons（历史目录，保持兼容）
 	iconFileServer := http.StripPrefix("/src/config/image/", http.FileServer(http.Dir("/data/config/image")))
+	// 持久化图标目录 /data/images（favicon 自动抓取下载 + 手动上传统一存放）
+	imagesFileServer := http.StripPrefix("/images/", http.FileServer(http.Dir("/data/images")))
 	engine.AddRoutes(
 		[]rest.Route{
 			{
@@ -179,6 +185,14 @@ func RegisterHandlers(engine *rest.Server) {
 				Path:   "/src/config/image/:file",
 				Handler: func(w http.ResponseWriter, r *http.Request) {
 					iconFileServer.ServeHTTP(w, r)
+				},
+			},
+			{
+				// 持久化图标静态访问：/images/xxx.png -> /data/images/xxx.png
+				Method: http.MethodGet,
+				Path:   "/images/:file",
+				Handler: func(w http.ResponseWriter, r *http.Request) {
+					imagesFileServer.ServeHTTP(w, r)
 				},
 			},
 		},

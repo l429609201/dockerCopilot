@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onlyLTY/dockerCopilot/internal/module/appconfig"
-	"github.com/onlyLTY/dockerCopilot/internal/module/notify"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	MyType "github.com/onlyLTY/dockerCopilot/internal/types"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
+	"github.com/l429609201/dockerCopilot/internal/module/notify"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	MyType "github.com/l429609201/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -40,8 +40,10 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	containers = utiles.CheckImageUpdate(svcCtx, containers)
 
 	// 预编码凭据，供本轮所有容器复用
+	// 自适应模式：按每个容器镜像的 registry 自动匹配凭据（在循环内计算）
+	autoAuth := rule.RegistryID == utiles.RegistryIDAuto
 	registryAuth := ""
-	if rule.RegistryID != "" {
+	if rule.RegistryID != "" && !autoAuth {
 		if cred, ok := svcCtx.AppConfig.FindRegistry(rule.RegistryID); ok {
 			if auth, e := utiles.EncodeRegistryAuth(&cred); e == nil {
 				registryAuth = auth
@@ -88,7 +90,12 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 			skipped++
 			continue
 		}
-		if runOne(svcCtx, c.ID, name, c.Image, !rule.KeepOldContainer, registryAuth, timeoutSec) {
+		// 自适应模式：按当前容器镜像匹配凭据；否则用预编码的复用凭据
+		auth := registryAuth
+		if autoAuth {
+			auth = utiles.MatchRegistryAuthByImage(svcCtx.AppConfig, c.Image)
+		}
+		if runOne(svcCtx, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			updated++
 		} else {
 			failed++

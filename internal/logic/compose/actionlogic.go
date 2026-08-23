@@ -5,9 +5,9 @@ import (
 	"os"
 
 	"github.com/google/uuid"
-	composeMod "github.com/onlyLTY/dockerCopilot/internal/module/compose"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	composeMod "github.com/l429609201/dockerCopilot/internal/module/compose"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 )
 
 // Action 对 Compose 项目执行部署类操作（up/down/restart/pull 等）。

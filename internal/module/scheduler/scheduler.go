@@ -3,9 +3,9 @@ package scheduler
 import (
 	"sync"
 
-	"github.com/onlyLTY/dockerCopilot/internal/module/appconfig"
-	"github.com/onlyLTY/dockerCopilot/internal/module/notify"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
+	"github.com/l429609201/dockerCopilot/internal/module/notify"
+	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/logx"
 )

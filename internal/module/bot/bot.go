@@ -5,10 +5,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/onlyLTY/dockerCopilot/internal/module/appconfig"
-	"github.com/onlyLTY/dockerCopilot/internal/module/containerops"
-	"github.com/onlyLTY/dockerCopilot/internal/module/telegram"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
+	"github.com/l429609201/dockerCopilot/internal/module/containerops"
+	"github.com/l429609201/dockerCopilot/internal/module/telegram"
+	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -70,8 +70,23 @@ func (b *Bot) Reload() {
 	b.mu.Unlock()
 
 	b.running.Store(true)
+	// 注册命令菜单，让 TG 客户端输入框旁展示可用命令
+	if err := client.SetMyCommands(botCommands()); err != nil {
+		logx.Errorf("Telegram 设置命令菜单失败: %v", err)
+	}
 	go b.pollLoop()
 	logx.Info("Telegram Bot 已启动")
+}
+
+// botCommands 返回注册到 Telegram 客户端的命令菜单列表。
+func botCommands() []telegram.BotCommand {
+	return []telegram.BotCommand{
+		{Command: "start", Description: "打开主菜单"},
+		{Command: "menu", Description: "打开主菜单"},
+		{Command: "ps", Description: "查看容器列表（可点按钮操作）"},
+		{Command: "images", Description: "查看镜像数量"},
+		{Command: "help", Description: "查看帮助"},
+	}
 }
 
 // Stop 停止轮询。

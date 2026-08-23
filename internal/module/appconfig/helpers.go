@@ -15,6 +15,16 @@ func maskSecret(s string) string {
 	return string(runes[:head]) + "****" + string(runes[n-tail:])
 }
 
+// ListRegistries 返回全部凭据的副本切片，供自适应匹配等场景遍历使用。
+func (s *Store) ListRegistries() []RegistryCredential {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]RegistryCredential, len(s.cfg.Registries))
+	copy(out, s.cfg.Registries)
+	return out
+}
+
+
 // FindRegistry 按ID查找凭据，返回副本与是否存在。
 func (s *Store) FindRegistry(id string) (RegistryCredential, bool) {
 	s.mu.RLock()

@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	faviconLogic "github.com/onlyLTY/dockerCopilot/internal/logic/favicon"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	faviconLogic "github.com/l429609201/dockerCopilot/internal/logic/favicon"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 

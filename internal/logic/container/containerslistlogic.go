@@ -2,11 +2,14 @@ package container
 
 import (
 	"context"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/utiles"
+
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -28,6 +31,11 @@ type Info struct {
 	HaveUpdate  bool   `json:"haveUpdate"`
 	// Ports 暴露到宿主机的端口列表（仅含有 PublicPort 的），供前端抓取站点 favicon
 	Ports []int `json:"ports"`
+	// NetworkMode 网络模式（如 host / bridge / 自定义网络名），供前端判断 host 模式
+	NetworkMode string `json:"networkMode"`
+	// ExposedPorts 容器内暴露的端口（来自镜像/配置）。host 网络模式下等同于宿主机端口，
+	// 供前端在无端口映射时探测站点 favicon。
+	ExposedPorts []int `json:"exposedPorts"`
 }
 
 func NewContainersListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ContainersListLogic {
@@ -90,6 +98,28 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 			}
 			seenPorts[port] = struct{}{}
 			containerInfo.Ports = append(containerInfo.Ports, port)
+		}
+		// 网络模式与暴露端口：host 模式下容器内端口即宿主机端口，供前端探测图标
+		if containerInspect.HostConfig != nil {
+			containerInfo.NetworkMode = string(containerInspect.HostConfig.NetworkMode)
+		}
+		if containerInspect.Config != nil {
+			seenExposed := make(map[int]struct{})
+			for portProto := range containerInspect.Config.ExposedPorts {
+				numStr := string(portProto)
+				if idx := strings.IndexByte(numStr, '/'); idx >= 0 {
+					numStr = numStr[:idx]
+				}
+				n, e := strconv.Atoi(numStr)
+				if e != nil || n <= 0 {
+					continue
+				}
+				if _, ok := seenExposed[n]; ok {
+					continue
+				}
+				seenExposed[n] = struct{}{}
+				containerInfo.ExposedPorts = append(containerInfo.ExposedPorts, n)
+			}
 		}
 		containerInfoList = append(containerInfoList, containerInfo)
 	}

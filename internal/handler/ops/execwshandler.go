@@ -11,7 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/golang-jwt/jwt"
 	"github.com/gorilla/websocket"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 )

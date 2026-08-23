@@ -22,7 +22,8 @@ export function useFavicon(container) {
   useEffect(() => {
     if (!container?.id) return
     const running = (container.status || '').toLowerCase() === 'running'
-    const ports = container.ports || []
+    // host 网络模式无端口映射，改用容器暴露端口（即宿主机端口）
+    const ports = pickProbePorts(container)
     if (!running || ports.length === 0) return
 
     // 读缓存
@@ -65,6 +66,16 @@ export function useFavicon(container) {
   return { faviconUrl, loading }
 }
 
+// pickProbePorts 选择用于探测 favicon 的端口列表。
+// 优先用宿主机映射端口（ports）；若为空且是 host 网络模式，则用容器暴露端口（exposedPorts）。
+function pickProbePorts(container) {
+  const mapped = container?.ports || []
+  if (mapped.length > 0) return mapped
+  const isHost = (container?.networkMode || '') === 'host'
+  if (isHost) return container?.exposedPorts || []
+  return []
+}
+
 // scorePort 给常见 Web 端口更高优先级，减少无效探测
 function scorePort(port) {
   if (port === 80 || port === 443) return 100
@@ -80,7 +91,7 @@ export function useFaviconMap(containers) {
 
   useEffect(() => {
     const list = (containers || []).filter(
-      (c) => (c.status || '').toLowerCase() === 'running' && (c.ports || []).length > 0
+      (c) => (c.status || '').toLowerCase() === 'running' && pickProbePorts(c).length > 0
     )
     if (list.length === 0) return
     let cancelled = false
@@ -97,7 +108,7 @@ export function useFaviconMap(containers) {
           result[c.id] = hit.url
           continue
         }
-        const ordered = [...c.ports].sort((a, b) => scorePort(b) - scorePort(a))
+        const ordered = [...pickProbePorts(c)].sort((a, b) => scorePort(b) - scorePort(a))
         for (const port of ordered) {
           if (cancelled) return
           try {

@@ -101,6 +101,25 @@ func (c *Client) SendMessage(chatID int64, text string, keyboard *InlineKeyboard
 	return c.call("sendMessage", payload, nil)
 }
 
+// SetMyCommands 设置机器人命令菜单，客户端"/"或菜单键会展示这些命令。
+func (c *Client) SetMyCommands(commands []BotCommand) error {
+	return c.call("setMyCommands", map[string]interface{}{"commands": commands}, nil)
+}
+
+// EditMessageText 编辑已发送消息的文本与键盘（用于按钮操作后原地刷新）。
+func (c *Client) EditMessageText(chatID, messageID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	return c.call("editMessageText", payload, nil)
+}
+
 // AnswerCallbackQuery 应答一次回调查询，消除按钮 loading 状态。
 func (c *Client) AnswerCallbackQuery(callbackID, text string) error {
 	payload := map[string]interface{}{

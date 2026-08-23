@@ -138,6 +138,44 @@ export const containerAPI = {
   editContainer: (id, spec) => apiClient.put(`/api/container/${id}/edit`, spec),
 }
 
+// 容器文件管理 API（后端已统一做防路径穿越校验）
+export const filesAPI = {
+  // 列目录
+  list: (id, path = '/') =>
+    apiClient.get(`/api/container/${id}/files?path=${encodeURIComponent(path)}`),
+  // 读取文本内容（预览/编辑）
+  read: (id, path) =>
+    apiClient.get(`/api/container/${id}/files/read?path=${encodeURIComponent(path)}`),
+  // 保存文本内容
+  write: (id, path, content) =>
+    apiClient.post(`/api/container/${id}/files/write`, { path, content }),
+  // 新建目录
+  mkdir: (id, path, name) =>
+    apiClient.post(`/api/container/${id}/files/mkdir`, { path, name }),
+  // 删除文件/目录
+  remove: (id, path) =>
+    apiClient.post(`/api/container/${id}/files/delete`, { path }),
+  // 重命名/移动
+  rename: (id, src, dst) =>
+    apiClient.post(`/api/container/${id}/files/rename`, { src, dst }),
+  // 下载文件（返回 blob）
+  download: (id, path) =>
+    apiClient.get(`/api/container/${id}/files/download?path=${encodeURIComponent(path)}`, {
+      responseType: 'blob',
+    }),
+  // 上传文件到目录
+  upload: (id, dir, file, onUploadProgress) => {
+    const fd = new FormData()
+    fd.append('path', dir)
+    fd.append('file', file)
+    return apiClient.post(`/api/container/${id}/files/upload`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000, // 上传大文件放宽超时
+      onUploadProgress,
+    })
+  },
+}
+
 // 镜像相关API
 export const imageAPI = {
   getImages: () => apiClient.get('/api/images'),
@@ -145,6 +183,10 @@ export const imageAPI = {
   deleteImage: (id, force = false) => apiClient.delete(`/api/image/${id}?force=${force}`),
   // 异步批量清理镜像：提交 ids 列表，返回 taskID
   pruneImages: (ids, force = false) => apiClient.post('/api/images/prune', { ids, force }),
+  // 通过 URL 绑定图标到镜像名（无需上传图片）
+  setIconUrl: (imageName, url) => apiClient.post('/api/icons/url', { imageName, url }),
+  // 自动抓取站点 favicon 并下载持久化到 /data/images，url 为容器访问地址
+  fetchIcon: (imageName, url) => apiClient.post('/api/icons/fetch', { imageName, url }),
   uploadIcon: (file, imageName, containerName) => {
     const formData = new FormData()
     formData.append('file', file)

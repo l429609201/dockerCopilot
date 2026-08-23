@@ -17,7 +17,7 @@ RUN npm run build
 FROM golang:1.23-alpine AS backend
 WORKDIR /src
 ARG TARGETARCH
-ARG VERSION=dev
+ARG VERSION=v1.0.0
 ARG BUILD_DATE=unknown
 ENV GOOS=linux CGO_ENABLED=0
 # 先下载 Go 依赖
@@ -32,12 +32,12 @@ COPY --from=frontend /web/dist/ ./front/
 RUN test -f front/index.html
 # 编译（按目标架构）
 RUN GOARCH=${TARGETARCH} go build -a --trimpath \
-    -ldflags="-w -s -X 'github.com/onlyLTY/dockerCopilot/internal/config.Version=${VERSION}' -X 'github.com/onlyLTY/dockerCopilot/internal/config.BuildDate=${BUILD_DATE}'" \
+    -ldflags="-w -s -X 'github.com/l429609201/dockerCopilot/internal/config.Version=${VERSION}' -X 'github.com/l429609201/dockerCopilot/internal/config.BuildDate=${BUILD_DATE}'" \
     -o /out/dockerCopilot .
 
 # ---------- 阶段3：运行时镜像 ----------
 FROM alpine
-LABEL authors="onlyLTY"
+LABEL authors="l429609201 (fork of onlyLTY/dockerCopilot)"
 WORKDIR /app
 
 COPY --from=backend /out/dockerCopilot ./dockerCopilot

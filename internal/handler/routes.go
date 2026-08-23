@@ -6,18 +6,18 @@ package handler
 import (
 	"net/http"
 
-	auth "github.com/onlyLTY/dockerCopilot/internal/handler/auth"
-	bot "github.com/onlyLTY/dockerCopilot/internal/handler/bot"
-	compose "github.com/onlyLTY/dockerCopilot/internal/handler/compose"
-	container "github.com/onlyLTY/dockerCopilot/internal/handler/container"
-	favicon "github.com/onlyLTY/dockerCopilot/internal/handler/favicon"
-	icons "github.com/onlyLTY/dockerCopilot/internal/handler/icons"
-	image "github.com/onlyLTY/dockerCopilot/internal/handler/image"
-	ops "github.com/onlyLTY/dockerCopilot/internal/handler/ops"
-	progress "github.com/onlyLTY/dockerCopilot/internal/handler/progress"
-	schedule "github.com/onlyLTY/dockerCopilot/internal/handler/schedule"
-	version "github.com/onlyLTY/dockerCopilot/internal/handler/version"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	auth "github.com/l429609201/dockerCopilot/internal/handler/auth"
+	bot "github.com/l429609201/dockerCopilot/internal/handler/bot"
+	compose "github.com/l429609201/dockerCopilot/internal/handler/compose"
+	container "github.com/l429609201/dockerCopilot/internal/handler/container"
+	favicon "github.com/l429609201/dockerCopilot/internal/handler/favicon"
+	icons "github.com/l429609201/dockerCopilot/internal/handler/icons"
+	image "github.com/l429609201/dockerCopilot/internal/handler/image"
+	ops "github.com/l429609201/dockerCopilot/internal/handler/ops"
+	progress "github.com/l429609201/dockerCopilot/internal/handler/progress"
+	schedule "github.com/l429609201/dockerCopilot/internal/handler/schedule"
+	version "github.com/l429609201/dockerCopilot/internal/handler/version"
+	"github.com/l429609201/dockerCopilot/internal/svc"
 
 	"github.com/zeromicro/go-zero/rest"
 )
@@ -117,6 +117,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/",
 				Handler: icons.ObtainHandler(serverCtx),
+			},
+			{
+				// 通过图标 URL 绑定到镜像名（无需上传图片）
+				Method:  http.MethodPost,
+				Path:    "/url",
+				Handler: icons.SetIconURLHandler(serverCtx),
+			},
+			{
+				// 自动抓取站点 favicon 并下载持久化到 /data/images，绑定镜像名
+				Method:  http.MethodPost,
+				Path:    "/fetch",
+				Handler: icons.FetchIconHandler(serverCtx),
 			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
@@ -347,6 +359,47 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/container/:id/edit",
 				Handler: ops.EditHandler(serverCtx),
 			},
+			// ===== 容器文件管理（路径穿越已在服务层统一校验）=====
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/files",
+				Handler: ops.FileListHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/files/read",
+				Handler: ops.FileReadHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/container/:id/files/download",
+				Handler: ops.FileDownloadHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/files/upload",
+				Handler: ops.FileUploadHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/files/write",
+				Handler: ops.FileWriteHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/files/mkdir",
+				Handler: ops.FileMkdirHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/files/delete",
+				Handler: ops.FileDeleteHandler(serverCtx),
+			},
+			{
+				Method:  http.MethodPost,
+				Path:    "/container/:id/files/rename",
+				Handler: ops.FileRenameHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
@@ -374,6 +427,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/container/:id/exec/ws",
 				Handler: ops.ExecWSHandler(serverCtx),
+			},
+			{
+				// 容器资源监控 SSE 推送（EventSource 无法带 Authorization 头，用 query token）
+				Method:  http.MethodGet,
+				Path:    "/container/stats/stream",
+				Handler: ops.StatsStreamHandler(serverCtx),
+			},
+			{
+				// 全部后台任务列表 SSE 推送（供任务中心实时展示所有任务）
+				Method:  http.MethodGet,
+				Path:    "/progress/stream",
+				Handler: ops.ProgressStreamHandler(serverCtx),
 			},
 		},
 		rest.WithPrefix("/api"),

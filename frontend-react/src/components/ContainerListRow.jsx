@@ -1,13 +1,14 @@
 import React from 'react'
-import { Play, Square, RotateCcw, Upload, RefreshCw } from 'lucide-react'
+import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
+import { ContainerStats } from './ContainerStats.jsx'
 
-// 容器列表行：横向一条展示（图标 + 名称/镜像 + 状态 + 操作按钮）
+// 容器列表行：横向一条展示（图标 + 名称/镜像 + 资源 + 状态 + 操作按钮）
 // 所有交互通过 props 回调，保持与卡片视图一致的行为。
 export function ContainerListRow({
-  container, iconUrl, selected, batchMode, actionState,
-  onOpen, onToggleSelect, onAction, onUpdate,
+  container, iconUrl, selected, batchMode, actionState, stat,
+  onOpen, onToggleSelect, onAction, onUpdate, onOps, onFiles,
 }) {
   const running = container.status === 'running'
   const loading = actionState?.loading
@@ -55,14 +56,29 @@ export function ContainerListRow({
         <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{container.usingImage}</div>
       </div>
 
+      {/* 资源监控：CPU%+内存%（大屏），流量（超大屏），仅运行中显示 */}
+      {running && (
+        <div className="hidden lg:block flex-shrink-0">
+          <ContainerStats stat={stat} variant="list" />
+        </div>
+      )}
+
       {/* 运行时间/状态（中大屏显示） */}
-      <div className="hidden md:block text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 w-32 text-right truncate">
+      <div className="hidden md:block text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 w-28 text-right truncate">
         {running ? `运行 ${formatRunningTime(container.runningTime)}` : '已停止'}
       </div>
 
       {/* 操作按钮 */}
       {!batchMode && (
         <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          {/* 日志 / 控制台 快捷入口 */}
+          {onOps && (
+            <>
+              <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="gray" />
+              <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="gray" />
+              {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="gray" />}
+            </>
+          )}
           {loading ? (
             <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400 max-w-[220px]"
               title={actionState.detailMsg || ''}>
@@ -99,6 +115,7 @@ function IconBtn({ onClick, icon: Icon, title, color }) {
     green: "text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20",
     purple: "text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20",
     yellow: "text-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/20",
+    gray: "text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700",
   }
   return (
     <button onClick={onClick} title={title}

@@ -304,15 +304,15 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
                   </div>
                 </div>
 
-                {/* 团队信息 - 紧凑两列 */}
+                {/* 团队信息 - 原作者 + Fork 维护者 */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="rounded-lg bg-gray-50 dark:bg-gray-800/60 px-2.5 py-2">
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500">前端</span>
-                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 mt-0.5">DongShu</p>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500">原作者</span>
+                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 mt-0.5">onlyLTY · DongShu</p>
                   </div>
                   <div className="rounded-lg bg-gray-50 dark:bg-gray-800/60 px-2.5 py-2">
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500">后端</span>
-                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 mt-0.5">onlyLTY</p>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500">Fork 维护</span>
+                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200 mt-0.5">l429609201</p>
                   </div>
                 </div>
 

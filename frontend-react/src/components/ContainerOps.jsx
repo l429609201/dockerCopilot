@@ -5,8 +5,8 @@ import { Terminal } from './Terminal.jsx'
 import { cn } from '../utils/cn.js'
 
 // 容器运维弹窗：日志查看 + 命令执行（一次性）。支持最大化/全屏。
-export function ContainerOps({ container, onClose }) {
-  const [tab, setTab] = useState('logs')
+export function ContainerOps({ container, onClose, initialTab = 'logs' }) {
+  const [tab, setTab] = useState(initialTab === 'exec' ? 'exec' : 'logs')
   const [fullscreen, setFullscreen] = useState(false)
   return (
     <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',

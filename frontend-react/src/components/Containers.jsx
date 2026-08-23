@@ -22,11 +22,21 @@ import { useFaviconMap } from '../hooks/useFavicon.js'
 import { ContainerListRow } from './ContainerListRow.jsx'
 import { formatRunningTime } from '../utils/format.js'
 import { useTasks } from '../hooks/useTasks.jsx'
+import { useContainerStats } from '../hooks/useContainerStats.js'
+import { ContainerStats } from './ContainerStats.jsx'
+import { StatsChart } from './StatsChart.jsx'
+import { FileText, TerminalSquare, FolderOpen, Pencil } from 'lucide-react'
+import { FileManager } from './FileManager.jsx'
+import { IconEditor } from './IconEditor.jsx'
 
 export function Containers() {
   const { addTask } = useTasks()
   const queryClient = useQueryClient()
   const [selectedContainer, setSelectedContainer] = useState(null)
+  // 顶层运维弹窗：{ container, tab }，tab 为 'logs' 或 'exec'，供列表/卡片直接打开日志或控制台
+  const [opsTarget, setOpsTarget] = useState(null)
+  // 文件管理弹窗目标容器
+  const [fileTarget, setFileTarget] = useState(null)
   // 添加批量操作相关的状态
   const [selectedContainers, setSelectedContainers] = useState([])
   const [isBatchMode, setIsBatchMode] = useState(false)
@@ -41,6 +51,10 @@ export function Containers() {
     setViewMode(mode)
     localStorage.setItem('dc_container_view', mode)
   }
+  // 通过 SSE 实时订阅容器资源监控（CPU/内存/流量），statsMap 以容器短ID为 key
+  const { statsMap } = useContainerStats(true)
+  // 容器ID可能是长ID，stats 用短ID，做个安全取值
+  const getStat = (id) => statsMap[id] || statsMap[(id || '').slice(0, 12)]
 
   // 自定义确认弹窗状态
   const [confirmModal, setConfirmModal] = useState({
@@ -966,10 +980,13 @@ export function Containers() {
                       selected={isSelected}
                       batchMode={isBatchMode}
                       actionState={containerActions[container.id]}
+                      stat={getStat(container.id)}
                       onOpen={(c) => setSelectedContainer(c)}
                       onToggleSelect={toggleContainerSelection}
                       onAction={handleContainerAction}
                       onUpdate={handleUpdateContainer}
+                      onOps={(tab) => setOpsTarget({ container, tab })}
+                      onFiles={() => setFileTarget(container)}
                     />
                   )
                 }
@@ -1126,6 +1143,13 @@ export function Containers() {
                         </div>
                       </div>
 
+                      {/* 资源监控（运行中容器）：CPU/内存/上下行流量 */}
+                      {container.status === 'running' && getStat(container.id) && (
+                        <div className="relative z-10 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                          <ContainerStats stat={getStat(container.id)} variant="card" />
+                        </div>
+                      )}
+
                       {/* 操作按钮栏 - 底部水平排列 */}
                       {!isBatchMode && (
                         <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
@@ -1192,6 +1216,28 @@ export function Containers() {
                                 <Upload className="h-4 w-4" />
                                 <span>更新</span>
                               </button>
+                              {/* 日志 / 控制台 快捷入口 */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'logs' }) }}
+                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                title="查看日志"
+                              >
+                                <FileText className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'exec' }) }}
+                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                title="控制台"
+                              >
+                                <TerminalSquare className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
+                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                title="文件管理"
+                              >
+                                <FolderOpen className="h-4 w-4" />
+                              </button>
                             </>
                           )}
                         </div>
@@ -1212,11 +1258,28 @@ export function Containers() {
         )}
       </div>
 
+      {/* 顶层运维弹窗：由列表行/卡片的日志·控制台按钮直接打开 */}
+      {opsTarget && (
+        <ContainerOps
+          container={opsTarget.container}
+          initialTab={opsTarget.tab}
+          onClose={() => setOpsTarget(null)}
+        />
+      )}
+      {/* 文件管理弹窗 */}
+      {fileTarget && (
+        <FileManager
+          container={fileTarget}
+          onClose={() => setFileTarget(null)}
+        />
+      )}
+
       {/* 容器详情弹窗 */}
       {
         selectedContainer && (
           <ContainerDetailModal
             container={selectedContainer}
+            stat={getStat(selectedContainer.id)}
             onClose={() => setSelectedContainer(null)}
             onRename={handleRenameContainer}
             onUpdate={handleUpdateContainer}
@@ -1229,7 +1292,7 @@ export function Containers() {
 }
 
 // 容器详情弹窗组件
-function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction }) {
+function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction, stat }) {
   const queryClient = useQueryClient()
   const [name, setName] = useState(container.name)
   const [imageNameAndTag, setImageNameAndTag] = useState(container.usingImage)
@@ -1240,6 +1303,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
   const [currentContainer, setCurrentContainer] = useState(container)
   const fileInputRef = React.useRef(null)
   const [isUploadingIcon, setIsUploadingIcon] = useState(false)
+  // 图标操作菜单（上传图片 / 填写URL）是否展开
+  const [showIconMenu, setShowIconMenu] = useState(false)
   // 容器运维弹窗（日志/命令）显示状态
   const [showOps, setShowOps] = useState(false)
 
@@ -1310,78 +1375,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     return () => clearInterval(interval);
   }, [container.id]);
 
-  const handleIconUpload = async (event) => {
-    const file = event.target.files[0]
-    if (!file) return
-
-    // 限制文件大小 (例如 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-      setConfirmModal({
-        isOpen: true,
-        title: '上传失败',
-        message: '图标文件大小不能超过 2MB',
-        onConfirm: () => setConfirmModal({ isOpen: false }),
-        onCancel: null,
-        type: 'danger'
-      })
-      event.target.value = '' // 重置 input
-      return
-    }
-
-    try {
-      setIsUploadingIcon(true)
-      // 使用容器当前的镜像名作为 Key
-      // 如果有自定义镜像名配置(容器更新时可能改变)，优先使用新的
-      const targetImageName = imageNameAndTag || currentContainer.usingImage
-
-      const response = await imageAPI.uploadIcon(file, targetImageName, currentContainer.name)
-
-      if (response.data.code === 200 || response.data.code === 0) {
-        // 上传成功，更新 localStorage
-        const filename = response.data.data // 后端返回的文件名
-        if (filename) {
-          const newPath = `/src/config/image/${filename}`
-          const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}')
-
-          // 更新映射: 镜像名 -> 新路径
-          imageLogos[targetImageName] = newPath
-          localStorage.setItem('docker_copilot_image_logos', JSON.stringify(imageLogos))
-
-          // 强制更新当前容器视图
-          setCurrentContainer(prev => ({
-            ...prev,
-            iconUrl: newPath
-          }))
-
-          // 触发全局事件以便其他组件（如列表）更新
-          window.dispatchEvent(new Event('storage'))
-
-          // 无效化查询以刷新列表和图标
-          await queryClient.invalidateQueries(['containers'])
-          await queryClient.invalidateQueries(['customIcons'])
-
-          console.log('✅ 图标上传成功并已应用')
-        }
-      } else {
-        throw new Error(response.data.msg || '上传失败')
-      }
-    } catch (error) {
-      console.error('图标上传失败:', error)
-      setConfirmModal({
-        isOpen: true,
-        title: '上传失败',
-        message: '图标上传失败: ' + (error.response?.data?.msg || error.message),
-        onConfirm: () => setConfirmModal({ isOpen: false }),
-        onCancel: null,
-        type: 'danger'
-      })
-    } finally {
-      setIsUploadingIcon(false)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
-  }
+  // 图标上传/在线URL/自动获取逻辑已统一抽到 IconEditor 组件
 
   const handleContainerAction = async (action) => {
     try {
@@ -1562,30 +1556,48 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     );
 
     return (
-      <div
-        className="relative group cursor-pointer"
-        onClick={() => !isUploadingIcon && fileInputRef.current?.click()}
-        title="点击上传自定义图标"
-      >
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleIconUpload}
-          className="hidden"
-          accept="image/png,image/jpeg,image/webp,image/svg+xml"
-        />
+      <div className="relative">
+        <div
+          className="relative group cursor-pointer"
+          onClick={() => !isUploadingIcon && setShowIconMenu(true)}
+          title="点击设置容器图标"
+        >
+          <IconContent />
+          <FallbackIcon />
 
-        <IconContent />
-        <FallbackIcon />
+          {/* 悬停覆盖层 */}
+          <div className="absolute inset-0 bg-black bg-opacity-50 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            {isUploadingIcon ? (
+              <RefreshCw className="h-5 w-5 text-white animate-spin" />
+            ) : (
+              <Pencil className="h-4 w-4 text-white" />
+            )}
+          </div>
 
-        {/* 悬停覆盖层 */}
-        <div className="absolute inset-0 bg-black bg-opacity-50 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-          {isUploadingIcon ? (
-            <RefreshCw className="h-5 w-5 text-white animate-spin" />
-          ) : (
-            <Upload className="h-5 w-5 text-white" />
+          {/* 常驻编辑角标：提示图标可点击设置 */}
+          {!isUploadingIcon && (
+            <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-primary-600 text-white flex items-center justify-center shadow ring-2 ring-white dark:ring-gray-800">
+              <Pencil className="h-2.5 w-2.5" />
+            </div>
           )}
         </div>
+
+        {/* 图标编辑面板：预览 + 上传/在线URL/自动获取 */}
+        {showIconMenu && (
+          <IconEditor
+            imageName={imageNameAndTag || currentContainer.usingImage}
+            container={currentContainer}
+            currentIconUrl={iconUrl}
+            onClose={() => setShowIconMenu(false)}
+            onApplied={(url) => {
+              setCurrentContainer(prev => ({ ...prev, iconUrl: url }))
+              window.dispatchEvent(new Event('storage'))
+              queryClient.invalidateQueries(['containers'])
+              queryClient.invalidateQueries(['customIcons'])
+              setShowIconMenu(false)
+            }}
+          />
+        )}
       </div>
     );
   };
@@ -1637,13 +1649,22 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           </div>
         </div>
 
-        {/* 容器运维弹窗：日志 / 命令 */}
+        {/* 容器运维弹窗：日志 / 命令。showOps 为 'logs'/'exec' 决定初始标签，true 兼容旧入口 */}
         {showOps && (
-          <ContainerOps container={currentContainer} onClose={() => setShowOps(false)} />
+          <ContainerOps
+            container={currentContainer}
+            initialTab={showOps === 'exec' ? 'exec' : 'logs'}
+            onClose={() => setShowOps(false)}
+          />
         )}
 
         {/* 弹窗内容 */}
         <div className="px-6 py-4 space-y-4">
+          {/* 实时资源图表（仅运行中容器） */}
+          {currentContainer.status === 'running' && (
+            <StatsChart stat={stat} />
+          )}
+
           {/* 容器名称 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1715,7 +1736,25 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
         {/* 弹窗底部操作按钮 */}
         <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+
+            {/* 左侧：日志 / 控制台 快捷入口 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowOps('logs')}
+                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                title="查看日志"
+              >
+                <FileText className="h-4 w-4" /> <span className="hidden sm:inline">日志</span>
+              </button>
+              <button
+                onClick={() => setShowOps('exec')}
+                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                title="控制台"
+              >
+                <TerminalSquare className="h-4 w-4" /> <span className="hidden sm:inline">控制台</span>
+              </button>
+            </div>
 
             <div className="flex gap-2 w-full sm:w-auto">
               <button

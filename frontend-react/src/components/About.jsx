@@ -1,5 +1,5 @@
 import React from 'react'
-import { Github, Mail, Heart, MessageSquare } from 'lucide-react'
+import { Github, Heart, MessageSquare } from 'lucide-react'
 import logoImg from '../assets/DockerCopilot-logo.png'
 
 export function About() {
@@ -25,20 +25,22 @@ export function About() {
 
           <div className="flex flex-wrap items-center justify-center gap-3">
             <a
-              href="https://github.com/onlyLTY/dockercopilot"
+              href="https://github.com/l429609201/dockerCopilot"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-sm"
             >
               <Github className="h-4 w-4" />
-              <span>GitHub</span>
+              <span>本项目 GitHub</span>
             </a>
             <a
-              href="mailto:onlylty@lty.wiki"
+              href="https://github.com/onlyLTY/dockerCopilot"
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
             >
-              <Mail className="h-4 w-4" />
-              <span>联系作者</span>
+              <Github className="h-4 w-4" />
+              <span>原项目 (onlyLTY)</span>
             </a>
           </div>
         </div>
@@ -51,7 +53,7 @@ export function About() {
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">致谢 / Thanks</h3>
             </div>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed flex-1">
-              非常感谢大家自项目开始以来的使用、建议、鼓励和支持。特别感谢绿联对本项目的支持。没有大家的反馈，Docker Copilot 不会是今天的样子。它是属于我们共同的作品。
+              本项目 fork 自 <span className="font-medium">onlyLTY/dockerCopilot</span>，衷心感谢原作者 onlyLTY 及所有社区贡献者的付出——没有原项目就没有本 Fork。本 Fork 在其基础上新增了容器文件管理器、任务中心、镜像图标自适应等功能，并继续以 AGPLv3 开源。
             </p>
           </div>
 
@@ -62,10 +64,10 @@ export function About() {
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">反馈与建议</h3>
             </div>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed mb-4">
-              在项目使用中遇到 Bug 或有新的功能想法？欢迎提交 Issue 或直接联系我。您的每一个反馈都至关重要。
+              本项目是 fork 版本，在项目使用中遇到 Bug 或有新的功能想法？欢迎到本 Fork 仓库提交 Issue。您的每一个反馈都至关重要。
             </p>
             <a
-              href="https://github.com/onlyLTY/dockercopilot/issues"
+              href="https://github.com/l429609201/dockerCopilot/issues"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center text-primary-600 dark:text-primary-400 hover:underline font-medium"

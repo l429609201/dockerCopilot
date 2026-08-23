@@ -1,3 +1,26 @@
+================================================================================
+本项目是一个 Fork（衍生作品）声明
+================================================================================
+
+本项目 fork 自 onlyLTY/dockerCopilot（https://github.com/onlyLTY/dockerCopilot），
+并在其基础上进行了修改与功能新增。
+
+原始版权归原作者 onlyLTY 及其贡献者所有。
+Copyright (C) onlyLTY and contributors (original dockerCopilot project)
+
+本 Fork 的修改部分：
+Copyright (C) 2025 l429609201 (https://github.com/l429609201/dockerCopilot)
+
+依据 GNU Affero General Public License v3（AGPLv3），本衍生作品继续以
+相同的 AGPLv3 许可证发布。你可以自由使用、修改与再分发本项目，但必须：
+  1. 保留上述原始版权声明与本许可证全文；
+  2. 明确标注你对本项目所做的修改；
+  3. 以相同的 AGPLv3 许可证开源你的衍生版本（包括通过网络提供服务的情形）。
+
+原始项目与本 Fork 的完整许可证条款见下方 AGPLv3 全文。
+================================================================================
+
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

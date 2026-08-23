@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/utiles"
 )
 
 // Service 封装容器生命周期操作，供 HTTP handler、Telegram Bot 等复用。

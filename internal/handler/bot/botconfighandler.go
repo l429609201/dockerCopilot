@@ -3,9 +3,9 @@ package bot
 import (
 	"net/http"
 
-	"github.com/onlyLTY/dockerCopilot/internal/logic/bot"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/logic/bot"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 

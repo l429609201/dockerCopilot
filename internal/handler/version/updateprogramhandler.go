@@ -3,8 +3,8 @@ package version
 import (
 	"net/http"
 
-	"github.com/onlyLTY/dockerCopilot/internal/logic/version"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/logic/version"
+	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 

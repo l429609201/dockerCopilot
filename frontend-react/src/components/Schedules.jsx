@@ -84,8 +84,26 @@ export function Schedules() {
                   {r.enabled ? '已启用' : '已禁用'}
                 </span>
               </div>
-              <div className="text-xs text-gray-500 mt-1">容器 {r.containerNames?.length || 0} 个 · 使用全局定时时间</div>
-              {r.lastResult && <div className="text-xs text-gray-400 mt-0.5">上次：{r.lastResult}</div>}
+              <div className="text-xs text-gray-500 mt-1">
+                容器 {r.containerNames?.length || 0} 个 · 使用全局定时时间
+                {r.registryId === 'auto' && ' · 凭证自适应'}
+              </div>
+              {/* 展示该规则选中的容器名 */}
+              {r.containerNames?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {r.containerNames.slice(0, 8).map((n) => (
+                    <span key={n} className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                      {n}
+                    </span>
+                  ))}
+                  {r.containerNames.length > 8 && (
+                    <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-50 dark:bg-gray-800 text-gray-400">
+                      +{r.containerNames.length - 8}
+                    </span>
+                  )}
+                </div>
+              )}
+              {r.lastResult && <div className="text-xs text-gray-400 mt-1">上次：{r.lastResult}</div>}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button onClick={() => runRule(r.id)} title="立即执行" className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg"><Play className="h-4 w-4" /></button>

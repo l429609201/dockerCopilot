@@ -49,6 +49,12 @@ type InlineKeyboardButton struct {
 	URL          string `json:"url,omitempty"`
 }
 
+// BotCommand 机器人命令菜单项（用于 setMyCommands）。
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
 // ChatID 返回消息或回调所属的会话ID。
 func (u *Update) ChatID() int64 {
 	if u.Message != nil && u.Message.Chat != nil {

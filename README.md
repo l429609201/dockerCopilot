@@ -3,6 +3,18 @@
     <img alt="License: AGPLv3" src="https://shields.io/badge/License-AGPL%20v3-blue.svg">
   </a>
 
+> **Fork 声明**：本项目 fork 自 [onlyLTY/dockerCopilot](https://github.com/onlyLTY/dockerCopilot)，
+> 在其基础上进行了修改与功能新增（如容器文件管理器、任务中心、镜像图标自适应等）。
+> 原始版权归原作者 **onlyLTY** 及其贡献者所有，特此致谢。
+> 本 Fork 依据 AGPLv3 继续开源，详见 [LICENSE](./LICENSE)。
+>
+> 衷心感谢原作者 onlyLTY 及社区所有贡献者的付出。
+
+# 致谢
+
+感谢原项目 [onlyLTY/dockerCopilot](https://github.com/onlyLTY/dockerCopilot) 及其所有贡献者，
+没有原项目就没有本 Fork。本项目在其基础上持续改进，欢迎提交 Issue 与建议。
+
 # 介绍
 
 一个主打便捷的docker容器管理工具，现在已经支持所有平台。

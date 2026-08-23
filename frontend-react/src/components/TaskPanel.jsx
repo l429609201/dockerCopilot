@@ -1,97 +1,131 @@
-import React, { useState, useRef, useCallback } from 'react'
-import { Loader2, CheckCircle, XCircle, ChevronDown, ChevronUp, X, Ban, Maximize2, Minimize2, Trash2, GripHorizontal } from 'lucide-react'
+import React, { useState, useRef } from 'react'
+import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity } from 'lucide-react'
 import { useTasks } from '../hooks/useTasks.jsx'
 import { progressAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 
-// 全局任务浮层：可拖动、可放大/折叠、明细完整显示、支持取消运行中任务。
+// 任务中心：右下角常驻悬浮球，点开从右侧滑出全高抽屉（MoviePilot 智能助手样式）。
+// 展示所有后台任务（更新/恢复/镜像/Compose/定时更新/清理），有新任务时自动弹开。
 export function TaskPanel() {
   const { tasks, removeTask } = useTasks()
-  const [collapsed, setCollapsed] = useState(false)
-  const [expanded, setExpanded] = useState(false)
-  const [pos, setPos] = useState(null) // 拖动后生效的 {x,y}；null 时默认右下角
-  const panelRef = useRef(null)
-  const dragRef = useRef(null)
-
-  // 拖动：按住标题栏移动整个浮层，位置限制在视口内
-  const onDragStart = useCallback((e) => {
-    if (e.target.closest('button')) return // 点按钮不触发拖动
-    const rect = panelRef.current?.getBoundingClientRect()
-    if (!rect) return
-    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, w: rect.width, h: rect.height }
-    const onMove = (ev) => {
-      const { dx, dy, w, h } = dragRef.current
-      const x = Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - w)
-      const y = Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - h)
-      setPos({ x, y })
-    }
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }, [])
-
-  if (tasks.length === 0) return null
+  const [open, setOpen] = useState(false)
+  const prevRunningRef = useRef(0)
 
   const running = tasks.filter(t => !t.isDone)
+  const done = tasks.filter(t => t.isDone)
   const runningCount = running.length
-  const doneCount = tasks.length - runningCount
 
-  // 取消运行中任务：调用后端 cancel，轮询会自动把状态刷新为已取消/已完成
+  // 有新任务开始运行时自动弹开抽屉（0 -> >0 跳变）
+  if (runningCount > prevRunningRef.current && !open) {
+    setOpen(true)
+  }
+  prevRunningRef.current = runningCount
+
+  // 取消运行中任务：调用后端 cancel，SSE 会自动刷新状态
   const handleCancel = async (id) => {
     try { await progressAPI.cancelProgress(id) } catch (e) { console.error('取消任务失败:', e) }
   }
-  // 一键清除所有已完成任务
-  const clearDone = () => tasks.filter(t => t.isDone).forEach(t => removeTask(t.id))
-
-  // 拖动后改用 left/top 绝对定位，否则默认钉在右下角
-  const posStyle = pos
-    ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
-    : { right: 16, bottom: 16 }
-  const widthCls = expanded ? 'w-[34rem]' : 'w-96'
+  const clearDone = () => done.forEach(t => removeTask(t.id))
 
   return (
-    <div ref={panelRef} className={cn('fixed z-50 max-w-[calc(100vw-2rem)]', widthCls)} style={posStyle}>
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col">
-        {/* 头部：按住可拖动 */}
-        <div onMouseDown={onDragStart}
-          className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white cursor-move select-none">
-          <div className="flex items-center gap-2 min-w-0">
-            <GripHorizontal className="h-4 w-4 opacity-70 flex-shrink-0" />
-            {runningCount > 0 && <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />}
-            <span className="text-sm font-medium truncate">
-              {runningCount > 0 ? `${runningCount} 个任务执行中` : `全部完成（${tasks.length}）`}
-            </span>
+    <>
+      {/* 右下角常驻悬浮球 */}
+      <button
+        onClick={() => setOpen(true)}
+        className={cn(
+          'fixed bottom-5 right-5 z-40 h-14 w-14 rounded-full text-white shadow-xl flex items-center justify-center transition-all hover:scale-105 active:scale-95',
+          'bg-gradient-to-br from-primary-500 to-primary-700',
+          open && 'opacity-0 pointer-events-none'
+        )}
+        title="任务中心"
+      >
+        {runningCount > 0 ? <Loader2 className="h-6 w-6 animate-spin" /> : <ListTodo className="h-6 w-6" />}
+        {runningCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
+            {runningCount}
+          </span>
+        )}
+      </button>
+
+      {/* 遮罩 */}
+      <div
+        onClick={() => setOpen(false)}
+        className={cn('fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity',
+          open ? 'opacity-100' : 'opacity-0 pointer-events-none')}
+      />
+
+      {/* 右侧全高抽屉 */}
+      <aside
+        className={cn(
+          'fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-2xl flex flex-col transition-transform duration-300 ease-out',
+          open ? 'translate-x-0' : 'translate-x-full'
+        )}
+      >
+        {/* 顶部标题栏 */}
+        <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-primary-500 to-primary-600 text-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+              <Activity className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-semibold truncate">任务中心</div>
+              <div className="text-xs text-white/80 truncate">
+                {runningCount > 0 ? `${runningCount} 个任务执行中` : '随时待命'}
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            {doneCount > 0 && (
-              <button onClick={clearDone} title="清除已完成" className="p-1 hover:bg-white/20 rounded">
+            {done.length > 0 && (
+              <button onClick={clearDone} title="清除已完成" className="p-2 hover:bg-white/20 rounded-lg transition-colors">
                 <Trash2 className="h-4 w-4" />
               </button>
             )}
-            <button onClick={() => setExpanded(v => !v)} title={expanded ? '缩小' : '放大'} className="p-1 hover:bg-white/20 rounded">
-              {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
-            <button onClick={() => setCollapsed(c => !c)} title={collapsed ? '展开' : '折叠'} className="p-1 hover:bg-white/20 rounded">
-              {collapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            <button onClick={() => setOpen(false)} title="关闭" className="p-2 hover:bg-white/20 rounded-lg transition-colors">
+              <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        {/* 任务列表 */}
-        {!collapsed && (
-          <div className={cn('overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700',
-            expanded ? 'max-h-[70vh]' : 'max-h-96')}>
-            {tasks.map(task => (
-              <TaskRow key={task.id} task={task}
-                onRemove={() => removeTask(task.id)}
-                onCancel={() => handleCancel(task.id)} />
-            ))}
-          </div>
-        )}
+        {/* 任务列表主体 */}
+        <div className="flex-1 overflow-y-auto">
+          {tasks.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-8 text-gray-400">
+              <ListTodo className="h-12 w-12 mb-3 opacity-40" />
+              <p className="text-sm">暂无任务</p>
+              <p className="text-xs mt-1 text-gray-400/80">容器更新、镜像拉取、定时任务等都会在这里实时显示</p>
+            </div>
+          ) : (
+            <>
+              {running.length > 0 && (
+                <TaskGroup title="执行中" count={running.length}>
+                  {running.map(t => (
+                    <TaskRow key={t.id} task={t} onRemove={() => removeTask(t.id)} onCancel={() => handleCancel(t.id)} />
+                  ))}
+                </TaskGroup>
+              )}
+              {done.length > 0 && (
+                <TaskGroup title="已结束" count={done.length}>
+                  {done.map(t => (
+                    <TaskRow key={t.id} task={t} onRemove={() => removeTask(t.id)} onCancel={() => handleCancel(t.id)} />
+                  ))}
+                </TaskGroup>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
+    </>
+  )
+}
+
+// 任务分组标题（吸顶）
+function TaskGroup({ title, count, children }) {
+  return (
+    <div>
+      <div className="sticky top-0 z-10 px-5 py-2 bg-gray-50/95 dark:bg-gray-800/95 backdrop-blur text-xs font-medium text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+        {title}（{count}）
       </div>
+      <div className="divide-y divide-gray-100 dark:divide-gray-800">{children}</div>
     </div>
   )
 }
@@ -99,7 +133,7 @@ export function TaskPanel() {
 function TaskRow({ task, onRemove, onCancel }) {
   const { percentage = 0, message, detailMsg, isDone, failed, canceled, title } = task
   return (
-    <div className="px-4 py-3">
+    <div className="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex items-center gap-2 min-w-0">
           {!isDone && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500 flex-shrink-0" />}

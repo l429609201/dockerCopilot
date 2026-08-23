@@ -136,8 +136,14 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
         <Field label="拉取凭据">
           <select value={form.registryId} onChange={(e) => set('registryId', e.target.value)} className="input">
             <option value="">匿名拉取</option>
+            <option value="auto">自适应（按镜像自动匹配凭证）</option>
             {registries.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
+          {form.registryId === 'auto' && (
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              更新时按每个容器镜像所属仓库（如 ghcr.io、私有仓库）自动匹配已保存的凭证，匹配不到则匿名拉取。
+            </p>
+          )}
         </Field>
 
         <div className="grid grid-cols-2 gap-2">

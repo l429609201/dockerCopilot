@@ -2,11 +2,12 @@ package svc
 
 import (
 	"github.com/docker/docker/client"
-	"github.com/onlyLTY/dockerCopilot/internal/config"
-	"github.com/onlyLTY/dockerCopilot/internal/module"
-	"github.com/onlyLTY/dockerCopilot/internal/module/appconfig"
+	"github.com/l429609201/dockerCopilot/internal/config"
+	"github.com/l429609201/dockerCopilot/internal/module"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
+	"sort"
 	"sync"
 )
 
@@ -120,4 +121,42 @@ func (ctx *ServiceContext) GetProgress(taskID string) (TaskProgress, bool) {
 	defer ctx.mu.Unlock()
 	progress, ok := ctx.ProgressStore[taskID]
 	return progress, ok
+}
+
+// maxDoneKept 已完成任务在内存中保留的最大条数，超出则清理最旧的，避免无限增长。
+const maxDoneKept = 50
+
+// ListProgress 返回全部任务快照，按开始时间倒序（最新在前）。
+// 同时清理超量的已完成任务：运行中任务全部保留，已完成任务仅保留最近 maxDoneKept 条。
+func (ctx *ServiceContext) ListProgress() []TaskProgress {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+
+	all := make([]TaskProgress, 0, len(ctx.ProgressStore))
+	for _, p := range ctx.ProgressStore {
+		all = append(all, p)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].StartedAt > all[j].StartedAt
+	})
+
+	doneCount := 0
+	for _, p := range all {
+		if p.IsDone {
+			doneCount++
+			if doneCount > maxDoneKept {
+				delete(ctx.ProgressStore, p.TaskID)
+			}
+		}
+	}
+	if doneCount <= maxDoneKept {
+		return all
+	}
+	kept := make([]TaskProgress, 0, len(ctx.ProgressStore))
+	for _, p := range all {
+		if _, ok := ctx.ProgressStore[p.TaskID]; ok {
+			kept = append(kept, p)
+		}
+	}
+	return kept
 }

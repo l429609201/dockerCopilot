@@ -1,9 +1,9 @@
 package auth
 
 import (
-	"github.com/onlyLTY/dockerCopilot/internal/logic/auth"
-	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/types"
+	"github.com/l429609201/dockerCopilot/internal/logic/auth"
+	"github.com/l429609201/dockerCopilot/internal/svc"
+	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest/httpx"
 	"net/http"
 )
