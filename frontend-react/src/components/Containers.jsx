@@ -33,7 +33,6 @@ import { ContainerEditModal } from './ContainerEditModal.jsx'
 import { ContainerProcessModal } from './ContainerProcessModal.jsx'
 import { ContainerStats } from './ContainerStats.jsx'
 import { StatsChart } from './StatsChart.jsx'
-import { FileText, TerminalSquare, FolderOpen, Pencil } from 'lucide-react'
 import { FileManager } from './FileManager.jsx'
 import { IconEditor } from './IconEditor.jsx'
 import { ContainerLogs, ContainerConsole } from './ContainerOps.jsx'
@@ -1783,45 +1782,6 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               修改镜像后点击"更换镜像"按钮将重新创建容器
             </p>
           </div>
-        </div>
-
-        {/* 弹窗底部操作按钮 */}
-        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-
-            {/* 操作按钮区：4列×2行 Grid 布局 */}
-            <div className="w-full grid grid-cols-4 gap-2">
-              {/* 第一行：停止/编辑/重启/更新 */}
-              {currentContainer.status === 'running' ? (
-                <>
-                  <ActionBtn onClick={() => handleContainerAction('stop')} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'stop'} icon={Square} label="停止" color="red" />
-                  <ActionBtn onClick={() => onEdit(currentContainer)} disabled={isActionProcessing || isUpdating}
-                    icon={Edit3} label="编辑" color="orange" />
-                  <ActionBtn onClick={() => handleContainerAction('restart')} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'restart'} icon={RotateCcw} label="重启" color="yellow" />
-                  <ActionBtn onClick={() => onUpdate(container.id)} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'update'} icon={Upload} label="更新" color="purple" />
-                </>
-              ) : (
-                <div className="col-span-4">
-                  <ActionBtn onClick={() => handleContainerAction('start')} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'start'} icon={Play} label="启动" color="green" fullWidth />
-                </div>
-              )}
-
-              {/* 第二行：日志/进程/控制台/文件（仅运行中容器显示） */}
-              {currentContainer.status === 'running' && (
-                <>
-                  <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
-                  <ActionBtn onClick={() => onProcess(currentContainer)} icon={Activity} label="进程" color="emerald" />
-                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
-                  <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
-                </>
-              )}
-            </div>
-
-          </div>
             </>
           )}
 
@@ -1880,6 +1840,45 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             </div>
           )}
 
+        </div>
+
+        {/* 弹窗底部操作按钮 */}
+        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+
+            {/* 操作按钮区：4列×2行 Grid 布局 */}
+            <div className="w-full grid grid-cols-4 gap-2">
+              {/* 第一行：停止/编辑/重启/更新 */}
+              {currentContainer.status === 'running' ? (
+                <>
+                  <ActionBtn onClick={() => handleContainerAction('stop')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'stop'} icon={Square} label="停止" color="red" />
+                  <ActionBtn onClick={() => onEdit(currentContainer)} disabled={isActionProcessing || isUpdating}
+                    icon={Edit3} label="编辑" color="orange" />
+                  <ActionBtn onClick={() => handleContainerAction('restart')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'restart'} icon={RotateCcw} label="重启" color="yellow" />
+                  <ActionBtn onClick={() => onUpdate(container.id)} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'update'} icon={Upload} label="更新" color="purple" />
+                </>
+              ) : (
+                <div className="col-span-4">
+                  <ActionBtn onClick={() => handleContainerAction('start')} disabled={isActionProcessing || isUpdating}
+                    loading={isActionProcessing && currentAction === 'start'} icon={Play} label="启动" color="green" fullWidth />
+                </div>
+              )}
+
+              {/* 第二行：日志/进程/控制台/文件（仅运行中容器显示） */}
+              {currentContainer.status === 'running' && (
+                <>
+                  <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
+                  <ActionBtn onClick={() => onProcess(currentContainer)} icon={Activity} label="进程" color="emerald" />
+                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
+                  <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
+                </>
+              )}
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
