@@ -100,7 +100,7 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	selfID := os.Getenv("HOSTNAME") // Docker 容器内 HOSTNAME 通常是容器ID的短格式
 	if selfID != "" && strings.HasPrefix(id, selfID) {
 		logx.Info("检测到自我更新，启动辅助容器接管")
-		return SelfUpdate(serviceContext, id, name, imageNameAndTag, taskID, delOldContainer)
+		return SelfUpdate(ctx, serviceContext, id, name, imageNameAndTag, delOldContainer, taskID, registryAuth)
 	}
 
 	// 【Misaka 方式】先停止删除旧容器，再用原名创建新容器
