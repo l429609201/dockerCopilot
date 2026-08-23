@@ -1167,9 +1167,9 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部排列，允许换行以容纳全部功能 */}
+                      {/* 操作按钮栏 - 底部单行紧凑排列 */}
                       {!isBatchMode && (
-                        <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="flex gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
                             <div className="flex-1 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">

@@ -70,12 +70,17 @@ export function Settings() {
   const set = (k, v) => setCfg((c) => ({ ...c, [k]: v }))
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-        <SettingsIcon className="h-5 w-5" /> 设置
-      </h2>
+    <div className="space-y-6">
+      {/* 页面头部 */}
+      <div className="px-2 sm:px-6 py-4">
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+          <SettingsIcon className="h-5 w-5" /> 设置
+        </h2>
+      </div>
 
-      <div className="card space-y-4">
+      {/* 内容区域 */}
+      <div className="px-2 sm:px-6 space-y-6">
+        <div className="card space-y-4">
         <div className="flex items-center gap-2 text-gray-900 dark:text-white font-semibold">
           <Send className="h-4 w-4" /> Telegram 机器人
         </div>
@@ -144,6 +149,7 @@ export function Settings() {
 
       {/* 仓库凭据卡片：从定时更新页迁移至此，供拉取私有镜像使用 */}
       <RegistrySection />
+      </div>
     </div>
   )
 }

@@ -29,18 +29,22 @@ func GetSelfContainerID() string {
 	// cgroup v1/v2 路径里通常含 64 位十六进制的容器ID
 	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
 		if id := extractDockerID(string(data)); id != "" {
+			logx.Infof("📍 从 /proc/self/cgroup 获取容器ID: %s", id)
 			return id
 		}
 	}
 	if data, err := os.ReadFile("/proc/self/mountinfo"); err == nil {
 		if id := extractDockerID(string(data)); id != "" {
+			logx.Infof("📍 从 /proc/self/mountinfo 获取容器ID: %s", id)
 			return id
 		}
 	}
 	// 退回 hostname：Docker 默认将容器ID前12位作为 hostname
 	if h, err := os.Hostname(); err == nil {
+		logx.Infof("📍 从 hostname 获取容器ID: %s", h)
 		return h
 	}
+	logx.Errorf("❌ 无法获取当前容器ID")
 	return ""
 }
 
@@ -72,13 +76,20 @@ func isHex(s string) bool {
 // 兼容短ID/长ID：只要互为前缀即认为是同一个。
 func IsSelfContainer(svcCtx *svc.ServiceContext, id string) bool {
 	self := GetSelfContainerID()
+	logx.Infof("🔍 自我更新检测: 目标容器ID=%s, 当前容器ID=%s", id, self)
+
 	if self == "" || id == "" {
+		logx.Infof("❌ 自我更新检测失败: self=%s, id=%s", self, id)
 		return false
 	}
+
+	// 第一步：前缀匹配
 	if strings.HasPrefix(id, self) || strings.HasPrefix(self, id) {
+		logx.Infof("✅ 检测到自我更新（前缀匹配）: 目标=%s, 自身=%s", id, self)
 		return true
 	}
-	// hostname 可能不是ID，再用 docker inspect 兜底比对
+
+	// 第二步：docker inspect 兜底比对
 	insp, err := svcCtx.DockerClient.ContainerInspect(context.Background(), id)
 	if err == nil {
 		short := insp.ID
@@ -86,9 +97,12 @@ func IsSelfContainer(svcCtx *svc.ServiceContext, id string) bool {
 			short = short[:12]
 		}
 		if self == insp.ID || self == short {
+			logx.Infof("✅ 检测到自我更新（inspect匹配）: 目标=%s, 自身=%s, 完整ID=%s", id, self, insp.ID)
 			return true
 		}
 	}
+
+	logx.Infof("⚠️ 非自我更新: 目标=%s, 自身=%s", id, self)
 	return false
 }
 
@@ -147,6 +161,8 @@ func pullImageForSelfUpdate(ctx context.Context, svcCtx *svc.ServiceContext, ima
 // SelfUpdate 处理"更新目标是自己"的场景：先拉好新镜像，再交给辅助容器收尾。
 // 关键点：主容器只负责拉镜像和拉起 helper，绝不自己停自己，避免半更新卡死。
 func SelfUpdate(ctx context.Context, svcCtx *svc.ServiceContext, id, name, imageNameAndTag string, delOld bool, taskID, registryAuth string) error {
+	logx.Infof("🚀🚀🚀 进入 SelfUpdate 流程！容器=%s, 镜像=%s, taskID=%s", name, imageNameAndTag, taskID)
+
 	progress := svc.TaskProgress{
 		TaskID:     taskID,
 		Name:       name,

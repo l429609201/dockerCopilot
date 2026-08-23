@@ -65,9 +65,9 @@ func (b *Bot) handleCommand(chatID int64, text string) {
 	case "/help":
 		b.reply(chatID, helpText())
 	case "/ps", "/containers":
-		b.replyContainerList(chatID, false, 0)
+		b.replyContainerList(chatID, false, 0, 0)
 	case "/images":
-		b.replyImageList(chatID)
+		b.replyImageList(chatID, 0)
 	case "/sys":
 		b.replySystemOverview(chatID)
 	case "/check_updates":
@@ -75,7 +75,7 @@ func (b *Bot) handleCommand(chatID int64, text string) {
 	case "/update_all":
 		b.updateAllContainers(chatID)
 	case "/compose":
-		b.listComposeProjects(chatID)
+		b.listComposeProjects(chatID, 0)
 	case "/start_c":
 		b.doAction(chatID, args, "start")
 	case "/stop_c":
@@ -106,8 +106,17 @@ func (b *Bot) doAction(chatID int64, args []string, action string) {
 // handleCallback 处理 inline 按钮回调：主菜单跳转、列表操作确认、执行已确认操作。
 func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	_ = b.client.AnswerCallbackQuery(cb.ID, "")
+	messageID := 0
+	if cb.Message != nil {
+		messageID = cb.Message.MessageID
+	}
+
 	if cb.Data == "cancel" {
-		b.reply(chatID, "已取消。")
+		if messageID > 0 {
+			b.editMessage(chatID, messageID, "已取消。")
+		} else {
+			b.reply(chatID, "已取消。")
+		}
 		return
 	}
 	parts := strings.Split(cb.Data, "|")
@@ -121,15 +130,15 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		}
 		switch parts[1] {
 		case "ps":
-			b.replyContainerList(chatID, false, page)
+			b.replyContainerList(chatID, false, page, messageID)
 		case "run":
-			b.replyContainerList(chatID, true, page)
+			b.replyContainerList(chatID, true, page, messageID)
 		case "images":
-			b.replyImageList(chatID)
+			b.replyImageList(chatID, messageID)
 		case "sys":
 			b.replySystemOverview(chatID)
 		case "compose":
-			b.listComposeProjects(chatID)
+			b.listComposeProjects(chatID, messageID)
 		case "help":
 			b.reply(chatID, helpText())
 		}
@@ -196,7 +205,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// Compose 项目列表：cmpls
 	if parts[0] == "cmpls" {
-		b.listComposeProjects(chatID)
+		b.listComposeProjects(chatID, messageID)
 		return
 	}
 	// Compose 项目面板：cmpp|<projectID>
@@ -388,7 +397,8 @@ const pageSize = 10
 
 // replyContainerList 分页推送容器列表，每个容器附带操作按钮。
 // onlyRunning=true 时仅展示运行中容器；page 从 0 开始。
-func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int) {
+// messageID > 0 时编辑原消息（用于翻页），否则发送新消息。
+func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int, messageID int) {
 	list, err := utiles.GetContainerList(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取容器列表失败："+err.Error())
@@ -489,12 +499,18 @@ func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int) {
 	}
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.replyKeyboard(chatID, text.String(), kb)
+	// 如果有 messageID，编辑原消息（翻页场景）；否则发送新消息
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, text.String(), kb)
+	}
 }
 
 // replyImageList 推送镜像详细列表：每行显示 镜像名:标签 + 大小 + 是否在用。
 // 按镜像大小倒序排列，大镜像在前方便用户识别存储占用大户。
-func (b *Bot) replyImageList(chatID int64) {
+// messageID > 0 时编辑原消息，否则发送新消息。
+func (b *Bot) replyImageList(chatID int64, messageID int) {
 	list, err := utiles.GetImagesList(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取镜像列表失败："+err.Error())
@@ -537,7 +553,13 @@ func (b *Bot) replyImageList(chatID int64) {
 	}
 
 	text.WriteString("💡 <i>提示：🟢 使用中 | ⚪ 未使用</i>")
-	b.reply(chatID, text.String())
+
+	// 如果有 messageID，编辑原消息；否则发送新消息
+	if messageID > 0 {
+		b.editMessage(chatID, messageID, text.String())
+	} else {
+		b.reply(chatID, text.String())
+	}
 }
 
 // replySystemOverview 推送系统资源概览：容器/镜像统计 + 磁盘占用汇总。
@@ -784,7 +806,8 @@ func (b *Bot) executeBatchUpdate(chatID int64) {
 }
 
 // listComposeProjects 列出所有扫描到的 Compose 项目，每个项目一个按钮进入管理面板。
-func (b *Bot) listComposeProjects(chatID int64) {
+// messageID > 0 时编辑原消息，否则发送新消息。
+func (b *Bot) listComposeProjects(chatID int64, messageID int) {
 	// 从配置获取扫描路径和深度
 	scanPaths := b.svcCtx.Config.Compose.ScanPaths
 	maxDepth := b.svcCtx.Config.Compose.MaxDepth
@@ -813,7 +836,13 @@ func (b *Bot) listComposeProjects(chatID int64) {
 	}
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.replyKeyboard(chatID, text.String(), kb)
+
+	// 如果有 messageID，编辑原消息；否则发送新消息
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, text.String(), kb)
+	}
 }
 
 // showComposeProjectPanel 展示单个 Compose 项目的操作面板，提供 up/down/restart/pull/stop/start 按钮。
@@ -954,4 +983,20 @@ func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string
 		},
 	}
 	b.replyKeyboard(chatID, text.String(), kb)
+}
+
+// ========== 消息编辑辅助函数 ==========
+
+// editMessage 编辑已发送的消息文本（用于 callback 交互优化）。
+func (b *Bot) editMessage(chatID int64, messageID int, text string) {
+	if err := b.client.EditMessageText(chatID, messageID, text, nil); err != nil {
+		logx.Errorf("编辑消息失败 (chat=%d, msg=%d): %v", chatID, messageID, err)
+	}
+}
+
+// editMessageKeyboard 编辑已发送的消息文本和键盘（用于列表翻页、面板切换等）。
+func (b *Bot) editMessageKeyboard(chatID int64, messageID int, text string, keyboard *telegram.InlineKeyboardMarkup) {
+	if err := b.client.EditMessageText(chatID, messageID, text, keyboard); err != nil {
+		logx.Errorf("编辑消息键盘失败 (chat=%d, msg=%d): %v", chatID, messageID, err)
+	}
 }

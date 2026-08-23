@@ -74,12 +74,12 @@ export function ContainerListRow({
         <div className="flex items-center gap-1 flex-shrink-0 relative" onClick={(e) => e.stopPropagation()}>
           {/* 大屏(md+)：显示所有按钮 */}
           <div className="hidden md:flex items-center gap-1">
-            {/* 日志 / 控制台 快捷入口 */}
+            {/* 日志 / 控制台 / 文件管理 快捷入口 - 添加颜色区分 */}
             {onOps && (
               <>
-                <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="gray" />
-                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="gray" />
-                {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="gray" />}
+                <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="blue" />
+                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="purple" />
+                {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="yellow" />}
               </>
             )}
             {loading ? (

@@ -58,23 +58,28 @@ export function Schedules() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-          <Clock className="h-5 w-5" /> 定时更新
-        </h2>
-        <button onClick={() => setEditing(emptyRule())}
-          className="flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm">
-          <Plus className="h-4 w-4" /> 新建规则
-        </button>
+      {/* 页面头部 */}
+      <div className="px-2 sm:px-6 py-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <Clock className="h-5 w-5" /> 定时更新
+          </h2>
+          <button onClick={() => setEditing(emptyRule())}
+            className="flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm">
+            <Plus className="h-4 w-4" /> 新建规则
+          </button>
+        </div>
       </div>
 
-      {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
-      {loading && <div className="text-gray-500 text-sm">加载中...</div>}
+      {/* 内容区域 */}
+      <div className="px-2 sm:px-6">
+        {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm mb-4">{error}</div>}
+        {loading && <div className="text-gray-500 text-sm mb-4">加载中...</div>}
 
-      {/* 全局定时设置：所有规则共用同一执行时间 */}
-      <CronSetting cron={cron} onSaved={setCron} />
+        {/* 全局定时设置：所有规则共用同一执行时间 */}
+        <CronSetting cron={cron} onSaved={setCron} />
 
-      <div className="grid gap-3">
+        <div className="grid gap-3 mt-4">
         {rules.map((r) => (
           <div key={r.id} className="card flex items-center justify-between">
             <div className="min-w-0">
@@ -113,6 +118,7 @@ export function Schedules() {
           </div>
         ))}
         {!loading && rules.length === 0 && <div className="text-gray-400 text-sm">暂无定时规则</div>}
+      </div>
       </div>
 
       {editing && (

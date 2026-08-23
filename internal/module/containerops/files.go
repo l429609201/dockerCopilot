@@ -67,13 +67,14 @@ func joinChild(dir, name string) (string, error) {
 }
 
 // ListFiles 列出目录内容。使用 exec `ls` 数组传参 + `--` 终止选项，防注入。
+// 兼容 BusyBox ls：使用 -l 输出详情，不依赖 GNU 专有的 --time-style 参数。
 func (s *Service) ListFiles(ctx context.Context, id, dir string) ([]FileEntry, error) {
 	safe, err := sanitizePath(dir)
 	if err != nil {
 		return nil, err
 	}
-	// -A 显示隐藏文件（不含 . ..），-l 详情，-Q 名称加引号，--time-style 统一时间
-	res, err := s.Exec(ctx, id, []string{"ls", "-Al", "-Q", "--time-style=long-iso", "--", safe}, "", "", 30, 512*1024)
+	// -A 显示隐藏文件（不含 . ..），-l 详情，BusyBox 兼容
+	res, err := s.Exec(ctx, id, []string{"ls", "-Al", "--", safe}, "", "", 30, 512*1024)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +84,7 @@ func (s *Service) ListFiles(ctx context.Context, id, dir string) ([]FileEntry, e
 	return parseLsOutput(res.Output), nil
 }
 
-// parseLsOutput 解析 `ls -Al -Q --time-style=long-iso` 的输出为结构化条目。
+// parseLsOutput 解析 `ls -Al` 的输出为结构化条目（兼容 BusyBox 和 GNU）。
 func parseLsOutput(out string) []FileEntry {
 	entries := make([]FileEntry, 0)
 	for _, line := range strings.Split(out, "\n") {
@@ -105,31 +106,41 @@ func parseLsOutput(out string) []FileEntry {
 	return entries
 }
 
-// parseLsLine 解析单行 ls 详情。格式示例：
-// drwxr-xr-x 2 root root 4096 2024-08-19 15:38 "app"
+// parseLsLine 解析单行 ls 详情。兼容 BusyBox 和 GNU ls 输出格式。
+// BusyBox 示例: drwxr-xr-x 2 root root 4096 Jan 10 15:38 app
+// GNU 示例: drwxr-xr-x 2 root root 4096 2024-08-19 15:38 "app"
 func parseLsLine(line string) (FileEntry, bool) {
-	// 前 5 个空白分隔字段：mode links owner group size；随后是 日期 时间；最后是引号包裹的名称
+	// 前 5 个空白分隔字段：mode links owner group size；随后是日期时间字段；最后是文件名
 	fields := strings.Fields(line)
-	if len(fields) < 8 {
+	if len(fields) < 9 {
 		return FileEntry{}, false
 	}
 	mode := fields[0]
 	size, _ := strconv.ParseInt(fields[4], 10, 64)
-	modTime := fields[5] + " " + fields[6]
-	// 名称在第一个 '"' 到最后一个 '"' 之间（可能含空格）
-	name := ""
-	if i := strings.Index(line, "\""); i >= 0 {
-		if j := strings.LastIndex(line, "\""); j > i {
-			name = line[i+1 : j]
-		}
-	}
-	if name == "" {
+
+	// 日期时间：通常是 3 个字段（月 日 时间或年份）
+	// BusyBox: "Jan 10 15:38" 或 "Jan 10 2024"
+	// GNU: "2024-08-19 15:38"
+	modTime := strings.Join(fields[5:8], " ")
+
+	// 文件名：从第 8 个字段开始到行尾
+	nameStart := 8
+	if nameStart >= len(fields) {
 		return FileEntry{}, false
 	}
+
+	// 重新从原始行提取文件名（保留空格）
+	// 找到第 8 个字段在原始行中的起始位置
+	nameRaw := strings.Join(fields[nameStart:], " ")
+
+	// 处理引号（GNU ls -Q 的输出）
+	name := strings.Trim(nameRaw, "\"")
+
 	isDir := strings.HasPrefix(mode, "d")
 	isLink := strings.HasPrefix(mode, "l")
 	link := ""
 	if isLink {
+		// 符号链接格式: name -> target
 		if idx := strings.Index(name, " -> "); idx >= 0 {
 			link = name[idx+4:]
 			name = name[:idx]
@@ -137,6 +148,7 @@ func parseLsLine(line string) (FileEntry, bool) {
 			name = strings.Trim(name, "\"")
 		}
 	}
+
 	return FileEntry{Name: name, Size: size, Mode: mode, ModTime: modTime, IsDir: isDir, IsLink: isLink, Link: link}, true
 }
 
