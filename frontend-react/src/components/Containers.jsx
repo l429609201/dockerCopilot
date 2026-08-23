@@ -1167,9 +1167,9 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部单行紧凑排列 */}
+                      {/* 操作按钮栏 - 底部排列，每行最多3个按钮 */}
                       {!isBatchMode && (
-                        <div className="flex gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
                             <div className="flex-1 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
@@ -1194,7 +1194,7 @@ export function Containers() {
                                 <>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'stop') }}
-                                    className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                    className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                     title="停止"
                                   >
                                     <Square className="h-4 w-4" />
@@ -1202,7 +1202,7 @@ export function Containers() {
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'restart') }}
-                                    className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                    className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                     title="重启"
                                   >
                                     <RotateCcw className="h-4 w-4" />
@@ -1212,7 +1212,7 @@ export function Containers() {
                               ) : (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'start') }}
-                                  className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-200 dark:hover:border-green-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                  className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-200 dark:hover:border-green-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                   title="启动"
                                 >
                                   <Play className="h-4 w-4" />
@@ -1223,7 +1223,7 @@ export function Containers() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleUpdateContainer(container.id) }}
                                 className={cn(
-                                  "flex-1 flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap",
+                                  "flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap",
                                   container.haveUpdate
                                     ? "text-yellow-600 dark:text-yellow-400 border-yellow-400 dark:border-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
                                     : "text-purple-600 dark:text-purple-400 border-gray-200 dark:border-gray-700 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800"
@@ -1236,7 +1236,7 @@ export function Containers() {
                               {/* 日志 / 控制台 / 文件管理 快捷入口（彩色，与操作按钮统一） */}
                               <button
                                 onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'logs' }) }}
-                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="查看日志"
                               >
                                 <FileText className="h-4 w-4" />
@@ -1244,7 +1244,7 @@ export function Containers() {
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'exec' }) }}
-                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="控制台"
                               >
                                 <TerminalSquare className="h-4 w-4" />
@@ -1252,7 +1252,7 @@ export function Containers() {
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
-                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-amber-600 dark:text-amber-400 bg-white dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-gray-200 dark:border-gray-700 hover:border-amber-200 dark:hover:border-amber-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-amber-600 dark:text-amber-400 bg-white dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-gray-200 dark:border-gray-700 hover:border-amber-200 dark:hover:border-amber-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="文件管理"
                               >
                                 <FolderOpen className="h-4 w-4" />

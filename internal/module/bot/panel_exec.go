@@ -12,7 +12,8 @@ import (
 
 // sendTagSwitch 展示可切换的镜像标签：列出本地与当前镜像同名的其它 tag 作为按钮，
 // 并提供"手动输入标签"入口。切换标签本质是用目标 tag 镜像重建容器。
-func (b *Bot) sendTagSwitch(chatID int64, id, name string) {
+// messageID > 0 时编辑原消息，否则发送新消息。
+func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
 	c, ok := b.findContainer(id)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
@@ -62,7 +63,12 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name string) {
 		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s", id, name)},
 	})
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.replyKeyboard(chatID, t.String(), kb)
+	// 如果有 messageID，编辑原消息；否则发送新消息
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, t.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, t.String(), kb)
+	}
 }
 
 // doSwitchTag 用指定 tag 重建容器：拼出 repo:tag 后走更新流程。

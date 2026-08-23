@@ -146,7 +146,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// 单容器操作面板：panel|<id>|<name>
 	if parts[0] == "panel" && len(parts) == 3 {
-		b.sendContainerPanel(chatID, parts[1], parts[2])
+		b.sendContainerPanel(chatID, parts[1], parts[2], messageID)
 		return
 	}
 	// 面板子功能路由
@@ -154,16 +154,16 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		id, name := parts[1], parts[2]
 		switch parts[0] {
 		case "logs":
-			b.sendContainerLogs(chatID, id, name)
+			b.sendContainerLogs(chatID, id, name, messageID)
 			return
 		case "inspect":
-			b.sendContainerInspect(chatID, id, name)
+			b.sendContainerInspect(chatID, id, name, messageID)
 			return
 		case "stats":
-			b.sendContainerStats(chatID, id, name)
+			b.sendContainerStats(chatID, id, name, messageID)
 			return
 		case "tags":
-			b.sendTagSwitch(chatID, id, name)
+			b.sendTagSwitch(chatID, id, name, messageID)
 			return
 		case "execp":
 			b.promptExec(chatID, id, name)
@@ -187,7 +187,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		// 低风险操作（启动/停止/重启/暂停/恢复/更新）直接执行；危险操作走二次确认
 		switch action {
 		case "start", "stop", "restart", "pause", "unpause", "update":
-			b.execAction(chatID, action, parts[2], parts[3])
+			b.execAction(chatID, action, parts[2], parts[3], messageID)
 		default:
 			b.askConfirm(chatID, action, parts[2], parts[3])
 		}
@@ -195,7 +195,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// 二次确认通过：confirm|<action>|<id>|<name>
 	if len(parts) == 4 && parts[0] == "confirm" {
-		b.execAction(chatID, parts[1], parts[2], parts[3])
+		b.execAction(chatID, parts[1], parts[2], parts[3], messageID)
 		return
 	}
 	// 批量更新确认：batchupdate|confirm
@@ -210,7 +210,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// Compose 项目面板：cmpp|<projectID>
 	if parts[0] == "cmpp" && len(parts) == 2 {
-		b.showComposeProjectPanel(chatID, parts[1])
+		b.showComposeProjectPanel(chatID, parts[1], messageID)
 		return
 	}
 	// Compose 执行动作：cmpa|<projectID>|<action>
@@ -242,7 +242,8 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 }
 
 // execAction 统一执行容器操作并回报结果，供直接点击与二次确认后调用。
-func (b *Bot) execAction(chatID int64, action, id, name string) {
+// messageID > 0 时用于编辑原消息（特别是更新操作的进度显示）。
+func (b *Bot) execAction(chatID int64, action, id, name string, messageID int64) {
 	var err error
 	switch action {
 	case "start":
@@ -260,7 +261,7 @@ func (b *Bot) execAction(chatID int64, action, id, name string) {
 	case "remove":
 		err = b.ops.Remove(id, true, false)
 	case "update":
-		b.doUpdate(chatID, id, name)
+		b.doUpdate(chatID, id, name, messageID)
 		return
 	default:
 		b.reply(chatID, "不支持的操作")
@@ -290,7 +291,8 @@ func (b *Bot) findContainer(id string) (MyType.Container, bool) {
 
 // sendContainerPanel 推送单容器操作面板：把该容器所有可用操作收纳到二级菜单，
 // 避免列表页按钮爆炸。按钮随容器状态动态变化。
-func (b *Bot) sendContainerPanel(chatID int64, id, name string) {
+// messageID > 0 时编辑原消息，否则发送新消息。
+func (b *Bot) sendContainerPanel(chatID int64, id, name string, messageID int64) {
 	c, ok := b.findContainer(id)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
@@ -364,7 +366,12 @@ func (b *Bot) sendContainerPanel(chatID int64, id, name string) {
 	})
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.replyKeyboard(chatID, text.String(), kb)
+	// 如果有 messageID，编辑原消息；否则发送新消息
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, text.String(), kb)
+	}
 }
 
 // sendMainMenu 推送主菜单（按钮式交互入口）。
@@ -846,7 +853,8 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
 }
 
 // showComposeProjectPanel 展示单个 Compose 项目的操作面板，提供 up/down/restart/pull/stop/start 按钮。
-func (b *Bot) showComposeProjectPanel(chatID int64, projectID string) {
+// messageID > 0 时编辑原消息，否则发送新消息。
+func (b *Bot) showComposeProjectPanel(chatID int64, projectID string, messageID int64) {
 	// 重新扫描找到该项目
 	scanPaths := b.svcCtx.Config.Compose.ScanPaths
 	maxDepth := b.svcCtx.Config.Compose.MaxDepth
@@ -890,7 +898,12 @@ func (b *Bot) showComposeProjectPanel(chatID int64, projectID string) {
 	}
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-	b.replyKeyboard(chatID, text.String(), kb)
+	// 如果有 messageID，编辑原消息；否则发送新消息
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, text.String(), kb)
+	}
 }
 
 // executeComposeAction 执行 Compose 动作（危险操作如 down 需二次确认）。

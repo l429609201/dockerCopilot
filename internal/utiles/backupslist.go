@@ -12,6 +12,12 @@ func BackupList(ctx *svc.ServiceContext) ([]string, error) {
 	if dir == "" {
 		dir = "/data/backups" // 如果环境变量未设置，使用默认值
 	}
+
+	// 确保备份目录存在，不存在则自动创建
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
