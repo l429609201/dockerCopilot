@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-<parameter name="X, Plus, Trash2, Save } from 'lucide-react'
+import { X, Plus, Trash2, Save } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 
 // 容器编辑弹窗：编辑端口映射、环境变量、重启策略（任务化重建）。
@@ -62,9 +62,9 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
     setSaving(true)
     setError('')
     try {
-      // PortBindings 格式: ["hostPort:containerPort/proto", ...]
+      /* PortBindings 格式: ["hostPort:containerPort/proto", ...] */
       const portBindings = form.ports.map((p) => `${p.host}:${p.container}/${p.proto}`)
-      // Env 格式: ["KEY=VALUE", ...]
+      /* Env 格式: ["KEY=VALUE", ...] */
       const env = form.env.filter((e) => e.key).map((e) => `${e.key}=${e.value}`)
       const spec = {
         image: form.image || undefined,
