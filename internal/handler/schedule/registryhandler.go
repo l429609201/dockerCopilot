@@ -45,3 +45,17 @@ func RegistryDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		writeResp(w, r, resp, err)
 	}
 }
+
+// RegistryRateLimitHandler 查询指定凭据在 Docker Hub 的剩余拉取次数。
+func RegistryRateLimitHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.RegistryIDReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := schedule.NewRegistryLogic(r.Context(), svcCtx)
+		resp, err := l.RateLimit(&req)
+		writeResp(w, r, resp, err)
+	}
+}

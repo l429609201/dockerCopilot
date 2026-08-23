@@ -55,12 +55,19 @@ func (s *Store) MaskedRegistries() []map[string]interface{} {
 	defer s.mu.RUnlock()
 	result := make([]map[string]interface{}, 0, len(s.cfg.Registries))
 	for _, r := range s.cfg.Registries {
+		// 类型为空时视为 custom，兼容早期未记录类型的旧凭据
+		regType := r.Type
+		if regType == "" {
+			regType = "custom"
+		}
 		result = append(result, map[string]interface{}{
 			"id":       r.ID,
+			"type":     regType,
 			"name":     r.Name,
 			"registry": r.Registry,
 			"username": r.Username,
 			"password": maskSecret(r.Password),
+			"note":     r.Note,
 		})
 	}
 	return result

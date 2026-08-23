@@ -249,6 +249,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/registries/:id",
 				Handler: schedule.RegistryDeleteHandler(serverCtx),
 			},
+			{
+				Method:  http.MethodGet,
+				Path:    "/registries/:id/ratelimit",
+				Handler: schedule.RegistryRateLimitHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),

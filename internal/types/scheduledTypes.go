@@ -35,15 +35,26 @@ type CronConfigReq struct {
 // Password 为空且 ID 非空时表示"保持原密码不变"。
 type RegistryReq struct {
 	ID       string `json:"id,optional"`
+	Type     string `json:"type,optional"` // 类型：dockerhub/github/custom，空视为 custom
 	Name     string `json:"name"`
 	Registry string `json:"registry,optional"`
 	Username string `json:"username"`
 	Password string `json:"password,optional"`
+	Note     string `json:"note,optional"` // 说明/备注，描述该凭据的用途
 }
 
 // RegistryIDReq 按 ID 操作凭据的请求。
 type RegistryIDReq struct {
 	ID string `path:"id"`
+}
+
+// RegistryRateLimitResp Docker Hub 剩余拉取次数的响应数据。
+type RegistryRateLimitResp struct {
+	Supported bool   `json:"supported"`       // 该凭据是否支持次数查询（仅 Docker Hub）
+	Limit     int    `json:"limit"`           // 周期内总配额
+	Remaining int    `json:"remaining"`       // 剩余次数
+	Source    string `json:"source"`          // anonymous/authenticated
+	Message   string `json:"message,omitempty"` // 不支持或出错时的说明
 }
 
 // TelegramConfigReq Telegram Bot 配置的更新请求。

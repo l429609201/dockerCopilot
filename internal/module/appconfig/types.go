@@ -42,11 +42,13 @@ type ComposeConfig struct {
 // RegistryCredential 单个 Registry 的登录凭据。
 // Password 为敏感字段，对外输出时必须脱敏，禁止回显明文。
 type RegistryCredential struct {
-	ID       string `json:"id"`       // 唯一标识
-	Name     string `json:"name"`     // 展示名称
-	Registry string `json:"registry"` // registry 地址，空表示 Docker Hub
-	Username string `json:"username"` // 用户名
-	Password string `json:"password"` // 密码或访问令牌（敏感）
+	ID       string `json:"id"`             // 唯一标识
+	Type     string `json:"type,omitempty"` // 类型：dockerhub/github/custom，空视为 custom
+	Name     string `json:"name"`           // 展示名称
+	Registry string `json:"registry"`       // registry 地址，空表示 Docker Hub
+	Username string `json:"username"`       // 用户名
+	Password string `json:"password"`       // 密码或访问令牌（敏感）
+	Note     string `json:"note,omitempty"` // 说明/备注，描述该凭据的用途
 }
 
 // 定时任务类型常量。老数据无 Type 字段时按 update 处理，保证向后兼容。

@@ -224,6 +224,8 @@ export const registryAPI = {
   list: () => apiClient.get('/api/registries'),
   save: (cred) => apiClient.post('/api/registries', cred),
   remove: (id) => apiClient.delete(`/api/registries/${id}`),
+  // 查询该凭据在 Docker Hub 的剩余拉取次数（仅 Docker Hub 类型有效）
+  rateLimit: (id) => apiClient.get(`/api/registries/${id}/ratelimit`),
 }
 
 // 阶段5：Telegram Bot 配置API
