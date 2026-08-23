@@ -52,6 +52,8 @@ export function TaskProvider({ children }) {
           taskType: d.taskType || '',
           startedAt: d.startedAt || 0,
           endedAt: d.endedAt || 0,
+          // 镜像分层进度（仅拉取类任务有值），供任务中心展开显示
+          layers: Array.isArray(d.layers) ? d.layers : [],
         }))
         for (const t of mapped) {
           if (t.isDone && prevDoneRef.current[t.id] === false) {

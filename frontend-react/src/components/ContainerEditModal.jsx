@@ -118,7 +118,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            ✏️ 编辑容器 - {container.Names?.[0]?.replace(/^\//, '') || container.ID.slice(0, 12)}
+            ✏️ 编辑容器 - {container.name || container.Names?.[0]?.replace(/^\//, '') || (container.ID || '').slice(0, 12)}
           </h3>
           <button onClick={onClose}
             className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">

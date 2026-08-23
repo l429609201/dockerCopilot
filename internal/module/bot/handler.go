@@ -90,7 +90,7 @@ func (b *Bot) handleCommand(chatID int64, text string, msgID int64) {
 	case "/images":
 		b.replyImageList(chatID, 0)
 	case "/sys":
-		b.replySystemOverview(chatID)
+		b.replySystemOverview(chatID, 0)
 	case "/check_updates":
 		b.checkAllUpdates(chatID)
 	case "/update_all":
@@ -159,7 +159,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		case "images":
 			b.replyImageList(chatID, messageID)
 		case "sys":
-			b.replySystemOverview(chatID)
+			b.replySystemOverview(chatID, messageID)
 		case "updates":
 			// 更新中心：显示所有有更新的容器
 			b.replyUpdateCenter(chatID, messageID)
@@ -751,7 +751,9 @@ func (b *Bot) replyImageList(chatID int64, messageID int64) {
 
 // replySystemOverview 推送系统资源概览：容器/镜像统计 + 磁盘占用汇总。
 // 提供运行/停止容器数、镜像总数、使用中镜像数和总磁盘占用等关键指标。
-func (b *Bot) replySystemOverview(chatID int64) {
+// messageID > 0 时编辑原消息（用于从主菜单点击进入），否则发送新消息；
+// 末尾统一附带「返回主菜单」按钮，保证菜单导航闭环。
+func (b *Bot) replySystemOverview(chatID int64, messageID int64) {
 	// 获取容器列表
 	containers, errC := utiles.GetContainerList(b.svcCtx)
 	if errC != nil {
@@ -812,7 +814,17 @@ func (b *Bot) replySystemOverview(chatID int64) {
 	text.WriteString("<b>💾 磁盘占用</b>\n")
 	text.WriteString(fmt.Sprintf("   镜像总占用: %s", diskUsageStr))
 
-	b.reply(chatID, text.String())
+	// 附带返回主菜单按钮，保证从菜单进入后可原路返回
+	kb := &telegram.InlineKeyboardMarkup{
+		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+		}},
+	}
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
+	} else {
+		b.replyKeyboard(chatID, text.String(), kb)
+	}
 }
 
 // checkAllUpdates 一键检查所有容器的镜像更新并回报结果。
@@ -998,8 +1010,14 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
 	// 从配置获取扫描路径和深度
 	scanPaths := b.svcCtx.Config.Compose.ScanPaths
 	maxDepth := b.svcCtx.Config.Compose.MaxDepth
+	// 返回主菜单按钮：错误提示与空列表也带上，避免用户卡在无按钮的独立消息里
+	backHomeKb := &telegram.InlineKeyboardMarkup{
+		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+		}},
+	}
 	if len(scanPaths) == 0 {
-		b.reply(chatID, "❌ 未配置 Compose 项目扫描路径")
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 未配置 Compose 项目扫描路径", backHomeKb)
 		return
 	}
 
@@ -1007,7 +1025,7 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
 	projects := scanner.Scan()
 
 	if len(projects) == 0 {
-		b.reply(chatID, "📂 未找到任何 Compose 项目\n\n请检查扫描路径配置。")
+		b.editOrReplyKeyboard(chatID, messageID, "📂 未找到任何 Compose 项目\n\n请检查扫描路径配置。", backHomeKb)
 		return
 	}
 
@@ -1021,15 +1039,13 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64) {
 			{Text: fmt.Sprintf("%d. ⚙ 管理 %s", i+1, proj.Name), CallbackData: fmt.Sprintf("cmpp|%s", proj.ID)},
 		})
 	}
+	// 列表末尾追加返回主菜单
+	rows = append(rows, []telegram.InlineKeyboardButton{
+		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+	})
 
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
-
-	// 如果有 messageID，编辑原消息；否则发送新消息
-	if messageID > 0 {
-		b.editMessageKeyboard(chatID, messageID, text.String(), kb)
-	} else {
-		b.replyKeyboard(chatID, text.String(), kb)
-	}
+	b.editOrReplyKeyboard(chatID, messageID, text.String(), kb)
 }
 
 // showComposeProjectPanel 展示单个 Compose 项目的操作面板，提供 up/down/restart/pull/stop/start 按钮。
@@ -1049,7 +1065,12 @@ func (b *Bot) showComposeProjectPanel(chatID int64, projectID string, messageID 
 		}
 	}
 	if target == nil {
-		b.reply(chatID, "❌ 项目不存在或已被移除")
+		// 项目不存在也带返回项目列表按钮，保证导航闭环
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 项目不存在或已被移除", &telegram.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回项目列表", CallbackData: "cmpls"},
+			}},
+		})
 		return
 	}
 
@@ -1102,7 +1123,11 @@ func (b *Bot) executeComposeAction(chatID int64, projectID, action string) {
 		}
 	}
 	if target == nil {
-		b.reply(chatID, "❌ 项目不存在或已被移除")
+		b.replyKeyboard(chatID, "❌ 项目不存在或已被移除", &telegram.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回项目列表", CallbackData: "cmpls"},
+			}},
+		})
 		return
 	}
 
@@ -1128,7 +1153,11 @@ func (b *Bot) executeComposeAction(chatID int64, projectID, action string) {
 // doComposeAction 实际执行 Compose 动作并回报结果。
 func (b *Bot) doComposeAction(chatID int64, proj *compose.Project, action string) {
 	if !compose.IsSupportedAction(action) {
-		b.reply(chatID, "❌ 不支持的操作："+action)
+		b.replyKeyboard(chatID, "❌ 不支持的操作："+action, &telegram.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+				{Text: "⬅ 返回项目管理", CallbackData: fmt.Sprintf("cmpp|%s", proj.ID)},
+			}},
+		})
 		return
 	}
 
@@ -1191,6 +1220,16 @@ func (b *Bot) editMessage(chatID int64, messageID int64, text string) {
 func (b *Bot) editMessageKeyboard(chatID int64, messageID int64, text string, keyboard *telegram.InlineKeyboardMarkup) {
 	if err := b.client.EditMessageText(chatID, messageID, text, keyboard); err != nil {
 		logx.Errorf("编辑消息键盘失败 (chat=%d, msg=%d): %v", chatID, messageID, err)
+	}
+}
+
+// editOrReplyKeyboard 统一封装「有 messageID 则编辑原消息、否则发新消息」的带键盘发送逻辑，
+// 避免各处重复 if messageID > 0 的样板代码。
+func (b *Bot) editOrReplyKeyboard(chatID int64, messageID int64, text string, keyboard *telegram.InlineKeyboardMarkup) {
+	if messageID > 0 {
+		b.editMessageKeyboard(chatID, messageID, text, keyboard)
+	} else {
+		b.replyKeyboard(chatID, text, keyboard)
 	}
 }
 

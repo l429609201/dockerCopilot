@@ -32,7 +32,7 @@ export function ContainerProcessModal({ container, onClose }) {
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            🔍 容器进程 - {container.Names?.[0]?.replace(/^\//, '') || container.ID.slice(0, 12)}
+            🔍 容器进程 - {container.name || container.Names?.[0]?.replace(/^\//, '') || (container.ID || '').slice(0, 12)}
           </h3>
           <div className="flex items-center gap-2">
             <button onClick={load} disabled={loading}

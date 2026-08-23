@@ -1155,11 +1155,11 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部排列，每行最多3个按钮 */}
+                      {/* 操作按钮栏 - 底部 4 列网格排列（运行中共 8 个按钮，2 行） */}
                       {!isBatchMode && (
-                        <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="grid grid-cols-4 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
-                            <div className="flex-1 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
+                            <div className="col-span-4 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
                                 <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
                                 <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
@@ -1180,17 +1180,26 @@ export function Containers() {
                             <>
                               {container.status === 'running' ? (
                                 <>
+                                  {/* 第一行：停止 / 编辑 / 重启 / 更新 */}
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'stop') }}
-                                    className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                    className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                     title="停止"
                                   >
                                     <Square className="h-4 w-4" />
                                     <span>停止</span>
                                   </button>
                                   <button
+                                    onClick={(e) => { e.stopPropagation(); setEditTarget({ ...container, ID: container.id }) }}
+                                    className="flex items-center justify-center gap-1 px-1 py-1.5 text-orange-600 dark:text-orange-400 bg-white dark:bg-gray-800 hover:bg-orange-50 dark:hover:bg-orange-900/20 border border-gray-200 dark:border-gray-700 hover:border-orange-200 dark:hover:border-orange-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                    title="编辑"
+                                  >
+                                    <Edit3 className="h-4 w-4" />
+                                    <span>编辑</span>
+                                  </button>
+                                  <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'restart') }}
-                                    className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                    className="flex items-center justify-center gap-1 px-1 py-1.5 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-gray-200 dark:border-gray-700 hover:border-blue-200 dark:hover:border-blue-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                     title="重启"
                                   >
                                     <RotateCcw className="h-4 w-4" />
@@ -1200,7 +1209,7 @@ export function Containers() {
                               ) : (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'start') }}
-                                  className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-200 dark:hover:border-green-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                  className="col-span-2 flex items-center justify-center gap-1 px-1 py-1.5 text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 border border-gray-200 dark:border-gray-700 hover:border-green-200 dark:hover:border-green-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                   title="启动"
                                 >
                                   <Play className="h-4 w-4" />
@@ -1211,7 +1220,7 @@ export function Containers() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleUpdateContainer(container.id) }}
                                 className={cn(
-                                  "flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap",
+                                  "flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap",
                                   container.haveUpdate
                                     ? "text-yellow-600 dark:text-yellow-400 border-yellow-400 dark:border-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
                                     : "text-purple-600 dark:text-purple-400 border-gray-200 dark:border-gray-700 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800"
@@ -1221,18 +1230,28 @@ export function Containers() {
                                 <Upload className="h-4 w-4" />
                                 <span>更新</span>
                               </button>
-                              {/* 日志 / 控制台 / 文件管理 快捷入口（彩色，与操作按钮统一） */}
+                              {/* 第二行：日志 / 进程 / 控制台 / 文件（进程仅运行中有意义） */}
                               <button
                                 onClick={(e) => { e.stopPropagation(); setLogsTarget(container) }}
-                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="查看日志"
                               >
                                 <FileText className="h-4 w-4" />
                                 <span>日志</span>
                               </button>
+                              {container.status === 'running' && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setProcessTarget({ ...container, ID: container.id }) }}
+                                  className="flex items-center justify-center gap-1 px-1 py-1.5 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-gray-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 border border-gray-200 dark:border-gray-700 hover:border-emerald-200 dark:hover:border-emerald-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                  title="进程"
+                                >
+                                  <Activity className="h-4 w-4" />
+                                  <span>进程</span>
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); setConsoleTarget(container) }}
-                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="控制台"
                               >
                                 <TerminalSquare className="h-4 w-4" />
@@ -1240,7 +1259,7 @@ export function Containers() {
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
-                                className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-amber-600 dark:text-amber-400 bg-white dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-gray-200 dark:border-gray-700 hover:border-amber-200 dark:hover:border-amber-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-amber-600 dark:text-amber-400 bg-white dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-gray-200 dark:border-gray-700 hover:border-amber-200 dark:hover:border-amber-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="文件管理"
                               >
                                 <FolderOpen className="h-4 w-4" />
@@ -1348,6 +1367,29 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
   const [showConsole, setShowConsole] = useState(false)
   // 文件管理弹窗显示状态
   const [showFileMgr, setShowFileMgr] = useState(false)
+  // 容器 Inspect 详情数据（供 网络/挂载/环境变量/资源限制/其他 等 Tab 使用）
+  // 列表接口只返回精简字段，完整信息需按需调用 inspect 接口获取
+  const [inspectData, setInspectData] = useState(null)
+  const [inspectLoading, setInspectLoading] = useState(false)
+
+  // 打开详情弹窗时按需加载 inspect 完整信息，回填各 Tab
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setInspectLoading(true)
+      try {
+        const r = await containerAPI.inspectContainer(container.id)
+        const d = r.data?.data || r.data || null
+        if (!cancelled) setInspectData(d)
+      } catch (e) {
+        console.error('加载容器 inspect 失败:', e)
+        if (!cancelled) setInspectData(null)
+      } finally {
+        if (!cancelled) setInspectLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [container.id])
 
   // 获取自定义图标配置
   const { data: customIcons = {} } = useQuery({
@@ -1639,7 +1681,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                   </span>
                   <div className="flex items-center mt-1">
                     <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {currentContainer.id.substring(0, 12)}
+                      {(currentContainer.id || '').substring(0, 12)}
                     </span>
                   </div>
                 </div>
@@ -1787,27 +1829,41 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             </>
           )}
 
+          {/* 非基本信息的 Tab 依赖 inspect 数据，加载中时统一提示 */}
+          {activeTab !== 'basic' && inspectLoading && (
+            <div className="flex items-center justify-center py-8 text-gray-500 text-sm">
+              <RefreshCw className="h-5 w-5 animate-spin mr-2" /> 加载详情中...
+            </div>
+          )}
+          {activeTab !== 'basic' && !inspectLoading && !inspectData && (
+            <div className="text-center py-8 text-gray-400 text-sm">未能加载容器详情</div>
+          )}
+
           {/* Tab: 网络 */}
-          {activeTab === 'network' && (
+          {activeTab === 'network' && !inspectLoading && inspectData && (
             <div className="space-y-3">
-              <InfoRow label="网络模式" value={currentContainer?.inspect?.HostConfig?.NetworkMode || '—'} />
-              <InfoRow label="IP地址" value={currentContainer?.inspect?.NetworkSettings?.IPAddress || '—'} />
-              <InfoRow label="网关" value={currentContainer?.inspect?.NetworkSettings?.Gateway || '—'} />
-              <InfoRow label="MAC地址" value={currentContainer?.inspect?.NetworkSettings?.MacAddress || '—'} />
+              <InfoRow label="网络模式" value={inspectData?.HostConfig?.NetworkMode || '—'} />
+              <InfoRow label="IP地址" value={inspectData?.NetworkSettings?.IPAddress || '—'} />
+              <InfoRow label="网关" value={inspectData?.NetworkSettings?.Gateway || '—'} />
+              <InfoRow label="MAC地址" value={inspectData?.NetworkSettings?.MacAddress || '—'} />
+              {/* 自定义网络时逐个列出网络名与 IP */}
+              {inspectData?.NetworkSettings?.Networks && Object.entries(inspectData.NetworkSettings.Networks).map(([netName, net]) => (
+                <InfoRow key={netName} label={`网络 ${netName}`} value={net?.IPAddress || '—'} />
+              ))}
             </div>
           )}
 
           {/* Tab: 挂载 */}
-          {activeTab === 'mounts' && (
+          {activeTab === 'mounts' && !inspectLoading && inspectData && (
             <div className="space-y-2">
-              {(currentContainer?.inspect?.Mounts || []).length === 0 ? (
+              {(inspectData?.Mounts || []).length === 0 ? (
                 <p className="text-gray-500 text-sm">无挂载</p>
               ) : (
-                currentContainer.inspect.Mounts.map((m, i) => (
+                inspectData.Mounts.map((m, i) => (
                   <div key={i} className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded text-sm space-y-1">
                     <div><b>类型:</b> {m.Type}</div>
-                    <div><b>源:</b> <code className="text-xs">{m.Source}</code></div>
-                    <div><b>目标:</b> <code className="text-xs">{m.Destination}</code></div>
+                    <div><b>源:</b> <code className="text-xs break-all">{m.Source || m.Name}</code></div>
+                    <div><b>目标:</b> <code className="text-xs break-all">{m.Destination}</code></div>
                     <div><b>读写:</b> {m.RW ? '读写' : '只读'}</div>
                   </div>
                 ))
@@ -1816,29 +1872,35 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           )}
 
           {/* Tab: 环境变量 */}
-          {activeTab === 'env' && (
+          {activeTab === 'env' && !inspectLoading && inspectData && (
             <div className="space-y-1 font-mono text-xs">
-              {(currentContainer?.inspect?.Config?.Env || []).map((line, i) => (
-                <div key={i} className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded">{line}</div>
-              ))}
+              {(inspectData?.Config?.Env || []).length === 0 ? (
+                <p className="text-gray-500 text-sm font-sans">无环境变量</p>
+              ) : (
+                (inspectData?.Config?.Env || []).map((line, i) => (
+                  <div key={i} className="p-2 bg-gray-50 dark:bg-gray-900/50 rounded break-all">{line}</div>
+                ))
+              )}
             </div>
           )}
 
           {/* Tab: 资源限制 */}
-          {activeTab === 'resources' && (
+          {activeTab === 'resources' && !inspectLoading && inspectData && (
             <div className="space-y-3">
-              <InfoRow label="CPU限制" value={currentContainer?.inspect?.HostConfig?.NanoCpus ? `${currentContainer.inspect.HostConfig.NanoCpus / 1e9} 核` : '无限制'} />
-              <InfoRow label="内存限制" value={currentContainer?.inspect?.HostConfig?.Memory ? `${(currentContainer.inspect.HostConfig.Memory / 1024 / 1024).toFixed(0)} MB` : '无限制'} />
+              <InfoRow label="CPU限制" value={inspectData?.HostConfig?.NanoCpus ? `${inspectData.HostConfig.NanoCpus / 1e9} 核` : '无限制'} />
+              <InfoRow label="内存限制" value={inspectData?.HostConfig?.Memory ? `${(inspectData.HostConfig.Memory / 1024 / 1024).toFixed(0)} MB` : '无限制'} />
+              <InfoRow label="CPU Shares" value={inspectData?.HostConfig?.CpuShares || '默认'} />
+              <InfoRow label="重启策略" value={inspectData?.HostConfig?.RestartPolicy?.Name || '—'} />
             </div>
           )}
 
           {/* Tab: 其他 */}
-          {activeTab === 'other' && (
+          {activeTab === 'other' && !inspectLoading && inspectData && (
             <div className="space-y-3">
-              <InfoRow label="主机名" value={currentContainer?.inspect?.Config?.Hostname || '—'} />
-              <InfoRow label="工作目录" value={currentContainer?.inspect?.Config?.WorkingDir || '/'} />
-              <InfoRow label="入口点" value={(currentContainer?.inspect?.Config?.Entrypoint || []).join(' ') || '—'} />
-              <InfoRow label="命令" value={(currentContainer?.inspect?.Config?.Cmd || []).join(' ') || '—'} />
+              <InfoRow label="主机名" value={inspectData?.Config?.Hostname || '—'} />
+              <InfoRow label="工作目录" value={inspectData?.Config?.WorkingDir || '/'} />
+              <InfoRow label="入口点" value={(inspectData?.Config?.Entrypoint || []).join(' ') || '—'} />
+              <InfoRow label="命令" value={(inspectData?.Config?.Cmd || []).join(' ') || '—'} />
             </div>
           )}
 
@@ -1909,6 +1971,17 @@ function ActionBtn({ onClick, disabled, loading, icon: Icon, label, color, fullW
       {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       <span>{loading ? '处理中' : label}</span>
     </button>
+  )
+}
+
+// InfoRow 详情弹窗信息行：左标签右值，用于网络/挂载/资源限制/其他等 Tab。
+// 此前遗漏定义，导致切换到这些 Tab 时因引用未定义组件而白屏崩溃。
+function InfoRow({ label, value }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-gray-100 dark:border-gray-700/50 last:border-0">
+      <span className="text-sm text-gray-500 dark:text-gray-400 flex-shrink-0">{label}</span>
+      <span className="text-sm text-gray-900 dark:text-gray-100 text-right break-all">{value}</span>
+    </div>
   )
 }
 

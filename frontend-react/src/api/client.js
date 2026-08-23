@@ -248,6 +248,8 @@ export const composeAPI = {
   // 读取/保存 Compose 扫描配置（扫描目录、深度等）
   getConfig: () => apiClient.get('/api/compose/config'),
   saveConfig: (cfg) => apiClient.put('/api/compose/config', cfg),
+  // 浏览 DC 自身文件系统目录（目录选择器用）；path 为空返回起始目录
+  browse: (path = '') => apiClient.get('/api/compose/browse', { params: { path } }),
 }
 
 // 阶段8：favicon 抓取API（按容器暴露端口解析站点图标）

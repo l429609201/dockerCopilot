@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity } from 'lucide-react'
+import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity, ChevronRight, ChevronDown, Layers } from 'lucide-react'
 import { useTasks } from '../hooks/useTasks.jsx'
 import { progressAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -121,15 +121,30 @@ function TaskGroup({ title, count, children }) {
 }
 
 function TaskRow({ task, onRemove, onCancel }) {
-  const { percentage = 0, message, detailMsg, isDone, failed, canceled, title } = task
+  const { percentage = 0, message, detailMsg, isDone, failed, canceled, title, layers = [] } = task
+  // 分层子进度展开状态（有分层数据时才可展开）
+  const [expanded, setExpanded] = useState(false)
+  const hasLayers = Array.isArray(layers) && layers.length > 0
   return (
     <div className="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex items-center gap-2 min-w-0">
+          {/* 展开/折叠按钮：仅有分层数据时显示 */}
+          {hasLayers && (
+            <button onClick={() => setExpanded(v => !v)} className="p-0.5 -ml-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0" title={expanded ? '收起分层' : '展开分层'}>
+              {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+          )}
           {!isDone && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500 flex-shrink-0" />}
           {isDone && !failed && <CheckCircle className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />}
           {isDone && failed && <XCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />}
           <span className="text-sm font-medium text-gray-900 dark:text-white break-all">{title}</span>
+          {/* 分层数量徽标 */}
+          {hasLayers && (
+            <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] text-gray-500 bg-gray-100 dark:bg-gray-700 flex-shrink-0">
+              <Layers className="h-2.5 w-2.5" />{layers.length}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {!isDone && <span className="text-xs text-gray-500 tabular-nums">{Math.round(percentage)}%</span>}
@@ -163,6 +178,44 @@ function TaskRow({ task, onRemove, onCancel }) {
         </p>
       )}
       {canceled && <p className="text-xs mt-0.5 text-amber-500">已取消</p>}
+
+      {/* 分层子进度：展开后逐层显示，层数随 SSE 数据自动增减 */}
+      {hasLayers && expanded && (
+        <div className="mt-2 pl-4 border-l-2 border-gray-100 dark:border-gray-700 space-y-1.5">
+          {layers.map((ly) => (
+            <LayerRow key={ly.id} layer={ly} />
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+// 单个镜像分层进度行：层ID + 状态 + 字节 + 迷你进度条
+function LayerRow({ layer }) {
+  const { id, status, current = 0, total = 0, percentage = 0 } = layer
+  const done = percentage >= 100
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 text-[11px]">
+        <span className="font-mono text-gray-500 dark:text-gray-400 flex-shrink-0">{id}</span>
+        <span className={cn('truncate flex-1 text-right', done ? 'text-emerald-500' : 'text-gray-500 dark:text-gray-400')}>
+          {status}{total > 0 ? ` · ${formatBytes(current)}/${formatBytes(total)}` : ''}
+        </span>
+      </div>
+      <div className="h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden mt-0.5">
+        <div className={cn('h-full transition-all duration-300', done ? 'bg-emerald-500' : 'bg-primary-400')}
+          style={{ width: `${Math.min(100, percentage)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+// 字节数格式化为人类可读大小
+function formatBytes(bytes) {
+  if (!bytes || bytes < 0) return '0B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let n = bytes, i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  return `${n.toFixed(i === 0 ? 0 : 1)}${units[i]}`
 }

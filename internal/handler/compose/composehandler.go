@@ -83,6 +83,20 @@ func ActionHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// BrowseHandler 浏览 DC 自身文件系统的目录（供前端目录选择器使用，只读）。
+func BrowseHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeBrowseReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.Browse(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
 // GetConfigHandler 返回当前生效的 Compose 扫描配置（供前端配置卡片回显）。
 func GetConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

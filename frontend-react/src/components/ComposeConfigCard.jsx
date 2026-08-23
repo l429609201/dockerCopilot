@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Settings2, Plus, Trash2, Save, FolderOpen, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { Settings2, Plus, Trash2, Save, FolderOpen, FolderSearch, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
+import { DirectoryPicker } from './DirectoryPicker.jsx'
 
-// Compose 扫描配置卡片：可视化配置扫描目录及扫描参数，保存后即时生效。
+// Compose 目录配置卡片：可视化配置 compose 项目目录及扫描参数，保存后即时生效。
 // onSaved 保存成功后回调（父组件据此刷新项目列表）。
 export function ComposeConfigCard({ onSaved }) {
-  const [paths, setPaths] = useState([]) // 扫描目录列表
+  const [paths, setPaths] = useState([]) // 配置目录列表
   const [maxDepth, setMaxDepth] = useState(3)
   const [maxFileSizeMB, setMaxFileSizeMB] = useState(10) // 以 MB 为单位展示
   const [cmdTimeout, setCmdTimeout] = useState(300)
@@ -15,6 +16,7 @@ export function ComposeConfigCard({ onSaved }) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null) // { ok, text }
+  const [pickerIndex, setPickerIndex] = useState(-1) // 正在用目录选择器的路径索引，-1 表示未打开
 
   // 加载当前生效配置
   const load = useCallback(async () => {
@@ -76,19 +78,19 @@ export function ComposeConfigCard({ onSaved }) {
       {/* 卡片标题 */}
       <div className="flex items-center gap-2 mb-3">
         <Settings2 className="h-5 w-5 text-primary-600" />
-        <h3 className="font-semibold text-gray-900 dark:text-white">Compose 扫描配置</h3>
+        <h3 className="font-semibold text-gray-900 dark:text-white">Compose 目录配置</h3>
       </div>
 
       {/* 未配置提示 */}
       {!configured && !hasValidPath && (
         <div className="mb-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-sm text-amber-700 dark:text-amber-300">
-          ⚠️ 尚未配置 Compose 扫描目录。请在下方填写宿主机上已挂载到容器内的 compose 项目目录（绝对路径）。
+          ⚠️ 尚未配置 Compose 目录。请在下方填写宿主机上已挂载到容器内的 compose 项目目录（绝对路径）。
         </div>
       )}
 
-      {/* 扫描目录列表 */}
+      {/* 配置目录列表 */}
       <label className="block text-sm font-medium mb-1.5 text-gray-700 dark:text-gray-300">
-        扫描目录（绝对路径，需已挂载进容器）
+        配置目录（绝对路径，需已挂载进容器）
       </label>
       <div className="space-y-2">
         {paths.map((p, i) => (
@@ -98,6 +100,12 @@ export function ComposeConfigCard({ onSaved }) {
               <input value={p} onChange={(e) => setPath(i, e.target.value)}
                 className="input pl-8" placeholder="/data/compose 或 /opt/stacks" />
             </div>
+            {/* 浏览按钮：打开目录选择器可视化选择 */}
+            <button onClick={() => setPickerIndex(i)}
+              className="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg"
+              title="浏览目录">
+              <FolderSearch className="h-4 w-4" />
+            </button>
             <button onClick={() => removePath(i)} disabled={paths.length <= 1}
               className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg disabled:opacity-40"
               title="移除">
@@ -106,6 +114,15 @@ export function ComposeConfigCard({ onSaved }) {
           </div>
         ))}
       </div>
+
+      {/* 目录选择器弹窗：选中后写回对应索引的路径 */}
+      {pickerIndex >= 0 && (
+        <DirectoryPicker
+          initialPath={paths[pickerIndex] || ''}
+          onSelect={(path) => setPath(pickerIndex, path)}
+          onClose={() => setPickerIndex(-1)}
+        />
+      )}
       <button onClick={addPath}
         className="mt-2 flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700">
         <Plus className="h-4 w-4" /> 添加目录

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -251,6 +252,56 @@ func markTaskFailed(svcCtx *svc.ServiceContext, taskID string, progress *svc.Tas
 	svcCtx.UpdateProgress(taskID, *progress)
 }
 
+// layerState 记录单层的中间状态，供聚合与主进度换算使用。
+type layerState struct {
+	order   int    // 首次出现的顺序，保证展示稳定
+	status  string
+	current int64
+	total   int64
+}
+
+// isLayerDone 判断层状态是否已完成（用于主进度按完成层数换算）。
+func isLayerDone(status string) bool {
+	switch status {
+	case "Pull complete", "Already exists", "Download complete":
+		return true
+	}
+	return false
+}
+
+// buildLayers 将层状态 map 按首次出现顺序整理为切片，并计算每层百分比。
+func buildLayers(m map[string]*layerState) ([]svc.LayerProgress, int, int) {
+	ordered := make([]*layerState, 0, len(m))
+	idByPtr := make(map[*layerState]string, len(m))
+	for id, st := range m {
+		ordered = append(ordered, st)
+		idByPtr[st] = id
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].order < ordered[j].order })
+	layers := make([]svc.LayerProgress, 0, len(ordered))
+	doneCount := 0
+	for _, st := range ordered {
+		pct := 0
+		if isLayerDone(st.status) {
+			pct = 100
+			doneCount++
+		} else if st.total > 0 {
+			pct = int(st.current * 100 / st.total)
+			if pct > 99 {
+				pct = 99 // 未到完成态最多显示 99%，避免视觉上先到 100 再跳完成
+			}
+		}
+		layers = append(layers, svc.LayerProgress{
+			ID:         idByPtr[st],
+			Status:     st.status,
+			Current:    st.current,
+			Total:      st.total,
+			Percentage: pct,
+		})
+	}
+	return layers, doneCount, len(ordered)
+}
+
 func decodePullResp(taskCtx context.Context, reader io.Reader, svcCtx *svc.ServiceContext, taskID string) (err error) {
 	decoder := json.NewDecoder(reader)
 	var oldTaskProgress, result = svcCtx.GetProgress(taskID)
@@ -263,6 +314,9 @@ func decodePullResp(taskCtx context.Context, reader io.Reader, svcCtx *svc.Servi
 			IsDone:     false,
 		}
 	}
+	// 各层进度聚合表：key 为层短ID
+	layerMap := make(map[string]*layerState)
+	layerSeq := 0
 	for {
 		// 每次读取前检查是否被取消，实现拉取阶段的可中断
 		if cerr := taskCtx.Err(); cerr != nil {
@@ -307,7 +361,29 @@ func decodePullResp(taskCtx context.Context, reader io.Reader, svcCtx *svc.Servi
 				formattedMsg = fmt.Sprintf("进度%s", msg.Status)
 			}
 			oldTaskProgress.DetailMsg = formattedMsg
-			oldTaskProgress.Percentage = 25
+
+			// 按层聚合进度：msg.ID 为层短ID（无ID的是全局状态行，跳过分层聚合）
+			if msg.ID != "" {
+				st, ok := layerMap[msg.ID]
+				if !ok {
+					st = &layerState{order: layerSeq}
+					layerSeq++
+					layerMap[msg.ID] = st
+				}
+				st.status = msg.Status
+				if msg.Progress != nil {
+					st.current = msg.Progress.Current
+					st.total = msg.Progress.Total
+				}
+				layers, doneCount, totalLayers := buildLayers(layerMap)
+				oldTaskProgress.Layers = layers
+				// 主进度：拉取阶段映射到 10~30% 区间，按完成层数/总层数驱动
+				if totalLayers > 0 {
+					oldTaskProgress.Percentage = 10 + doneCount*20/totalLayers
+				} else {
+					oldTaskProgress.Percentage = 10
+				}
+			}
 			svcCtx.UpdateProgress(taskID, oldTaskProgress)
 			logx.Infof("拉取镜像进度\t %s: %s\n", msg.Status, msg.Progress)
 		}

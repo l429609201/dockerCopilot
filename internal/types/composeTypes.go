@@ -33,6 +33,12 @@ type ComposeIDReq struct {
 	ID string `path:"id"`
 }
 
+// ComposeBrowseReq 浏览 DC 自身文件系统的目录（供目录选择器使用）。
+// Path 为空时返回起始目录（根/挂载点）；否则返回该目录下的子目录列表。
+type ComposeBrowseReq struct {
+	Path string `form:"path,optional"`
+}
+
 // ComposeConfigReq 保存 Compose 扫描配置（前端提交，写入持久化 AppConfig）。
 // 所有字段可选：ScanPaths 为项目扫描根目录列表；其余为扫描/执行参数。
 type ComposeConfigReq struct {

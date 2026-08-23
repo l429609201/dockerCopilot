@@ -216,6 +216,62 @@ func (l *ComposeLogic) SaveFile(req *types.ComposeFileSaveReq) (resp *types.Resp
 	return resp, nil
 }
 
+// Browse 浏览 DC 自身文件系统的目录，仅返回子目录（只读，供目录选择器使用）。
+// 安全策略：仅接受绝对路径并清理后使用；出错时返回可读提示而非 500。
+func (l *ComposeLogic) Browse(req *types.ComposeBrowseReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+
+	// path 为空则从根目录开始（容器内为 "/"）
+	target := strings.TrimSpace(req.Path)
+	if target == "" {
+		target = string(os.PathSeparator)
+	}
+	// 必须为绝对路径，避免相对路径带来的歧义与越权
+	if !filepath.IsAbs(target) {
+		return bad(resp, "路径必须为绝对路径"), nil
+	}
+	// 清理 . 与 .. ，规整为标准路径
+	target = filepath.Clean(target)
+
+	info, statErr := os.Stat(target)
+	if statErr != nil {
+		return bad(resp, "无法访问该目录："+statErr.Error()), nil
+	}
+	if !info.IsDir() {
+		return bad(resp, "该路径不是目录"), nil
+	}
+
+	entries, readErr := os.ReadDir(target)
+	if readErr != nil {
+		return bad(resp, "读取目录失败："+readErr.Error()), nil
+	}
+
+	// 仅收集子目录，忽略隐藏目录（以 . 开头）
+	dirs := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		dirs = append(dirs, map[string]interface{}{
+			"name": e.Name(),
+			"path": filepath.Join(target, e.Name()),
+		})
+	}
+
+	// 父目录：已在根目录时 parent 为空，前端据此隐藏"上一级"
+	parent := filepath.Dir(target)
+	if parent == target {
+		parent = ""
+	}
+
+	resp.Data = map[string]interface{}{
+		"path":   target,
+		"parent": parent,
+		"dirs":   dirs,
+	}
+	return resp, nil
+}
+
 // bad 填充业务错误响应的通用辅助。
 func bad(resp *types.Resp, msg string) *types.Resp {
 	resp.Code = 400

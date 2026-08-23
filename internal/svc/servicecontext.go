@@ -79,6 +79,18 @@ type TaskProgress struct {
 	NewImageSize   int64  `json:"newImageSize,omitempty"`   // 新镜像大小（字节）
 	ImageName      string `json:"imageName,omitempty"`      // 镜像名称（不含tag）
 	ImageTag       string `json:"imageTag,omitempty"`       // 镜像标签
+	// Layers 镜像拉取时各分层(layer)的实时进度，供前端任务中心展开显示。
+	// 仅拉取类任务有值，其它任务为空（omitempty 向后兼容）。
+	Layers []LayerProgress `json:"layers,omitempty"`
+}
+
+// LayerProgress 单个镜像分层(layer)的拉取进度。
+type LayerProgress struct {
+	ID         string `json:"id"`               // 层短ID，如 e42181a960c8
+	Status     string `json:"status"`           // 状态：Downloading/Extracting/Pull complete/Already exists 等
+	Current    int64  `json:"current,omitempty"` // 已处理字节
+	Total      int64  `json:"total,omitempty"`   // 总字节
+	Percentage int    `json:"percentage"`       // 该层百分比 0-100
 }
 
 type ProgressStoreType map[string]TaskProgress

@@ -280,6 +280,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: compose.SaveConfigHandler(serverCtx),
 			},
 			{
+				// 浏览 DC 自身文件系统目录（目录选择器用，只读，仅返回子目录）
+				Method:  http.MethodGet,
+				Path:    "/compose/browse",
+				Handler: compose.BrowseHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodPost,
 				Path:    "/compose/validate",
 				Handler: compose.ValidateHandler(serverCtx),
