@@ -28,13 +28,15 @@ import { StatsChart } from './StatsChart.jsx'
 import { FileText, TerminalSquare, FolderOpen, Pencil } from 'lucide-react'
 import { FileManager } from './FileManager.jsx'
 import { IconEditor } from './IconEditor.jsx'
+import { ContainerLogs, ContainerConsole } from './ContainerOps.jsx'
 
 export function Containers() {
   const { addTask } = useTasks()
   const queryClient = useQueryClient()
   const [selectedContainer, setSelectedContainer] = useState(null)
-  // 顶层运维弹窗：{ container, tab }，tab 为 'logs' 或 'exec'，供列表/卡片直接打开日志或控制台
-  const [opsTarget, setOpsTarget] = useState(null)
+  // 【新】独立的日志和控制台弹窗状态
+  const [logsTarget, setLogsTarget] = useState(null)
+  const [consoleTarget, setConsoleTarget] = useState(null)
   // 文件管理弹窗目标容器
   const [fileTarget, setFileTarget] = useState(null)
   // 添加批量操作相关的状态
@@ -1021,7 +1023,7 @@ export function Containers() {
                         }
                       }}
                       className={cn(
-                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-4 cursor-pointer active:scale-98",
+                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-5 cursor-pointer active:scale-98",
                         isSelected
                           ? "border-primary-500 bg-primary-50 dark:bg-primary-900/20 shadow-md"
                           : "border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-600"
@@ -1245,7 +1247,7 @@ export function Containers() {
                               </button>
                               {/* 日志 / 控制台 / 文件管理 快捷入口（彩色，与操作按钮统一） */}
                               <button
-                                onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'logs' }) }}
+                                onClick={(e) => { e.stopPropagation(); setLogsTarget(container) }}
                                 className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="查看日志"
                               >
@@ -1253,7 +1255,7 @@ export function Containers() {
                                 <span>日志</span>
                               </button>
                               <button
-                                onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'exec' }) }}
+                                onClick={(e) => { e.stopPropagation(); setConsoleTarget(container) }}
                                 className="flex-[0_0_calc(33.333%-0.5rem)] flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="控制台"
                               >
@@ -1288,12 +1290,18 @@ export function Containers() {
         )}
       </div>
 
-      {/* 顶层运维弹窗：由列表行/卡片的日志·控制台按钮直接打开 */}
-      {opsTarget && (
-        <ContainerOps
-          container={opsTarget.container}
-          initialTab={opsTarget.tab}
-          onClose={() => setOpsTarget(null)}
+      {/* 【新】独立的日志弹窗 */}
+      {logsTarget && (
+        <ContainerLogs
+          container={logsTarget}
+          onClose={() => setLogsTarget(null)}
+        />
+      )}
+      {/* 【新】独立的控制台弹窗 */}
+      {consoleTarget && (
+        <ContainerConsole
+          container={consoleTarget}
+          onClose={() => setConsoleTarget(null)}
         />
       )}
       {/* 文件管理弹窗 */}
@@ -1335,8 +1343,9 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
   const [isUploadingIcon, setIsUploadingIcon] = useState(false)
   // 图标操作菜单（上传图片 / 填写URL）是否展开
   const [showIconMenu, setShowIconMenu] = useState(false)
-  // 容器运维弹窗（日志/命令）显示状态
-  const [showOps, setShowOps] = useState(false)
+  // 【新】独立的日志和控制台弹窗显示状态
+  const [showLogs, setShowLogs] = useState(false)
+  const [showConsole, setShowConsole] = useState(false)
   // 文件管理弹窗显示状态
   const [showFileMgr, setShowFileMgr] = useState(false)
 
@@ -1674,12 +1683,19 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           </div>
         </div>
 
-        {/* 容器运维弹窗：日志 / 命令。showOps 为 'logs'/'exec' 决定初始标签，true 兼容旧入口 */}
-        {showOps && (
-          <ContainerOps
+        {/* 【新】独立的日志弹窗（详情弹窗内打开） */}
+        {showLogs && (
+          <ContainerLogs
             container={currentContainer}
-            initialTab={showOps === 'exec' ? 'exec' : 'logs'}
-            onClose={() => setShowOps(false)}
+            onClose={() => setShowLogs(false)}
+          />
+        )}
+
+        {/* 【新】独立的控制台弹窗（详情弹窗内打开） */}
+        {showConsole && (
+          <ContainerConsole
+            container={currentContainer}
+            onClose={() => setShowConsole(false)}
           />
         )}
 
@@ -1774,14 +1790,14 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             {/* 左侧：日志 / 控制台 / 文件管理 快捷入口（统一彩色风格） */}
             <div className="flex gap-2">
               <button
-                onClick={() => setShowOps('logs')}
+                onClick={() => setShowLogs(true)}
                 className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-sky-600 hover:bg-sky-700 dark:bg-sky-500 dark:hover:bg-sky-600 transition-colors"
                 title="查看日志"
               >
                 <FileText className="h-4 w-4" /> <span className="hidden sm:inline">日志</span>
               </button>
               <button
-                onClick={() => setShowOps('exec')}
+                onClick={() => setShowConsole(true)}
                 className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-teal-600 hover:bg-teal-700 dark:bg-teal-500 dark:hover:bg-teal-600 transition-colors"
                 title="控制台"
               >

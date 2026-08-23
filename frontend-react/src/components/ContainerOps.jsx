@@ -4,7 +4,8 @@ import { containerAPI } from '../api/client.js'
 import { Terminal } from './Terminal.jsx'
 import { cn } from '../utils/cn.js'
 
-// 容器运维弹窗：日志查看 + 命令执行（一次性）。支持最大化/全屏。
+// 【已废弃】容器运维弹窗：日志查看 + 命令执行（一次性）。支持最大化/全屏。
+// 为了更好的用户体验，已拆分为 ContainerLogs 和 ContainerConsole 两个独立组件
 export function ContainerOps({ container, onClose, initialTab = 'logs' }) {
   const [tab, setTab] = useState(initialTab === 'exec' ? 'exec' : 'logs')
   const [fullscreen, setFullscreen] = useState(false)
@@ -46,6 +47,70 @@ function TabBtn({ active, onClick, icon: Icon, label }) {
       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
       <Icon className="h-4 w-4" /> {label}
     </button>
+  )
+}
+
+// 【新】独立的日志查看弹窗
+export function ContainerLogs({ container, onClose }) {
+  const [fullscreen, setFullscreen] = useState(false)
+  return (
+    <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
+      fullscreen ? 'p-0' : 'p-4')}>
+      <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
+        fullscreen
+          ? 'w-screen h-screen max-w-none max-h-none rounded-none p-4'
+          : 'w-full max-w-3xl max-h-[90vh] rounded-xl p-5')}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
+            <FileText className="h-5 w-5 text-sky-600 dark:text-sky-400" />
+            日志 · {container.name}
+          </h3>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              {fullscreen ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
+            </button>
+            <button onClick={onClose} title="关闭"
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+        <LogsPanel id={container.id} />
+      </div>
+    </div>
+  )
+}
+
+// 【新】独立的控制台弹窗
+export function ContainerConsole({ container, onClose }) {
+  const [fullscreen, setFullscreen] = useState(false)
+  return (
+    <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
+      fullscreen ? 'p-0' : 'p-4')}>
+      <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
+        fullscreen
+          ? 'w-screen h-screen max-w-none max-h-none rounded-none p-4'
+          : 'w-full max-w-3xl max-h-[90vh] rounded-xl p-5')}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
+            <TerminalIcon className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+            控制台 · {container.name}
+          </h3>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              {fullscreen ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
+            </button>
+            <button onClick={onClose} title="关闭"
+              className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+        <ExecPanel id={container.id} fullscreen={fullscreen} />
+      </div>
+    </div>
   )
 }
 

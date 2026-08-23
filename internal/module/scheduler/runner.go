@@ -100,10 +100,10 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 		if runOne(svcCtx, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			updated++
-			updatedList = append(updatedList, fmt.Sprintf("%s → %s", name, shortImage(c.Image)))
+			updatedList = append(updatedList, fmt.Sprintf("%s (镜像: %s)", name, shortImage(c.Image)))
 		} else {
 			failed++
-			failedList = append(failedList, fmt.Sprintf("%s (更新失败)", name))
+			failedList = append(failedList, fmt.Sprintf("%s (镜像: %s)", name, shortImage(c.Image)))
 		}
 	}
 
@@ -114,11 +114,11 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		// 构建详细消息
 		var msg strings.Builder
 		msg.WriteString(fmt.Sprintf("规则「%s」执行完成\n\n", rule.Name))
-		msg.WriteString(fmt.Sprintf("📊 统计：%s\n", summary))
+		msg.WriteString(fmt.Sprintf("📊 统计：更新 %d 个，跳过 %d 个，失败 %d 个\n", updated, skipped, failed))
 
 		// 更新成功列表
 		if len(updatedList) > 0 {
-			msg.WriteString("\n✅ 更新成功：\n")
+			msg.WriteString("\n✅ 已更新：\n")
 			for _, item := range updatedList {
 				msg.WriteString(fmt.Sprintf("  • %s\n", item))
 			}
@@ -126,7 +126,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 
 		// 跳过列表（含原因）
 		if len(skippedList) > 0 {
-			msg.WriteString("\n⏭ 跳过：\n")
+			msg.WriteString("\n⏭️ 已跳过：\n")
 			for _, item := range skippedList {
 				msg.WriteString(fmt.Sprintf("  • %s\n", item))
 			}
@@ -134,7 +134,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 
 		// 失败列表
 		if len(failedList) > 0 {
-			msg.WriteString("\n❌ 失败：\n")
+			msg.WriteString("\n❌ 更新失败：\n")
 			for _, item := range failedList {
 				msg.WriteString(fmt.Sprintf("  • %s\n", item))
 			}
