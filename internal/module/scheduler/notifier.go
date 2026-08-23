@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
-	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -90,11 +89,7 @@ func (s *Scheduler) runUpdateCheck() {
 		muted[n] = struct{}{}
 	}
 
-	// 收集"有更新且未屏蔽且未通知过当前版本"的容器
-	notified := cfg.NotifiedVersions
-	if notified == nil {
-		notified = map[string]string{}
-	}
+	// 收集"有更新且未屏蔽"的容器
 	var pending []MyContainer
 	for _, c := range containers {
 		if !c.Update {
@@ -106,10 +101,6 @@ func (s *Scheduler) runUpdateCheck() {
 		}
 		if _, ok := muted[name]; ok {
 			continue // 已屏蔽
-		}
-		// 去重：同一容器同一镜像版本只推一次
-		if last, ok := notified[name]; ok && last == c.Image {
-			continue
 		}
 		pending = append(pending, MyContainer{Name: name, Image: c.Image})
 	}
@@ -128,17 +119,6 @@ func (s *Scheduler) runUpdateCheck() {
 	if s.notifier != nil {
 		s.notifier.Notify("🔔 容器更新提醒", msg.String())
 	}
-
-	// 记录已通知版本，持久化去重状态
-	_ = s.svcCtx.AppConfig.Update(func(ac *appconfig.AppConfig) error {
-		if ac.NotifiedVersions == nil {
-			ac.NotifiedVersions = map[string]string{}
-		}
-		for _, c := range pending {
-			ac.NotifiedVersions[c.Name] = c.Image
-		}
-		return nil
-	})
 }
 
 // MyContainer 更新检测的轻量容器信息。
