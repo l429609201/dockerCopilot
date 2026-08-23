@@ -75,7 +75,7 @@ export function Settings() {
         <SettingsIcon className="h-5 w-5" /> 设置
       </h2>
 
-      <div className="p-5 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 space-y-4">
+      <div className="card space-y-4">
         <div className="flex items-center gap-2 text-gray-900 dark:text-white font-semibold">
           <Send className="h-4 w-4" /> Telegram 机器人
         </div>

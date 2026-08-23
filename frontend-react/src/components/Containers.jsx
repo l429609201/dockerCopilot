@@ -972,11 +972,28 @@ export function Containers() {
                 const isSelected = selectedContainers.includes(container.id)
                 // 列表模式：渲染横向一条的列表行
                 if (viewMode === 'list') {
+                  // 列表模式头像优先级：container.iconUrl > faviconMap > 内置logo > 自定义logo
+                  let iconUrl = container.iconUrl
+                  if (!iconUrl && faviconMap[container.id]) {
+                    iconUrl = faviconMap[container.id]
+                  }
+                  if (!iconUrl && container.usingImage) {
+                    const builtInLogo = getImageLogo(container.usingImage)
+                    if (builtInLogo) {
+                      iconUrl = builtInLogo
+                    } else if (customIcons && Object.keys(customIcons).length > 0) {
+                      // 尝试从自定义图标配置中查找
+                      const baseImageName = container.usingImage.split(':')[0]
+                      const simpleName = baseImageName.split('/').pop()
+                      iconUrl = customIcons[baseImageName] || customIcons[simpleName]
+                    }
+                  }
+
                   return (
                     <ContainerListRow
                       key={container.id}
                       container={container}
-                      iconUrl={container.iconUrl || faviconMap[container.id] || getImageLogo(container.usingImage)}
+                      iconUrl={iconUrl}
                       selected={isSelected}
                       batchMode={isBatchMode}
                       actionState={containerActions[container.id]}
@@ -1150,9 +1167,9 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部水平排列 */}
+                      {/* 操作按钮栏 - 底部排列，允许换行以容纳全部功能 */}
                       {!isBatchMode && (
-                        <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
                             <div className="flex-1 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
@@ -1216,27 +1233,30 @@ export function Containers() {
                                 <Upload className="h-4 w-4" />
                                 <span>更新</span>
                               </button>
-                              {/* 日志 / 控制台 快捷入口 */}
+                              {/* 日志 / 控制台 / 文件管理 快捷入口（彩色，与操作按钮统一） */}
                               <button
                                 onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'logs' }) }}
-                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-sky-600 dark:text-sky-400 bg-white dark:bg-gray-800 hover:bg-sky-50 dark:hover:bg-sky-900/20 border border-gray-200 dark:border-gray-700 hover:border-sky-200 dark:hover:border-sky-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="查看日志"
                               >
                                 <FileText className="h-4 w-4" />
+                                <span>日志</span>
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setOpsTarget({ container, tab: 'exec' }) }}
-                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="控制台"
                               >
                                 <TerminalSquare className="h-4 w-4" />
+                                <span>控制台</span>
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
-                                className="flex items-center justify-center px-2 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all shadow-sm active:scale-95"
+                                className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-amber-600 dark:text-amber-400 bg-white dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 border border-gray-200 dark:border-gray-700 hover:border-amber-200 dark:hover:border-amber-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
                                 title="文件管理"
                               >
                                 <FolderOpen className="h-4 w-4" />
+                                <span>文件</span>
                               </button>
                             </>
                           )}
@@ -1307,6 +1327,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
   const [showIconMenu, setShowIconMenu] = useState(false)
   // 容器运维弹窗（日志/命令）显示状态
   const [showOps, setShowOps] = useState(false)
+  // 文件管理弹窗显示状态
+  const [showFileMgr, setShowFileMgr] = useState(false)
 
   // 获取自定义图标配置
   const { data: customIcons = {} } = useQuery({
@@ -1633,13 +1655,6 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowOps(true)}
-                className="px-2.5 py-1 text-xs font-medium text-primary-600 dark:text-primary-400 border border-primary-200 dark:border-primary-800 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
-                title="查看日志 / 执行命令"
-              >
-                运维
-              </button>
-              <button
                 onClick={onClose}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
@@ -1655,6 +1670,14 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             container={currentContainer}
             initialTab={showOps === 'exec' ? 'exec' : 'logs'}
             onClose={() => setShowOps(false)}
+          />
+        )}
+
+        {/* 文件管理弹窗（详情弹窗内直接打开） */}
+        {showFileMgr && (
+          <FileManager
+            container={currentContainer}
+            onClose={() => setShowFileMgr(false)}
           />
         )}
 
@@ -1738,21 +1761,28 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
           <div className="flex flex-wrap items-center justify-between gap-2">
 
-            {/* 左侧：日志 / 控制台 快捷入口 */}
+            {/* 左侧：日志 / 控制台 / 文件管理 快捷入口（统一彩色风格） */}
             <div className="flex gap-2">
               <button
                 onClick={() => setShowOps('logs')}
-                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-sky-600 hover:bg-sky-700 dark:bg-sky-500 dark:hover:bg-sky-600 transition-colors"
                 title="查看日志"
               >
                 <FileText className="h-4 w-4" /> <span className="hidden sm:inline">日志</span>
               </button>
               <button
                 onClick={() => setShowOps('exec')}
-                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-teal-600 hover:bg-teal-700 dark:bg-teal-500 dark:hover:bg-teal-600 transition-colors"
                 title="控制台"
               >
                 <TerminalSquare className="h-4 w-4" /> <span className="hidden sm:inline">控制台</span>
+              </button>
+              <button
+                onClick={() => setShowFileMgr(true)}
+                className="px-3 py-2 text-sm rounded-lg flex items-center gap-1.5 text-white bg-amber-500 hover:bg-amber-600 dark:bg-amber-500 dark:hover:bg-amber-600 transition-colors"
+                title="文件管理"
+              >
+                <FolderOpen className="h-4 w-4" /> <span className="hidden sm:inline">文件</span>
               </button>
             </div>
 

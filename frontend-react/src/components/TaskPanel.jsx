@@ -47,10 +47,10 @@ export function TaskPanel() {
         )}
       </button>
 
-      {/* 遮罩 */}
+      {/* 遮罩：移除背景模糊效果 */}
       <div
         onClick={() => setOpen(false)}
-        className={cn('fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity',
+        className={cn('fixed inset-0 z-40 bg-black/30 transition-opacity',
           open ? 'opacity-100' : 'opacity-0 pointer-events-none')}
       />
 

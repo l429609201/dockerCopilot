@@ -76,7 +76,7 @@ export function Schedules() {
 
       <div className="grid gap-3">
         {rules.map((r) => (
-          <div key={r.id} className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div key={r.id} className="card flex items-center justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-gray-900 dark:text-white truncate">{r.name}</span>

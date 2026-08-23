@@ -62,7 +62,7 @@ export function Compose() {
 
       <div className="grid gap-3">
         {projects.map((p) => (
-          <div key={p.id} className="p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div key={p.id} className="card">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="min-w-0">
                 <div className="font-semibold text-gray-900 dark:text-white truncate">{p.name}</div>

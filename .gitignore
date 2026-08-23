@@ -35,6 +35,6 @@ __pycache__/
 /frontend-react/node_modules/
 /frontend-react/dist/
 /frontend-react/.env
-
+.vscode
 .sanshu-memory
 改造.md

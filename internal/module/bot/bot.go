@@ -22,14 +22,42 @@ type Bot struct {
 	cfg     appconfig.TelegramConfig
 	running atomic.Bool
 	stopCh  chan struct{}
+	// pending 记录每个会话待完成的输入型动作（重命名/命令行等），
+	// 用户点击按钮后进入等待，下一条文本消息作为输入完成动作。
+	pendingMu sync.Mutex
+	pending   map[int64]*pendingAction
+}
+
+// pendingAction 描述一个等待用户文本输入的动作。
+type pendingAction struct {
+	kind string // rename / exec
+	id   string // 目标容器ID
+	name string // 目标容器名
 }
 
 // New 创建 Bot 服务实例（未启动）。
 func New(svcCtx *svc.ServiceContext) *Bot {
 	return &Bot{
-		svcCtx: svcCtx,
-		ops:    containerops.New(svcCtx),
+		svcCtx:  svcCtx,
+		ops:     containerops.New(svcCtx),
+		pending: make(map[int64]*pendingAction),
 	}
+}
+
+// setPending 登记会话的待输入动作。
+func (b *Bot) setPending(chatID int64, p *pendingAction) {
+	b.pendingMu.Lock()
+	b.pending[chatID] = p
+	b.pendingMu.Unlock()
+}
+
+// takePending 取出并清除会话的待输入动作。
+func (b *Bot) takePending(chatID int64) *pendingAction {
+	b.pendingMu.Lock()
+	defer b.pendingMu.Unlock()
+	p := b.pending[chatID]
+	delete(b.pending, chatID)
+	return p
 }
 
 // Notify 实现 notify.Notifier：向所有白名单会话推送通知。

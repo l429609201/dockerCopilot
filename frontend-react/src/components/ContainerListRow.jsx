@@ -1,5 +1,5 @@
-import React from 'react'
-import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen } from 'lucide-react'
+import React, { useState } from 'react'
+import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
 import { ContainerStats } from './ContainerStats.jsx'
@@ -12,6 +12,7 @@ export function ContainerListRow({
 }) {
   const running = container.status === 'running'
   const loading = actionState?.loading
+  const [menuOpen, setMenuOpen] = useState(false)
 
   return (
     <div
@@ -68,40 +69,87 @@ export function ContainerListRow({
         {running ? `运行 ${formatRunningTime(container.runningTime)}` : '已停止'}
       </div>
 
-      {/* 操作按钮 */}
+      {/* 操作按钮区 */}
       {!batchMode && (
-        <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-          {/* 日志 / 控制台 快捷入口 */}
-          {onOps && (
-            <>
-              <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="gray" />
-              <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="gray" />
-              {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="gray" />}
-            </>
-          )}
-          {loading ? (
-            <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400 max-w-[220px]"
-              title={actionState.detailMsg || ''}>
-              <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-              <span className="truncate">
-                {actionState.action === 'update' && actionState.percentage ? `${Math.round(actionState.percentage)}%` : '处理中'}
-                {actionState.detailMsg ? ` · ${actionState.detailMsg}` : ''}
+        <div className="flex items-center gap-1 flex-shrink-0 relative" onClick={(e) => e.stopPropagation()}>
+          {/* 大屏(md+)：显示所有按钮 */}
+          <div className="hidden md:flex items-center gap-1">
+            {/* 日志 / 控制台 快捷入口 */}
+            {onOps && (
+              <>
+                <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="gray" />
+                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="gray" />
+                {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="gray" />}
+              </>
+            )}
+            {loading ? (
+              <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400 max-w-[220px]"
+                title={actionState.detailMsg || ''}>
+                <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
+                <span className="truncate">
+                  {actionState.action === 'update' && actionState.percentage ? `${Math.round(actionState.percentage)}%` : '处理中'}
+                  {actionState.detailMsg ? ` · ${actionState.detailMsg}` : ''}
+                </span>
               </span>
-            </span>
-          ) : (
-            <>
-              {running ? (
-                <>
-                  <IconBtn onClick={() => onAction(container.id, 'stop')} icon={Square} title="停止" color="red" />
-                  <IconBtn onClick={() => onAction(container.id, 'restart')} icon={RotateCcw} title="重启" color="blue" />
-                </>
-              ) : (
-                <IconBtn onClick={() => onAction(container.id, 'start')} icon={Play} title="启动" color="green" />
-              )}
-              <IconBtn onClick={() => onUpdate(container.id)} icon={Upload} title="更新"
-                color={container.haveUpdate ? "yellow" : "purple"} />
-            </>
-          )}
+            ) : (
+              <>
+                {running ? (
+                  <>
+                    <IconBtn onClick={() => onAction(container.id, 'stop')} icon={Square} title="停止" color="red" />
+                    <IconBtn onClick={() => onAction(container.id, 'restart')} icon={RotateCcw} title="重启" color="blue" />
+                  </>
+                ) : (
+                  <IconBtn onClick={() => onAction(container.id, 'start')} icon={Play} title="启动" color="green" />
+                )}
+                <IconBtn onClick={() => onUpdate(container.id)} icon={Upload} title="更新"
+                  color={container.haveUpdate ? "yellow" : "purple"} />
+              </>
+            )}
+          </div>
+
+          {/* 小屏(<md)：三点菜单 */}
+          <div className="md:hidden">
+            {loading ? (
+              <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400">
+                <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
+                <span className="truncate">处理中</span>
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen) }}
+                  className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+                {menuOpen && (
+                  <>
+                    {/* 遮罩：点击关闭菜单 */}
+                    <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+                    {/* 下拉菜单 */}
+                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[140px]">
+                      {running ? (
+                        <>
+                          <MenuItem onClick={() => { onAction(container.id, 'stop'); setMenuOpen(false) }} icon={Square} text="停止" />
+                          <MenuItem onClick={() => { onAction(container.id, 'restart'); setMenuOpen(false) }} icon={RotateCcw} text="重启" />
+                        </>
+                      ) : (
+                        <MenuItem onClick={() => { onAction(container.id, 'start'); setMenuOpen(false) }} icon={Play} text="启动" />
+                      )}
+                      <MenuItem onClick={() => { onUpdate(container.id); setMenuOpen(false) }} icon={Upload} text="更新" />
+                      {onOps && (
+                        <>
+                          <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
+                          <MenuItem onClick={() => { onOps('logs'); setMenuOpen(false) }} icon={FileText} text="日志" />
+                          <MenuItem onClick={() => { onOps('exec'); setMenuOpen(false) }} icon={TerminalSquare} text="控制台" />
+                          {onFiles && <MenuItem onClick={() => { onFiles(); setMenuOpen(false) }} icon={FolderOpen} text="文件管理" />}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -121,6 +169,18 @@ function IconBtn({ onClick, icon: Icon, title, color }) {
     <button onClick={onClick} title={title}
       className={cn("p-2 rounded-lg transition-colors active:scale-95", colors[color])}>
       <Icon className="h-4 w-4" />
+    </button>
+  )
+}
+
+// 下拉菜单项组件
+function MenuItem({ onClick, icon: Icon, text }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+      <Icon className="h-4 w-4 flex-shrink-0" />
+      <span>{text}</span>
     </button>
   )
 }
