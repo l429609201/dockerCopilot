@@ -195,7 +195,7 @@ func checkHost(host string) bool {
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
-			logx.Errorf("关闭body失败" + err.Error())
+			logx.Errorf("关闭body失败: %v", err)
 		}
 	}(resp.Body)
 
