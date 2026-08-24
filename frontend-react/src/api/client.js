@@ -347,24 +347,4 @@ export const githubAPI = {
   },
 }
 
-// 宿主机路径映射相关API
-export const hostPathAPI = {
-  // 获取宿主机路径映射配置
-  getMappings: () => apiClient.get('/api/hostpath/mappings'),
-
-  // 列出宿主机目录内容（只读）
-  list: (path) => apiClient.get('/api/hostpath/list', { params: { path } }),
-
-  // 读取宿主机文件内容（只读）
-  read: (path) => apiClient.get('/api/hostpath/read', { params: { path } }),
-
-  // 下载宿主机文件（只读）
-  download: (path) => {
-    return apiClient.get('/api/hostpath/download', {
-      params: { path },
-      responseType: 'blob',
-    })
-  },
-}
-
 export default apiClient
