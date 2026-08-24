@@ -304,64 +304,22 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 	server.AddRoutes(
 		[]rest.Route{
 			{
-				// 获取所有路径映射配置
+				// 获取宿主机路径映射配置（含自动推导预览）
 				Method:  http.MethodGet,
-				Path:    "/hostpath/mappings",
-				Handler: ops.HostPathMappingsHandler(serverCtx),
+				Path:    "/hostpath/config",
+				Handler: ops.HostPathConfigGetHandler(serverCtx),
 			},
 			{
-				// 解析容器路径到宿主机路径
+				// 保存宿主机路径映射配置
+				Method:  http.MethodPost,
+				Path:    "/hostpath/config",
+				Handler: ops.HostPathConfigSaveHandler(serverCtx),
+			},
+			{
+				// 解析容器路径到宿主机路径并校验可访问性
 				Method:  http.MethodPost,
 				Path:    "/hostpath/resolve",
 				Handler: ops.HostPathResolveHandler(serverCtx),
-			},
-			{
-				// 列出映射目录内容
-				Method:  http.MethodGet,
-				Path:    "/hostpath/list",
-				Handler: ops.HostPathListHandler(serverCtx),
-			},
-			{
-				// 读取文件
-				Method:  http.MethodGet,
-				Path:    "/hostpath/read",
-				Handler: ops.HostPathReadHandler(serverCtx),
-			},
-			{
-				// 写入文件
-				Method:  http.MethodPost,
-				Path:    "/hostpath/write",
-				Handler: ops.HostPathWriteHandler(serverCtx),
-			},
-			{
-				// 创建目录
-				Method:  http.MethodPost,
-				Path:    "/hostpath/mkdir",
-				Handler: ops.HostPathMkdirHandler(serverCtx),
-			},
-			{
-				// 删除文件/目录
-				Method:  http.MethodDelete,
-				Path:    "/hostpath/delete",
-				Handler: ops.HostPathDeleteHandler(serverCtx),
-			},
-			{
-				// 重命名/移动
-				Method:  http.MethodPost,
-				Path:    "/hostpath/rename",
-				Handler: ops.HostPathRenameHandler(serverCtx),
-			},
-			{
-				// 下载文件
-				Method:  http.MethodGet,
-				Path:    "/hostpath/download",
-				Handler: ops.HostPathDownloadHandler(serverCtx),
-			},
-			{
-				// 上传文件
-				Method:  http.MethodPost,
-				Path:    "/hostpath/upload",
-				Handler: ops.HostPathUploadHandler(serverCtx),
 			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),

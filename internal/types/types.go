@@ -105,7 +105,15 @@ type HostPathResolveReq struct {
 	ContainerPath string `json:"containerPath"`
 }
 
-// HostPathListReq 列出映射目录内容请求。
-type HostPathListReq struct {
-	Path string `form:"path"`
+// HostPathConfigReq 保存宿主机路径映射配置请求。
+type HostPathConfigReq struct {
+	Enabled  bool                  `json:"enabled"`
+	Mode     string                `json:"mode"` // auto | custom
+	Mappings []HostPathMappingItem `json:"mappings"`
+}
+
+// HostPathMappingItem 自定义模式下的单条映射。
+type HostPathMappingItem struct {
+	ContainerPath string `json:"containerPath"`
+	HostPath      string `json:"hostPath"`
 }

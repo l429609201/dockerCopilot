@@ -254,38 +254,14 @@ export const faviconAPI = {
   resolve: (url) => apiClient.get(`/api/favicon/resolve?url=${encodeURIComponent(url)}`),
 }
 
-// 宿主机路径映射API（完整文件管理功能）
+// 宿主机路径映射API（仅配置管理 + 路径解析，与后端 /api/hostpath 接口对齐）
 export const hostPathAPI = {
-  // 获取所有路径映射配置
-  getMappings: () => apiClient.get('/api/hostpath/mappings'),
-  // 解析容器路径到宿主机路径
+  // 获取映射配置（含自动推导预览）
+  getConfig: () => apiClient.get('/api/hostpath/config'),
+  // 保存映射配置（enabled / mode / mappings）
+  saveConfig: (config) => apiClient.post('/api/hostpath/config', config),
+  // 将容器内路径解析为宿主机路径并校验可访问性
   resolve: (containerPath) => apiClient.post('/api/hostpath/resolve', { containerPath }),
-  // 列出映射目录内容
-  list: (path) => apiClient.get('/api/hostpath/list', { params: { path } }),
-  // 读取文件内容
-  read: (path) => apiClient.get('/api/hostpath/read', { params: { path } }),
-  // 写入文件内容
-  write: (path, content) => apiClient.post('/api/hostpath/write', { path, content }),
-  // 创建目录
-  mkdir: (path) => apiClient.post('/api/hostpath/mkdir', { path }),
-  // 删除文件/目录
-  delete: (path) => apiClient.delete('/api/hostpath/delete', { data: { path } }),
-  // 重命名/移动
-  rename: (oldPath, newPath) => apiClient.post('/api/hostpath/rename', { oldPath, newPath }),
-  // 下载文件
-  download: (path) => apiClient.get('/api/hostpath/download', {
-    params: { path },
-    responseType: 'blob'
-  }),
-  // 上传文件
-  upload: (path, file) => {
-    const formData = new FormData()
-    formData.append('path', path)
-    formData.append('file', file)
-    return apiClient.post('/api/hostpath/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  },
 }
 
 // GitHub API - 用于检查前端更新

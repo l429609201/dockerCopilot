@@ -9,7 +9,6 @@ import { About } from './components/About.jsx'
 import { Schedules } from './components/Schedules.jsx'
 import { Compose } from './components/Compose.jsx'
 import { Settings } from './components/Settings.jsx'
-import { HostPathBrowser } from './components/HostPathBrowser.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
 import { TaskProvider } from './hooks/useTasks.jsx'
 import { TaskPanel } from './components/TaskPanel.jsx'
@@ -149,8 +148,6 @@ function AppContent() {
         return <Compose />
       case '#schedules':
         return <Schedules />
-      case '#hostpath':
-        return <HostPathBrowser />
       case '#settings':
         return <Settings />
       case '#about':

@@ -106,9 +106,18 @@ type ScheduledUpdateRule struct {
 type HostPathMapperConfig struct {
 	// Enabled 是否启用宿主机路径映射功能。
 	Enabled bool `json:"enabled"`
-	// Mappings 路径映射规则列表。
+	// Mode 映射来源模式：auto=从 DC 自身容器 Mounts 自动推导（默认）；custom=使用下方 Mappings。
+	// 为空时按 auto 处理，保持向后兼容。
+	Mode string `json:"mode"`
+	// Mappings 路径映射规则列表，仅 custom 模式生效。
 	Mappings []PathMapping `json:"mappings"`
 }
+
+// HostPathMapperMode 映射来源模式常量。
+const (
+	HostPathModeAuto   = "auto"
+	HostPathModeCustom = "custom"
+)
 
 // PathMapping 单个路径映射规则。
 type PathMapping struct {
