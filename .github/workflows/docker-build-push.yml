@@ -25,6 +25,14 @@ permissions:
   contents: read
   packages: write
 
+# 镜像名用顶层 env 定义（含 secret 的值不能通过 job output 跨 job 传递，
+# 否则会被 Actions 的 secret 保护机制清空，导致 tag 变成 ":xxx" 触发 invalid reference）。
+env:
+  # Docker Hub 镜像名
+  DH_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/dockercopilot
+  # GHCR 镜像名（owner 可能含大写，登录/推送前在步骤内转小写）
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/dockercopilot
+
 jobs:
   # ---------------------------------------------------------------------------
   # Job 1: 准备构建参数（根据分支决定标签与是否构建 ARM）
@@ -38,8 +46,6 @@ jobs:
       build_arm: ${{ steps.prep.outputs.build_arm }}   # 是否构建 ARM64
       version: ${{ steps.prep.outputs.version }}       # 版本号
       build_date: ${{ steps.prep.outputs.build_date }} # 构建时间
-      dh_image: ${{ steps.prep.outputs.dh_image }}     # Docker Hub 镜像名
-      ghcr_image: ${{ steps.prep.outputs.ghcr_image }} # GHCR 镜像名(全小写)
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -50,9 +56,6 @@ jobs:
           VERSION=$(cat version)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-          # 镜像名：Docker Hub + GHCR（GHCR 名需全小写）
-          echo "dh_image=${{ secrets.DOCKERHUB_USERNAME }}/dockercopilot" >> $GITHUB_OUTPUT
-          echo "ghcr_image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/dockercopilot" >> $GITHUB_OUTPUT
           # 分支策略
           if [ "${{ github.ref_name }}" = "test" ]; then
             # test 分支：仅构建 AMD64，打 :test
@@ -80,6 +83,10 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 计算小写 GHCR 镜像名
+        id: img
+        run: echo "ghcr=$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3.0.0
 
@@ -104,8 +111,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ needs.prepare.outputs.dh_image }}:${{ needs.prepare.outputs.image_tag }}-amd64
-            ${{ needs.prepare.outputs.ghcr_image }}:${{ needs.prepare.outputs.image_tag }}-amd64
+            ${{ env.DH_IMAGE }}:${{ needs.prepare.outputs.image_tag }}-amd64
+            ${{ steps.img.outputs.ghcr }}:${{ needs.prepare.outputs.image_tag }}-amd64
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
@@ -129,6 +136,10 @@ jobs:
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
+      - name: 计算小写 GHCR 镜像名
+        id: img
+        run: echo "ghcr=$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3.0.0
@@ -154,8 +165,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ needs.prepare.outputs.dh_image }}:${{ needs.prepare.outputs.image_tag }}-arm64
-            ${{ needs.prepare.outputs.ghcr_image }}:${{ needs.prepare.outputs.image_tag }}-arm64
+            ${{ env.DH_IMAGE }}:${{ needs.prepare.outputs.image_tag }}-arm64
+            ${{ steps.img.outputs.ghcr }}:${{ needs.prepare.outputs.image_tag }}-arm64
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
@@ -192,8 +203,9 @@ jobs:
       - name: 创建并推送多架构 Manifest
         run: |
           TAG="${{ needs.prepare.outputs.image_tag }}"
-          DH="${{ needs.prepare.outputs.dh_image }}"
-          GHCR="${{ needs.prepare.outputs.ghcr_image }}"
+          DH="${{ env.DH_IMAGE }}"
+          # GHCR 名转小写（owner 可能含大写）
+          GHCR="$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')"
           BUILD_ARM="${{ needs.prepare.outputs.build_arm }}"
           EXTRA_TAGS="${{ needs.prepare.outputs.extra_tags }}"
 
