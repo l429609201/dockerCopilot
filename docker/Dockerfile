@@ -14,7 +14,7 @@ COPY frontend-react/ ./
 RUN npm run build
 
 # ---------- 阶段2：编译后端并嵌入前端 ----------
-FROM golang:1.23-alpine AS backend
+FROM golang:1.25-alpine AS backend
 WORKDIR /src
 ARG TARGETARCH
 ARG VERSION=v1.0.0
