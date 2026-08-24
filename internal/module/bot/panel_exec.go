@@ -103,21 +103,30 @@ func (b *Bot) promptRename(chatID int64, id, name string) {
 
 // promptExec 进入容器的交互式 Shell 会话。
 // 进入后用户连续发送的每条文本都作为命令在该容器内执行，直到发送 /exit 退出。
-// 会话采用"单屏终端"形态：发送一条常驻"终端消息"，之后每条命令的结果都编辑更新到这条消息上，
-// 并删除用户发送的命令消息，保持对话干净。
-func (b *Bot) promptExec(chatID int64, id, name string) {
+// 会话采用"单屏终端"形态：直接在面板消息(panelMsgID)上编辑成终端界面，
+// 之后每条命令的结果都编辑更新到这条消息上，退出后再把这条消息恢复为容器面板菜单。
+// panelMsgID > 0 时复用该消息（不新发消息）；为 0 时回退发送新消息。
+func (b *Bot) promptExec(chatID int64, id, name string, panelMsgID int64) {
 	welcome := fmt.Sprintf(
 		"🖥 <b>%s</b> Shell 会话已就绪\n\n"+
 			"• 直接发送命令即可连续执行（支持管道/重定向）\n"+
 			"• <code>cd</code> 会在会话内保持工作目录\n"+
 			"• 结果会更新在本条消息，命令消息将被自动清理\n\n"+
 			"等待输入命令…", escapeHTML(name))
-	// 发送终端消息并记录其 ID，后续所有结果都编辑到这一条上
-	msgID, err := b.client.SendMessageReturnID(chatID, welcome, b.shellKb(id, name))
-	if err != nil {
-		logx.Errorf("Telegram 发送 Shell 终端消息失败 chat=%d: %v", chatID, err)
-		b.reply(chatID, "❌ 无法进入 Shell 会话，请稍后重试。")
-		return
+	var msgID int64
+	if panelMsgID > 0 {
+		// 复用面板消息：编辑为终端界面，会话结果都更新在这一条上
+		b.editMessageKeyboard(chatID, panelMsgID, welcome, b.shellKb(id, name))
+		msgID = panelMsgID
+	} else {
+		// 无面板消息（如命令触发）：新发一条终端消息
+		var err error
+		msgID, err = b.client.SendMessageReturnID(chatID, welcome, b.shellKb(id, name))
+		if err != nil {
+			logx.Errorf("Telegram 发送 Shell 终端消息失败 chat=%d: %v", chatID, err)
+			b.reply(chatID, "❌ 无法进入 Shell 会话，请稍后重试。")
+			return
+		}
 	}
 	b.setShell(chatID, &shellSession{id: id, name: name, workDir: "", resultMsgID: msgID})
 }
@@ -240,12 +249,12 @@ func (b *Bot) updateShellMsg(chatID int64, s *shellSession, text string) {
 	b.editMessageKeyboard(chatID, s.resultMsgID, text, b.shellKb(s.id, s.name))
 }
 
-// finishShell 结束 Shell 会话：清除会话状态，并把终端消息更新为已退出提示。
+// finishShell 结束 Shell 会话：清除会话状态，并把终端消息恢复为容器管理面板菜单，
+// 使这条消息回到进入 Shell 之前的形态，保持"单条消息流"。
 func (b *Bot) finishShell(chatID int64, s *shellSession) {
 	b.clearShell(chatID)
-	text := fmt.Sprintf("✅ 已退出容器 <b>%s</b> 的 Shell 会话。", escapeHTML(s.name))
-	// 退出后移除键盘
-	b.editMessageKeyboard(chatID, s.resultMsgID, text, nil)
+	// 退出后把这条消息重新编辑为容器面板菜单（复用 resultMsgID）
+	b.sendContainerPanel(chatID, s.id, s.name, s.resultMsgID)
 }
 
 // showShellHistory 把历史命令列表编辑更新到终端消息上。

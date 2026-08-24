@@ -84,7 +84,10 @@ func (b *Bot) handleCommand(chatID int64, text string, msgID int64) {
 	case "/start", "/menu":
 		b.sendMainMenu(chatID)
 	case "/help":
-		b.reply(chatID, helpText())
+		// 帮助：带返回主菜单键盘，与主菜单「📚 帮助」入口保持一致
+		b.replyKeyboard(chatID, helpText(), &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+			{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
+		}}})
 	case "/ps", "/containers":
 		b.replyContainerList(chatID, false, 0, 0)
 	case "/images":
@@ -220,14 +223,15 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			b.sendTagSwitch(chatID, id, name, messageID)
 			return
 		case "execp":
-			b.promptExec(chatID, id, name)
+			// 在面板消息上直接开启 Shell（编辑本条消息），退出后恢复面板菜单
+			b.promptExec(chatID, id, name, messageID)
 			return
 		case "shexit":
-			// 退出 Shell 会话按钮：若会话仍在则优雅结束（更新终端消息为已退出）
+			// 退出 Shell 会话按钮：无论会话是否仍在，都把本条消息恢复为容器面板菜单
 			if s := b.getShell(chatID); s != nil {
 				b.finishShell(chatID, s)
 			} else if messageID > 0 {
-				b.editMessageKeyboard(chatID, messageID, fmt.Sprintf("✅ 容器 <b>%s</b> 的 Shell 会话已结束。", escapeHTML(name)), nil)
+				b.sendContainerPanel(chatID, id, name, messageID)
 			}
 			return
 		case "shhist":
