@@ -7,6 +7,7 @@ import (
 
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/module/containerops"
+	"github.com/l429609201/dockerCopilot/internal/module/notify"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -116,7 +117,8 @@ func (b *Bot) Notify(title string, text string) {
 }
 
 // NotifyUpdateWithKeyboard 推送带交互式键盘的更新通知（每个容器一行操作按钮）。
-// containers 为需要更新的容器列表，每个容器包含名称和镜像信息。
+// containers 为需要更新的容器列表；参数类型为 notify.UpdateItem，使本方法满足
+// notify.UpdateNotifier 接口，让 scheduler 的周期检测能命中带键盘的推送而非纯文本。
 func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
 	b.mu.Lock()
 	client := b.client
@@ -131,12 +133,9 @@ func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
 	}
 }
 
-// UpdateContainer 更新通知的容器信息结构。
-type UpdateContainer struct {
-	ID    string
-	Name  string
-	Image string
-}
+// UpdateContainer 是 notify.UpdateItem 的类型别名，供 Bot 内部复用同一结构，
+// 保证 NotifyUpdateWithKeyboard 的签名与 notify.UpdateNotifier 接口一致。
+type UpdateContainer = notify.UpdateItem
 
 // Reload 根据最新配置重建 Bot：停止旧轮询，按需启动新轮询。
 func (b *Bot) Reload() {

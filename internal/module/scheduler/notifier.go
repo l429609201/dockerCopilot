@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/l429609201/dockerCopilot/internal/module/notify"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -89,7 +90,7 @@ func (s *Scheduler) runUpdateCheck() {
 	}
 
 	// 收集"有更新且未屏蔽"的容器
-	var pending []MyContainer
+	var pending []notify.UpdateItem
 	for _, c := range containers {
 		if !c.Update {
 			continue
@@ -101,35 +102,26 @@ func (s *Scheduler) runUpdateCheck() {
 		if _, ok := muted[name]; ok {
 			continue // 已屏蔽
 		}
-		pending = append(pending, MyContainer{ID: c.ID, Name: name, Image: c.Image})
+		pending = append(pending, notify.UpdateItem{ID: c.ID, Name: name, Image: c.Image})
 	}
 
 	if len(pending) == 0 {
 		return
 	}
 
-	// 调用 Bot 的交互式通知方法（如果 notifier 是 Bot 类型）
-	if botNotifier, ok := s.notifier.(interface {
-		NotifyUpdateWithKeyboard([]MyContainer)
-	}); ok {
-		botNotifier.NotifyUpdateWithKeyboard(pending)
-	} else {
-		// 回退到普通文本通知
-		var msg strings.Builder
-		msg.WriteString(fmt.Sprintf("检测到 %d 个容器有可用更新：\n\n", len(pending)))
-		for _, c := range pending {
-			msg.WriteString(fmt.Sprintf("🔺 %s\n   %s\n", c.Name, shortImage(c.Image)))
-		}
-		msg.WriteString("\n💡 可在面板或发送 /update_all 进行更新")
-		if s.notifier != nil {
-			s.notifier.Notify("🔔 容器更新提醒", msg.String())
-		}
+	// 优先调用带交互式键盘的通知（Telegram Bot 实现了 notify.UpdateNotifier）
+	if kbNotifier, ok := s.notifier.(notify.UpdateNotifier); ok {
+		kbNotifier.NotifyUpdateWithKeyboard(pending)
+		return
 	}
-}
-
-// MyContainer 更新检测的轻量容器信息。
-type MyContainer struct {
-	ID    string
-	Name  string
-	Image string
+	// 回退到普通文本通知
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("检测到 %d 个容器有可用更新：\n\n", len(pending)))
+	for _, c := range pending {
+		msg.WriteString(fmt.Sprintf("🔺 %s\n   %s\n", c.Name, shortImage(c.Image)))
+	}
+	msg.WriteString("\n💡 可在面板或发送 /update_all 进行更新")
+	if s.notifier != nil {
+		s.notifier.Notify("🔔 容器更新提醒", msg.String())
+	}
 }
