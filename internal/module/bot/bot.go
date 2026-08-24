@@ -169,7 +169,10 @@ func (b *Bot) Reload() {
 func botCommands() []telegram.BotCommand {
 	return []telegram.BotCommand{
 		{Command: "start", Description: "打开主菜单"},
-		{Command: "ps", Description: "查看容器列表（可点按钮操作）"},
+		{Command: "ps", Description: "查看容器列表"},
+		{Command: "sys", Description: "系统概览"},
+		{Command: "check_updates", Description: "检查所有更新"},
+		{Command: "update_all", Description: "更新所有容器"},
 		{Command: "images", Description: "查看镜像列表"},
 		{Command: "compose", Description: "查看 Compose 项目"},
 		{Command: "help", Description: "查看帮助"},

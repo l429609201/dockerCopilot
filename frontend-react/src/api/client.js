@@ -254,6 +254,40 @@ export const faviconAPI = {
   resolve: (url) => apiClient.get(`/api/favicon/resolve?url=${encodeURIComponent(url)}`),
 }
 
+// 宿主机路径映射API（完整文件管理功能）
+export const hostPathAPI = {
+  // 获取所有路径映射配置
+  getMappings: () => apiClient.get('/api/hostpath/mappings'),
+  // 解析容器路径到宿主机路径
+  resolve: (containerPath) => apiClient.post('/api/hostpath/resolve', { containerPath }),
+  // 列出映射目录内容
+  list: (path) => apiClient.get('/api/hostpath/list', { params: { path } }),
+  // 读取文件内容
+  read: (path) => apiClient.get('/api/hostpath/read', { params: { path } }),
+  // 写入文件内容
+  write: (path, content) => apiClient.post('/api/hostpath/write', { path, content }),
+  // 创建目录
+  mkdir: (path) => apiClient.post('/api/hostpath/mkdir', { path }),
+  // 删除文件/目录
+  delete: (path) => apiClient.delete('/api/hostpath/delete', { data: { path } }),
+  // 重命名/移动
+  rename: (oldPath, newPath) => apiClient.post('/api/hostpath/rename', { oldPath, newPath }),
+  // 下载文件
+  download: (path) => apiClient.get('/api/hostpath/download', {
+    params: { path },
+    responseType: 'blob'
+  }),
+  // 上传文件
+  upload: (path, file) => {
+    const formData = new FormData()
+    formData.append('path', path)
+    formData.append('file', file)
+    return apiClient.post('/api/hostpath/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+}
+
 // GitHub API - 用于检查前端更新
 export const githubAPI = {
   /**
@@ -310,6 +344,26 @@ export const githubAPI = {
       console.warn('获取 GitHub 仓库信息失败:', error.message)
       throw error
     }
+  },
+}
+
+// 宿主机路径映射相关API
+export const hostPathAPI = {
+  // 获取宿主机路径映射配置
+  getMappings: () => apiClient.get('/api/hostpath/mappings'),
+
+  // 列出宿主机目录内容（只读）
+  list: (path) => apiClient.get('/api/hostpath/list', { params: { path } }),
+
+  // 读取宿主机文件内容（只读）
+  read: (path) => apiClient.get('/api/hostpath/read', { params: { path } }),
+
+  // 下载宿主机文件（只读）
+  download: (path) => {
+    return apiClient.get('/api/hostpath/download', {
+      params: { path },
+      responseType: 'blob',
+    })
   },
 }
 

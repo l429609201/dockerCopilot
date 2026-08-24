@@ -2054,9 +2054,23 @@ func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []Up
 		seq := start + i + 1
 		text.WriteString(fmt.Sprintf("%d. <b>%s</b>\n   <code>%s</code>\n", seq, escapeHTML(c.Name), escapeHTML(shortImage(c.Image))))
 
+		// 为避免超出 Telegram callback_data 64 字节限制，使用容器短 ID（前 12 位）
+		shortID := c.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		// 容器名截断：最多保留 30 个字符（UTF-8 安全截断）
+		safeName := c.Name
+		if len(safeName) > 30 {
+			runes := []rune(safeName)
+			if len(runes) > 30 {
+				safeName = string(runes[:27]) + "..."
+			}
+		}
+
 		row := []telegram.InlineKeyboardButton{
-			{Text: fmt.Sprintf("%d.更新", seq), CallbackData: fmt.Sprintf("act|update|%s|%s", c.ID, c.Name)},
-			{Text: fmt.Sprintf("%d.屏蔽通知", seq), CallbackData: fmt.Sprintf("mute|%s", c.Name)},
+			{Text: fmt.Sprintf("%d.更新", seq), CallbackData: fmt.Sprintf("act|update|%s|%s", shortID, safeName)},
+			{Text: fmt.Sprintf("%d.屏蔽通知", seq), CallbackData: fmt.Sprintf("mute|%s", c.Name)}, // 屏蔽用完整名称
 		}
 		rows = append(rows, row)
 	}

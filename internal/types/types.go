@@ -99,3 +99,13 @@ type VersionReq struct {
 type GetNewImageReq struct {
 	ImageNameAndTag string `json:"image_name_and_tag"`
 }
+
+// HostPathResolveReq 解析容器路径到宿主机路径请求。
+type HostPathResolveReq struct {
+	ContainerPath string `json:"containerPath"`
+}
+
+// HostPathListReq 列出映射目录内容请求。
+type HostPathListReq struct {
+	Path string `form:"path"`
+}

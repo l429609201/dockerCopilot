@@ -1,8 +1,8 @@
 package bot
 
 import (
-	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -177,9 +177,6 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	// 立即删除用户发送的命令消息，保持"单屏"干净
 	b.deleteMsg(chatID, cmdMsgID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer cancel()
-
 	// 优化 ls 命令输出：自动添加 -C 参数实现多列显示（类似真实终端）
 	execCmd := cmd
 	trimmed := strings.TrimSpace(cmd)
@@ -188,39 +185,87 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 		execCmd = strings.Replace(cmd, "ls", "ls -C", 1)
 	}
 
-	// 哨兵：用于从输出末尾提取执行后的工作目录，避免与用户输出混淆
-	const marker = "__DC_PWD__:"
-	workDir := s.workDir
-	if workDir == "" {
-		workDir = "." // 容器默认工作目录
-	}
-	// 组合脚本：cd 到当前目录 -> 执行用户命令 -> 无论成败都打印哨兵+pwd
-	script := fmt.Sprintf("cd %s 2>/dev/null; %s; __ec=$?; printf '\\n%s%%s\\n' \"$(pwd)\"; exit $__ec",
-		shellQuote(workDir), execCmd, marker)
+	// 创建 PTY Shell 会话
+	ptyShell := newPtyShell(b.svcCtx, s.id, chatID, s.resultMsgID)
 
-	res, err := b.ops.Exec(ctx, s.id, []string{"sh", "-c", script}, "", "", 30, 8000)
-	if err != nil {
-		b.updateShellMsg(chatID, s, fmt.Sprintf("❌ 执行失败：%s", escapeHTML(err.Error())))
+	// 尝试多个 shell，按优先级：bash > sh > ash
+	shells := []string{"/bin/bash", "/bin/sh", "/bin/ash"}
+	var startErr error
+	for _, shell := range shells {
+		if err := ptyShell.Start(shell); err == nil {
+			startErr = nil
+			break
+		} else {
+			startErr = err
+		}
+	}
+
+	if startErr != nil {
+		b.updateShellMsg(chatID, s, fmt.Sprintf("❌ 启动终端失败：%s", escapeHTML(startErr.Error())))
 		return
 	}
+	defer ptyShell.Close()
 
-	// 从输出中剥离哨兵行，解析新的工作目录
-	out := res.Output
-	newDir := s.workDir
-	if idx := strings.LastIndex(out, marker); idx >= 0 {
-		tail := out[idx+len(marker):]
-		if nl := strings.IndexByte(tail, '\n'); nl >= 0 {
-			tail = tail[:nl]
-		}
-		if d := strings.TrimSpace(tail); d != "" {
-			newDir = d
-		}
-		// 去掉哨兵行及其前导换行，保留纯净的命令输出
-		out = strings.TrimRight(out[:idx], "\r\n")
+	// 如果有工作目录，先 cd 过去
+	if s.workDir != "" && s.workDir != "." {
+		cdCmd := fmt.Sprintf("cd %s 2>/dev/null\n", shellQuote(s.workDir))
+		ptyShell.Write([]byte(cdCmd))
+		time.Sleep(100 * time.Millisecond) // 等待 cd 完成
 	}
-	if newDir != "" {
+
+	// 发送用户命令
+	ptyShell.Write([]byte(execCmd + "\n"))
+
+	// 等待命令执行，收集输出（最多等待 120 秒）
+	time.Sleep(500 * time.Millisecond) // 初始等待，让命令开始执行
+
+	startTime := time.Now()
+	timeout := 120 * time.Second
+	var lastOutput string
+
+	for time.Since(startTime) < timeout {
+		output, err := ptyShell.ReadOutput(2 * time.Second)
+		if err != nil && err != io.EOF {
+			logx.Errorf("读取 PTY 输出错误: %v", err)
+		}
+
+		// 获取完整累积输出
+		fullOutput := ptyShell.GetFullOutput()
+		if fullOutput != lastOutput {
+			lastOutput = fullOutput
+			// 实时更新消息（限流：最多每 1 秒更新一次）
+			if time.Since(ptyShell.lastUpdate) > 1*time.Second {
+				b.updateShellMsgWithOutput(chatID, s, execCmd, fullOutput, 0)
+				ptyShell.lastUpdate = time.Now()
+			}
+		}
+
+		// 检测命令是否完成（简单策略：如果 2 秒内无新输出，认为完成）
+		if output == "" && time.Since(ptyShell.lastUpdate) > 3*time.Second {
+			break
+		}
+	}
+
+	// 获取工作目录（发送 pwd 命令）
+	ptyShell.Write([]byte("pwd\n"))
+	time.Sleep(300 * time.Millisecond)
+	pwdOutput, _ := ptyShell.ReadOutput(1 * time.Second)
+
+	// 解析新的工作目录
+	newDir := s.workDir
+	lines := strings.Split(strings.TrimSpace(pwdOutput), "\n")
+	if len(lines) > 0 {
+		// pwd 输出的最后一行就是路径
+		lastLine := strings.TrimSpace(lines[len(lines)-1])
+		if strings.HasPrefix(lastLine, "/") {
+			newDir = lastLine
+		}
+	}
+
+	if newDir != "" && newDir != "." {
 		s.workDir = newDir
 	}
+
 	// 记录命令历史（最多保留 20 条）
 	s.history = append(s.history, cmd)
 	if len(s.history) > 20 {
@@ -228,6 +273,8 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	}
 	b.setShell(chatID, s)
 
+	// 最终输出处理
+	out := ptyShell.GetFullOutput()
 	out = strings.TrimSpace(out)
 	if out == "" {
 		out = "(无输出)"
@@ -235,18 +282,48 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	if len(out) > 3500 {
 		out = out[:3500] + "\n...(输出过长已截断)"
 	}
+
 	dirLabel := s.workDir
 	if dirLabel == "" {
 		dirLabel = "~"
 	}
-	body := fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>（退出码 %d）\n<pre>%s</pre>",
-		escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), res.ExitCode, escapeHTML(out))
+	body := fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>\n<pre>%s</pre>",
+		escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), escapeHTML(out))
 	b.updateShellMsg(chatID, s, body)
 }
 
 // updateShellMsg 把内容编辑更新到会话的终端消息上（始终保持单屏），并带上会话键盘。
 func (b *Bot) updateShellMsg(chatID int64, s *shellSession, text string) {
 	b.editMessageKeyboard(chatID, s.resultMsgID, text, b.shellKb(s.id, s.name))
+}
+
+// updateShellMsgWithOutput 实时更新终端消息（用于 PTY 流式输出）
+func (b *Bot) updateShellMsgWithOutput(chatID int64, s *shellSession, cmd, output string, exitCode int) {
+	out := strings.TrimSpace(output)
+	if out == "" {
+		out = "(执行中...)"
+	}
+	if len(out) > 3500 {
+		out = out[:3500] + "\n...(输出过长已截断)"
+	}
+
+	dirLabel := s.workDir
+	if dirLabel == "" {
+		dirLabel = "~"
+	}
+
+	var body string
+	if exitCode >= 0 {
+		// 命令已完成
+		body = fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>（退出码 %d）\n<pre>%s</pre>",
+			escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), exitCode, escapeHTML(out))
+	} else {
+		// 命令执行中
+		body = fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>\n<pre>%s</pre>",
+			escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), escapeHTML(out))
+	}
+
+	b.updateShellMsg(chatID, s, body)
 }
 
 // finishShell 结束 Shell 会话：清除会话状态，并把终端消息恢复为容器管理面板菜单，

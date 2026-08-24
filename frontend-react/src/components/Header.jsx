@@ -9,7 +9,8 @@ import {
   Layers,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  FolderOpen
 } from 'lucide-react'
 import { ThemeToggle } from './ThemeToggle.jsx'
 import { UpdatePrompt } from './UpdatePrompt.jsx'
@@ -22,6 +23,7 @@ export const NAV_ITEMS = [
   { id: '#containers', label: '容器', icon: Server },
   { id: '#images', label: '镜像', icon: Box },
   { id: '#compose', label: '项目', icon: Layers },
+  { id: '#hostpath', label: '宿主机', icon: FolderOpen },
   { id: '#schedules', label: '定时', icon: Clock },
   { id: '#backups', label: '备份', icon: DatabaseBackup },
   { id: '#settings', label: '设置', icon: Settings },
@@ -33,7 +35,7 @@ export const MOBILE_NAV_ITEMS = [
   { id: '#containers', label: '容器', icon: Server },
   { id: '#images', label: '镜像', icon: Box },
   { id: '#compose', label: '项目', icon: Layers },
-  { id: '#schedules', label: '定时', icon: Clock },
+  { id: '#hostpath', label: '宿主机', icon: FolderOpen },
   { id: '#settings', label: '设置', icon: Settings },
 ]
 

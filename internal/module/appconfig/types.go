@@ -16,6 +16,8 @@ type AppConfig struct {
 	Telegram TelegramConfig `json:"telegram"`
 	// Compose 项目管理配置（前端可配置，优先级高于静态 yaml）。
 	Compose ComposeConfig `json:"compose"`
+	// HostPathMapper 宿主机路径映射配置，用于文件选择器。
+	HostPathMapper HostPathMapperConfig `json:"hostPathMapper"`
 }
 
 // ComposeConfig 是 Compose 项目管理的动态配置（持久化到 config.json，前端可编辑）。
@@ -99,6 +101,29 @@ type ScheduledUpdateRule struct {
 	LastRunAt  int64  `json:"lastRunAt,omitempty"`
 	LastResult string `json:"lastResult,omitempty"`
 }
+
+// HostPathMapperConfig 宿主机路径映射配置。
+type HostPathMapperConfig struct {
+	// Enabled 是否启用宿主机路径映射功能。
+	Enabled bool `json:"enabled"`
+	// Mappings 路径映射规则列表。
+	Mappings []PathMapping `json:"mappings"`
+}
+
+// PathMapping 单个路径映射规则。
+type PathMapping struct {
+	// ID 唯一标识。
+	ID string `json:"id"`
+	// ContainerPath 容器内路径（dockerCopilot 容器内的挂载点）。
+	ContainerPath string `json:"containerPath"`
+	// HostPath 宿主机真实路径。
+	HostPath string `json:"hostPath"`
+	// Description 说明/备注。
+	Description string `json:"description,omitempty"`
+	// ReadOnly 是否为只读映射。
+	ReadOnly bool `json:"readOnly"`
+}
+
 
 // TelegramConfig 机器人配置，Token 为敏感字段。
 type TelegramConfig struct {
