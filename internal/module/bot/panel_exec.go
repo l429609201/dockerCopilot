@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -206,90 +207,120 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	}
 	defer ptyShell.Close()
 
-	// 如果有工作目录，先 cd 过去
+	// 哨兵标记：命令执行完毕后由 shell 打印，格式为 <标记>|<退出码>|<新工作目录>。
+	// 读到该行即判定命令结束，避免"静默 N 秒才收尾"造成的固定延迟。
+	sentinel := fmt.Sprintf("__DC_END_%d__", time.Now().UnixNano())
+
+	// 组装一次性脚本：先 cd 到会话工作目录（连续性），执行用户命令，
+	// 再打印哨兵 + 退出码 + 当前目录。用 printf 保证哨兵独占一行。
+	var script strings.Builder
 	if s.workDir != "" && s.workDir != "." {
-		cdCmd := fmt.Sprintf("cd %s 2>/dev/null\n", shellQuote(s.workDir))
-		ptyShell.Write([]byte(cdCmd))
-		time.Sleep(100 * time.Millisecond) // 等待 cd 完成
+		script.WriteString(fmt.Sprintf("cd %s 2>/dev/null; ", shellQuote(s.workDir)))
 	}
+	script.WriteString(execCmd)
+	script.WriteString(fmt.Sprintf("; __ec=$?; printf '\\n%s|%%s|%%s\\n' \"$__ec\" \"$(pwd)\"\n", sentinel))
+	ptyShell.Write([]byte(script.String()))
 
-	// 发送用户命令
-	ptyShell.Write([]byte(execCmd + "\n"))
-
-	// 等待命令执行，收集输出（最多等待 120 秒）
-	time.Sleep(500 * time.Millisecond) // 初始等待，让命令开始执行
-
+	// 读取循环：读到哨兵即结束；期间每秒节流刷新（Telegram 编辑频率上限）。
 	startTime := time.Now()
 	timeout := 120 * time.Second
-	var lastOutput string
+	exitCode := -1
+	newDir := s.workDir
+	var lastShown string
 
 	for time.Since(startTime) < timeout {
-		output, err := ptyShell.ReadOutput(2 * time.Second)
+		_, err := ptyShell.ReadOutput(1 * time.Second)
 		if err != nil && err != io.EOF {
 			logx.Errorf("读取 PTY 输出错误: %v", err)
 		}
 
-		// 获取完整累积输出
-		fullOutput := ptyShell.GetFullOutput()
-		if fullOutput != lastOutput {
-			lastOutput = fullOutput
-			// 实时更新消息（限流：最多每 1 秒更新一次）
-			if time.Since(ptyShell.lastUpdate) > 1*time.Second {
-				b.updateShellMsgWithOutput(chatID, s, execCmd, fullOutput, 0)
-				ptyShell.lastUpdate = time.Now()
+		full := ptyShell.GetFullOutput()
+		// 检测哨兵行，命中则解析退出码/工作目录并结束
+		if ec, dir, body, ok := parseSentinel(full, sentinel); ok {
+			exitCode = ec
+			if dir != "" {
+				newDir = dir
 			}
+			// 命令结束：最后一帧刷出完整结果（不受节流限制）
+			full = strings.TrimSpace(body)
+			if full == "" {
+				full = "(无输出)"
+			}
+			cleaned := stripCmdEcho(full, execCmd)
+			s.workDir = strings.TrimSpace(newDir)
+			b.recordShellHistory(chatID, s, cmd)
+			b.updateShellMsgWithOutput(chatID, s, cmd, cleaned, exitCode)
+			return
 		}
 
-		// 检测命令是否完成（简单策略：如果 2 秒内无新输出，认为完成）
-		if output == "" && time.Since(ptyShell.lastUpdate) > 3*time.Second {
-			break
-		}
-	}
-
-	// 获取工作目录（发送 pwd 命令）
-	ptyShell.Write([]byte("pwd\n"))
-	time.Sleep(300 * time.Millisecond)
-	pwdOutput, _ := ptyShell.ReadOutput(1 * time.Second)
-
-	// 解析新的工作目录
-	newDir := s.workDir
-	lines := strings.Split(strings.TrimSpace(pwdOutput), "\n")
-	if len(lines) > 0 {
-		// pwd 输出的最后一行就是路径
-		lastLine := strings.TrimSpace(lines[len(lines)-1])
-		if strings.HasPrefix(lastLine, "/") {
-			newDir = lastLine
+		// 未结束：流式刷新（每秒最多一次）
+		shown := stripCmdEcho(strings.TrimSpace(full), execCmd)
+		if shown != lastShown && time.Since(ptyShell.lastUpdate) > 1*time.Second {
+			lastShown = shown
+			b.updateShellMsgWithOutput(chatID, s, cmd, shown, -1)
+			ptyShell.lastUpdate = time.Now()
 		}
 	}
 
-	if newDir != "" && newDir != "." {
-		s.workDir = newDir
+	// 超时兜底：未读到哨兵，展示已收集到的输出
+	s.workDir = strings.TrimSpace(newDir)
+	b.recordShellHistory(chatID, s, cmd)
+	out := strings.TrimSpace(stripCmdEcho(ptyShell.GetFullOutput(), execCmd))
+	if out == "" {
+		out = "(命令执行超时，无输出)"
 	}
+	b.updateShellMsgWithOutput(chatID, s, cmd, out+"\n...(执行超时)", -1)
+}
 
-	// 记录命令历史（最多保留 20 条）
+// parseSentinel 在完整输出里查找哨兵行 "<sentinel>|<退出码>|<工作目录>"。
+// 命中返回退出码、新工作目录，以及哨兵行之前的正文（供展示），ok=true。
+func parseSentinel(full, sentinel string) (exitCode int, dir string, body string, ok bool) {
+	idx := strings.Index(full, sentinel+"|")
+	if idx < 0 {
+		return 0, "", "", false
+	}
+	body = full[:idx]
+	rest := full[idx+len(sentinel)+1:] // 跳过 "sentinel|"
+	// rest 形如 "<退出码>|<目录>\n..."，按换行截首行再按 | 拆分
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	parts := strings.SplitN(rest, "|", 2)
+	exitCode = -1
+	if len(parts) >= 1 {
+		if ec, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil {
+			exitCode = ec
+		}
+	}
+	if len(parts) >= 2 {
+		dir = strings.TrimSpace(parts[1])
+	}
+	return exitCode, dir, body, true
+}
+
+// stripCmdEcho 去掉终端回显里混入的命令行本身与 shell 提示符行，
+// 让展示更接近"纯命令输出"。仅做保守清理，未识别的内容原样保留。
+func stripCmdEcho(output, execCmd string) string {
+	lines := strings.Split(output, "\n")
+	kept := lines[:0]
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		// 跳过与执行命令完全相同的回显行
+		if t == strings.TrimSpace(execCmd) {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// recordShellHistory 记录命令历史（最多保留 20 条）并持久化会话。
+func (b *Bot) recordShellHistory(chatID int64, s *shellSession, cmd string) {
 	s.history = append(s.history, cmd)
 	if len(s.history) > 20 {
 		s.history = s.history[len(s.history)-20:]
 	}
 	b.setShell(chatID, s)
-
-	// 最终输出处理
-	out := ptyShell.GetFullOutput()
-	out = strings.TrimSpace(out)
-	if out == "" {
-		out = "(无输出)"
-	}
-	if len(out) > 3500 {
-		out = out[:3500] + "\n...(输出过长已截断)"
-	}
-
-	dirLabel := s.workDir
-	if dirLabel == "" {
-		dirLabel = "~"
-	}
-	body := fmt.Sprintf("🖥 <b>%s</b>  <code>%s</code>\n<b>$</b> <code>%s</code>\n<pre>%s</pre>",
-		escapeHTML(s.name), escapeHTML(dirLabel), escapeHTML(cmd), escapeHTML(out))
-	b.updateShellMsg(chatID, s, body)
 }
 
 // updateShellMsg 把内容编辑更新到会话的终端消息上（始终保持单屏），并带上会话键盘。

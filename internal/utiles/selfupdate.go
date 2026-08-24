@@ -184,7 +184,14 @@ func SelfUpdate(ctx context.Context, svcCtx *svc.ServiceContext, id, name, image
 		return err
 	}
 
+	// 拉取过程中 decodePullResp 会直接改写 store 中的进度（含分层明细），
+	// 这里必须重新读回最新值，否则用陈旧的局部变量覆盖会抹掉分层数据并造成进度回跳。
+	if latest, ok := svcCtx.GetProgress(taskID); ok {
+		progress = latest
+	}
+
 	// 2) 用新镜像拉起辅助容器，由它接管停旧/建新/启动/删旧
+	// 60% 承接拉取阶段结束时的 30%，保证单调递增
 	progress.Percentage = 60
 	progress.Message = "镜像就绪，正在启动辅助容器接管更新"
 	progress.DetailMsg = "主程序即将被辅助容器重启，请稍候几秒后刷新页面"

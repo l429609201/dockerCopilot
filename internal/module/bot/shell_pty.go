@@ -35,8 +35,19 @@ type ptyShell struct {
 	cancel context.CancelFunc
 }
 
-// ansiStripper 简单的 ANSI 转义序列过滤正则
-var ansiStripper = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+// ANSI/终端控制序列过滤正则集合。
+// 之前仅用 \x1b\[[0-9;]*[a-zA-Z] 无法匹配含私有参数前缀(?、>、=)的 CSI 序列，
+// 导致 bracketed-paste 开关 \x1b[?2004h / \x1b[?2004l 等残留在输出里（显示为 [?2004h）。
+var (
+	// CSI 序列：ESC [ 后跟可选私有前缀(?<>=)、参数字节(0-9;:)、中间字节(空格~/)，以最终字节(@~)结束
+	ansiCSI = regexp.MustCompile("\x1b\\[[?>=]?[0-9;:]*[ -/]*[@-~]")
+	// OSC 序列：ESC ] ... 以 BEL(\a) 或 ESC \ (ST) 结束，用于设置窗口标题等
+	ansiOSC = regexp.MustCompile("\x1b\\][^\a\x1b]*(?:\a|\x1b\\\\)")
+	// 其它单字符 ESC 序列（如 ESC ( B 之类的字符集切换的残留 ESC）
+	ansiOther = regexp.MustCompile("\x1b[@-Z\\\\-_]")
+	// 孤立的控制字符（保留 \n \r \t，其余不可见控制符去除，避免终端脏字符）
+	ctrlChars = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+)
 
 // newPtyShell 创建一个新的 PTY Shell 会话
 func newPtyShell(svcCtx *svc.ServiceContext, containerID string, chatID, resultMsgID int64) *ptyShell {
@@ -149,9 +160,14 @@ func (p *ptyShell) GetFullOutput() string {
 	return p.stripANSI(p.buffer.String())
 }
 
-// stripANSI 移除 ANSI 转义序列
+// stripANSI 移除 ANSI/终端控制序列，按 CSI→OSC→其它 ESC→孤立控制符的顺序清理，
+// 保证 Telegram 里展示的终端输出干净（无 [?2004h 之类脏字符）。
 func (p *ptyShell) stripANSI(s string) string {
-	return ansiStripper.ReplaceAllString(s, "")
+	s = ansiCSI.ReplaceAllString(s, "")
+	s = ansiOSC.ReplaceAllString(s, "")
+	s = ansiOther.ReplaceAllString(s, "")
+	s = ctrlChars.ReplaceAllString(s, "")
+	return s
 }
 
 // Close 关闭 Shell 会话并清理资源。

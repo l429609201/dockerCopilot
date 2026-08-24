@@ -289,6 +289,68 @@ type layerState struct {
 	total   int64
 }
 
+// pullFraction 计算所有已知层的整体下载占比（0.0~1.0）。
+// 以字节为权重：已完成层按其 total 计满，未知 total 的已完成层用已见的平均层大小估算，
+// 避免因层的 total 尚未上报而导致占比抖动。总权重为 0 时返回 0。
+func pullFraction(m map[string]*layerState) float64 {
+	var totalBytes int64
+	var knownTotalCount int64
+	// 先求已知 total 的层的平均大小，供 total 未知的层估算权重
+	for _, st := range m {
+		if st.total > 0 {
+			totalBytes += st.total
+			knownTotalCount++
+		}
+	}
+	avg := int64(0)
+	if knownTotalCount > 0 {
+		avg = totalBytes / knownTotalCount
+	}
+	var weightSum, progressSum float64
+	for _, st := range m {
+		w := st.total
+		if w <= 0 {
+			w = avg // total 未知时用平均层大小兜底
+		}
+		if w <= 0 {
+			w = 1 // 仍未知（首个层尚无任何字节信息）时给最小权重
+		}
+		weightSum += float64(w)
+		if isLayerDone(st.status) {
+			progressSum += float64(w)
+		} else if st.total > 0 && st.current > 0 {
+			frac := float64(st.current) / float64(st.total)
+			if frac > 1 {
+				frac = 1
+			}
+			progressSum += float64(w) * frac
+		}
+	}
+	if weightSum <= 0 {
+		return 0
+	}
+	f := progressSum / weightSum
+	if f > 1 {
+		f = 1
+	}
+	return f
+}
+
+// clampMonotonic 将候选百分比钳制到 [lo, hi] 区间，并保证不低于当前值（单调不回退）。
+// 用于消除拉取阶段因层数/字节上报次序造成的进度回跳。
+func clampMonotonic(current, candidate, lo, hi int) int {
+	if candidate < lo {
+		candidate = lo
+	}
+	if candidate > hi {
+		candidate = hi
+	}
+	if candidate < current {
+		return current // 只增不减
+	}
+	return candidate
+}
+
 // isLayerDone 判断层状态是否已完成（用于主进度按完成层数换算）。
 func isLayerDone(status string) bool {
 	switch status {
@@ -404,14 +466,13 @@ func decodePullResp(taskCtx context.Context, reader io.Reader, svcCtx *svc.Servi
 					st.current = msg.Progress.Current
 					st.total = msg.Progress.Total
 				}
-				layers, doneCount, totalLayers := buildLayers(layerMap)
+				layers, _, _ := buildLayers(layerMap)
 				oldTaskProgress.Layers = layers
-				// 主进度：拉取阶段映射到 10~30% 区间，按完成层数/总层数驱动
-				if totalLayers > 0 {
-					oldTaskProgress.Percentage = 10 + doneCount*20/totalLayers
-				} else {
-					oldTaskProgress.Percentage = 10
-				}
+				// 主进度：拉取阶段映射到 10~30% 区间。
+				// 用「已下载字节/总字节」的整体占比驱动，而非「完成层数/总层数」——
+				// 后者因 Docker 逐层上报、总层数动态增大而导致分母突变、百分比回跳。
+				pulled := pullFraction(layerMap)
+				oldTaskProgress.Percentage = clampMonotonic(oldTaskProgress.Percentage, 10+int(pulled*20), 10, 30)
 			}
 			svcCtx.UpdateProgress(taskID, oldTaskProgress)
 			logx.Infof("拉取镜像进度\t %s: %s\n", msg.Status, msg.Progress)

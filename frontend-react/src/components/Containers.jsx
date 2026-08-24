@@ -553,16 +553,21 @@ export function Containers() {
         }
 
         // 更新容器操作状态，显示进度
-        setContainerActions(prev => ({
-          ...prev,
-          [containerId]: {
-            action: 'update',
-            loading: true,
-            progress: progressMsg,
-            detailMsg: detailMsg,
-            percentage: percentage
+        // 单调保护：轮询/推送可能乱序到达，未完成前进度只增不减，避免视觉回跳
+        setContainerActions(prev => {
+          const prevPct = prev[containerId]?.percentage || 0
+          const shownPct = percentage < prevPct ? prevPct : percentage
+          return {
+            ...prev,
+            [containerId]: {
+              action: 'update',
+              loading: true,
+              progress: progressMsg,
+              detailMsg: detailMsg,
+              percentage: shownPct
+            }
           }
-        }))
+        })
 
         // 继续轮询
         if (attempts < maxAttempts) {
