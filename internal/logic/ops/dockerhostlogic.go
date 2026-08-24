@@ -32,6 +32,16 @@ type hostView struct {
 	Note    string `json:"note,omitempty"`
 	Online  bool   `json:"online"` // 连通性探测结果
 	Local   bool   `json:"local"`  // 是否本地主机（前端据此禁用删除/改地址）
+	// Headers 自定义请求头，值已脱敏（前端仅用于展示 key 与"已设置"状态）。
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// maskHeaderValue 对请求头值脱敏：非空则统一显示为固定星号串，绝不回显明文凭据。
+func maskHeaderValue(v string) string {
+	if v == "" {
+		return ""
+	}
+	return "****"
 }
 
 // List 返回全部主机及其实时在线状态。
@@ -44,10 +54,19 @@ func (l *DockerHostLogic) List() (*types.Resp, error) {
 		if h.Enabled {
 			online = l.svcCtx.DockerManager.Ping(l.ctx, h.ID) == nil
 		}
+		// 脱敏请求头：只保留 key，值统一星号，避免回显凭据明文
+		var maskedHeaders map[string]string
+		if len(h.Headers) > 0 {
+			maskedHeaders = make(map[string]string, len(h.Headers))
+			for k, v := range h.Headers {
+				maskedHeaders[k] = maskHeaderValue(v)
+			}
+		}
 		views = append(views, hostView{
 			ID: h.ID, Name: h.Name, Type: h.Type, Address: h.Address,
 			Enabled: h.Enabled, Note: h.Note, Online: online,
-			Local: h.ID == appconfig.DockerHostLocalID,
+			Local:   h.ID == appconfig.DockerHostLocalID,
+			Headers: maskedHeaders,
 		})
 	}
 	return &types.Resp{Code: 200, Msg: "success", Data: views}, nil
@@ -92,6 +111,8 @@ func (l *DockerHostLogic) Save(req *types.DockerHostReq) (*types.Resp, error) {
 					cfg.DockerHosts[i].Address = addr
 					cfg.DockerHosts[i].Enabled = req.Enabled
 					cfg.DockerHosts[i].Note = req.Note
+					// 合并请求头：空值项保留原值（对应脱敏回显），显式提供的新值覆盖
+					cfg.DockerHosts[i].Headers = mergeHeaders(cfg.DockerHosts[i].Headers, req.Headers)
 					return nil
 				}
 			}
@@ -100,6 +121,8 @@ func (l *DockerHostLogic) Save(req *types.DockerHostReq) (*types.Resp, error) {
 		cfg.DockerHosts = append(cfg.DockerHosts, appconfig.DockerHost{
 			ID: newID, Name: req.Name, Type: appconfig.DockerHostTypeRemote,
 			Address: addr, Enabled: req.Enabled, Note: req.Note,
+			// 新建：过滤掉空值项
+			Headers: mergeHeaders(nil, req.Headers),
 		})
 		return nil
 	})
@@ -108,6 +131,33 @@ func (l *DockerHostLogic) Save(req *types.DockerHostReq) (*types.Resp, error) {
 	}
 	l.svcCtx.ReloadDockerHosts()
 	return &types.Resp{Code: 200, Msg: "success", Data: map[string]string{"id": newID}}, nil
+}
+
+// mergeHeaders 合并请求头：以 req 为准，但 req 中值为空字符串的项表示「保持原值」。
+// 语义：req 里出现的 key 才保留（未出现即视为用户删除）；值非空则覆盖，值为空则沿用 old 中该 key 的原值。
+// 用于配合脱敏回显——前端把未修改的头以空值提交，避免把 **** 写回成明文。
+func mergeHeaders(old, req map[string]string) map[string]string {
+	if len(req) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(req))
+	for k, v := range req {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		if v != "" {
+			out[k] = v
+			continue
+		}
+		// 空值：沿用原值（若原来就没有则丢弃该空头）
+		if ov, ok := old[k]; ok && ov != "" {
+			out[k] = ov
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // isValidRemoteAddress 校验远程连接地址，仅接受 tcp:// 前缀且含 host。

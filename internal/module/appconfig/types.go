@@ -40,6 +40,9 @@ type DockerHost struct {
 	Address string `json:"address"`        // 连接地址：本地 unix:///var/run/docker.sock；远程 tcp://ip:2375
 	Enabled bool   `json:"enabled"`        // 是否启用（禁用则不纳入聚合与操作）
 	Note    string `json:"note,omitempty"` // 备注
+	// Headers 远程连接附加的自定义 HTTP 请求头（如经反向代理/网关鉴权时的 Authorization、X-Api-Key）。
+	// 仅远程主机生效；值可能含敏感凭据，对外回显时需脱敏。
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // ComposeConfig 是 Compose 项目管理的动态配置（持久化到 config.json，前端可编辑）。

@@ -107,6 +107,8 @@ function hostQ(hostId, prefix = '?') {
 // 容器相关API（操作方法均支持可选 hostId，用于定位容器所属 Docker 主机）
 export const containerAPI = {
   getContainers: () => apiClient.get('/api/containers'),
+  // 从零创建新容器（任务化，返回 taskID 供轮询进度）。spec 见后端 CreateContainerReq。
+  createContainer: (spec) => apiClient.post('/api/container/create', spec),
   startContainer: (id, hostId) => apiClient.post(`/api/container/${id}/start${hostQ(hostId)}`),
   stopContainer: (id, hostId) => apiClient.post(`/api/container/${id}/stop${hostQ(hostId)}`),
   restartContainer: (id, hostId) => apiClient.post(`/api/container/${id}/restart${hostQ(hostId)}`),

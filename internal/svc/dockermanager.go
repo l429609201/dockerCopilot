@@ -40,11 +40,29 @@ func newClientForHost(h appconfig.DockerHost) (*client.Client, error) {
 		return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	}
 	// 远程：指定 tcp:// 地址并设置整体超时，避免不可达主机长时间阻塞
-	return client.NewClientWithOpts(
+	opts := []client.Opt{
 		client.WithHost(h.Address),
 		client.WithAPIVersionNegotiation(),
-		client.WithTimeout(10*time.Second),
-	)
+		client.WithTimeout(10 * time.Second),
+	}
+	// 附加自定义请求头（经反向代理/网关鉴权时携带 Authorization、X-Api-Key 等）
+	if len(h.Headers) > 0 {
+		opts = append(opts, client.WithHTTPHeaders(h.Headers))
+	}
+	return client.NewClientWithOpts(opts...)
+}
+
+// sameHeaders 判断两个请求头 map 是否完全相等，用于决定连接是否需要重建。
+func sameHeaders(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // Reload 按最新主机列表重建连接池：新增/变更的主机重建 client，移除的主机关闭 client。
@@ -59,8 +77,8 @@ func (m *DockerManager) Reload(hosts []appconfig.DockerHost) {
 		if !h.Enabled {
 			continue // 禁用主机不建连接
 		}
-		// 地址未变且已有连接则复用
-		if old, ok := m.hosts[h.ID]; ok && old.Address == h.Address && m.clients[h.ID] != nil {
+		// 地址与请求头均未变且已有连接则复用，否则重建
+		if old, ok := m.hosts[h.ID]; ok && old.Address == h.Address && sameHeaders(old.Headers, h.Headers) && m.clients[h.ID] != nil {
 			newClients[h.ID] = m.clients[h.ID]
 			continue
 		}

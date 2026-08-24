@@ -33,12 +33,9 @@ type mappingEntry struct {
 // Mount.Destination = 容器内路径，Mount.Source = 宿主机真实路径。
 // 推导失败（拿不到自身容器/无挂载）时返回错误，调用方据此提示用户改用自定义模式。
 func (l *HostPathMapperLogic) buildAutoMappings() ([]mappingEntry, error) {
-	selfID := utiles.GetSelfContainerID()
-	if selfID == "" {
-		return nil, fmt.Errorf("无法识别当前所在容器，自动推导不可用，请在「项目」页将映射模式切换为自定义并手动配置")
-	}
-
-	inspect, err := utiles.GetContainerInspect(l.svcCtx, selfID)
+	// 健壮定位自身容器：cgroup ID → hostname → 容器列表模糊匹配，
+	// 规避「cgroup 里的 ID 在当前 daemon inspect 不到（重建/嵌套导致 ID 失效）」的问题。
+	inspect, err := utiles.InspectSelfContainer(l.svcCtx)
 	if err != nil {
 		return nil, fmt.Errorf("读取自身容器挂载信息失败：%v，请改用自定义模式手动配置映射", err)
 	}

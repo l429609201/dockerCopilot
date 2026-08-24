@@ -2,9 +2,11 @@ package utiles
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/l429609201/dockerCopilot/internal/svc"
@@ -104,6 +106,45 @@ func IsSelfContainer(svcCtx *svc.ServiceContext, id string) bool {
 
 	logx.Infof("⚠️ 非自我更新: 目标=%s, 自身=%s", id, self)
 	return false
+}
+
+// InspectSelfContainer 健壮地获取当前程序所在容器的 inspect 信息。
+// 依次尝试：cgroup/mountinfo 得到的 ID → hostname → 遍历本地容器列表按 ID 前缀或 hostname 匹配。
+// 解决「cgroup 里的 ID 在当前 daemon inspect 不到（嵌套/重建导致 ID 失效）」的问题。
+func InspectSelfContainer(svcCtx *svc.ServiceContext) (types.ContainerJSON, error) {
+	cli := svcCtx.DockerClient
+	// 候选标识：cgroup/mountinfo 提取的 ID 与 hostname
+	var candidates []string
+	if selfID := GetSelfContainerID(); selfID != "" {
+		candidates = append(candidates, selfID)
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		candidates = append(candidates, h)
+	}
+	// 逐个直接 inspect
+	for _, c := range candidates {
+		if insp, err := cli.ContainerInspect(context.Background(), c); err == nil {
+			return insp, nil
+		}
+	}
+	// 兜底：遍历本地容器列表，按 ID 前缀或 hostname 匹配后再 inspect
+	list, err := cli.ContainerList(context.Background(), container.ListOptions{All: true})
+	if err == nil {
+		for _, cand := range candidates {
+			for _, item := range list {
+				short := item.ID
+				if len(short) >= 12 {
+					short = short[:12]
+				}
+				if strings.HasPrefix(item.ID, cand) || strings.HasPrefix(cand, short) {
+					if insp, e := cli.ContainerInspect(context.Background(), item.ID); e == nil {
+						return insp, nil
+					}
+				}
+			}
+		}
+	}
+	return types.ContainerJSON{}, fmt.Errorf("无法定位当前所在容器（尝试的标识：%v）", candidates)
 }
 
 // StartHelperContainer 用新镜像启动一个一次性辅助容器，接管主容器的更新收尾。

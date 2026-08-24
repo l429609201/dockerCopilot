@@ -18,7 +18,8 @@ import {
   TerminalSquare,
   FolderOpen,
   Pencil,
-  Network
+  Network,
+  Plus
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -35,6 +36,7 @@ import { ContainerProcessModal } from './ContainerProcessModal.jsx'
 import { ContainerStats } from './ContainerStats.jsx'
 import { StatsChart } from './StatsChart.jsx'
 import { FileManager } from './FileManager.jsx'
+import { CreateContainerModal } from './CreateContainerModal.jsx'
 import { IconEditor } from './IconEditor.jsx'
 import { ContainerLogs, ContainerConsole } from './ContainerOps.jsx'
 
@@ -47,6 +49,8 @@ export function Containers() {
   const [consoleTarget, setConsoleTarget] = useState(null)
   // 文件管理弹窗目标容器
   const [fileTarget, setFileTarget] = useState(null)
+  // 创建容器弹窗显示状态
+  const [showCreate, setShowCreate] = useState(false)
   // 添加批量操作相关的状态
   const [selectedContainers, setSelectedContainers] = useState([])
   const [isBatchMode, setIsBatchMode] = useState(false)
@@ -734,6 +738,14 @@ export function Containers() {
         {!isBatchMode ? (
           <div className="flex items-center space-x-3">
             <button
+              className="btn-primary"
+              onClick={() => setShowCreate(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              创建容器
+            </button>
+
+            <button
               className="btn-secondary"
               onClick={() => setIsBatchMode(true)}
             >
@@ -741,7 +753,7 @@ export function Containers() {
             </button>
 
             <button
-              className="btn-primary"
+              className="btn-secondary"
               onClick={() => refetch()}
             >
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -1323,6 +1335,17 @@ export function Containers() {
         <FileManager
           container={fileTarget}
           onClose={() => setFileTarget(null)}
+        />
+      )}
+
+      {/* 创建容器弹窗：创建成功后刷新列表 */}
+      {showCreate && (
+        <CreateContainerModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            // 创建任务已提交，稍后刷新列表查看新容器
+            setTimeout(() => refetch(), 1500)
+          }}
         />
       )}
 

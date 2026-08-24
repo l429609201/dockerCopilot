@@ -159,15 +159,33 @@ function HostEditModal({ host, onClose, onSaved }) {
   const [address, setAddress] = useState(host.address || 'tcp://')
   const [enabled, setEnabled] = useState(host.enabled !== false)
   const [note, setNote] = useState(host.note || '')
+  // 自定义请求头：转成 [{key,value,dirty}] 行编辑。后端回显的 value 是脱敏串，
+  // 保留原值时提交空串（dirty=false 表示未改动）。
+  const [headers, setHeaders] = useState(() =>
+    Object.entries(host.headers || {}).map(([key]) => ({ key, value: '', dirty: false, existed: true }))
+  )
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+
+  const setHeaderField = (i, field, val) => {
+    setHeaders((rows) => rows.map((r, idx) => idx === i ? { ...r, [field]: val, dirty: field === 'value' ? true : r.dirty } : r))
+  }
+  const addHeader = () => setHeaders((rows) => [...rows, { key: '', value: '', dirty: true, existed: false }])
+  const removeHeader = (i) => setHeaders((rows) => rows.filter((_, idx) => idx !== i))
 
   const save = async () => {
     if (!name.trim()) { setMsg('名称不能为空'); return }
     if (!isLocal && !/^tcp:\/\/.+/.test(address.trim())) { setMsg('远程地址需形如 tcp://ip:2375'); return }
+    // 组装 headers：未改动的已存在项提交空值（后端保留原值）；新增/改动项提交实际值
+    const headerMap = {}
+    for (const h of headers) {
+      const k = h.key.trim()
+      if (!k) continue
+      headerMap[k] = h.dirty ? h.value : ''
+    }
     setSaving(true); setMsg(null)
     try {
-      const resp = await dockerHostAPI.save({ id: host.id || '', name: name.trim(), address: address.trim(), enabled, note })
+      const resp = await dockerHostAPI.save({ id: host.id || '', name: name.trim(), address: address.trim(), enabled, note, headers: headerMap })
       if (resp.data.code === 200) { await onSaved() }
       else { setMsg(resp.data.msg || '保存失败') }
     } catch (err) { setMsg(err.message || '保存失败') }
@@ -200,6 +218,37 @@ function HostEditModal({ host, onClose, onSaved }) {
             <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> 启用该主机
             </label>
+          )}
+          {/* 自定义请求头：仅远程主机，用于经反向代理/网关鉴权的场景 */}
+          {!isLocal && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm text-gray-600 dark:text-gray-300">自定义请求头</label>
+                <button type="button" onClick={addHeader}
+                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
+                  <Plus className="h-3 w-3" /> 添加
+                </button>
+              </div>
+              {headers.length === 0 && (
+                <p className="text-xs text-gray-400">用于经反向代理/网关鉴权的 Docker API（如 Authorization、X-Api-Key）</p>
+              )}
+              <div className="space-y-2">
+                {headers.map((h, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={h.key} onChange={(e) => setHeaderField(i, 'key', e.target.value)}
+                      placeholder="Header 名，如 Authorization"
+                      className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm font-mono" />
+                    <input value={h.value} onChange={(e) => setHeaderField(i, 'value', e.target.value)}
+                      placeholder={h.existed && !h.dirty ? '（已设置，留空不改）' : 'Header 值'}
+                      className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm font-mono" />
+                    <button type="button" onClick={() => removeHeader(i)}
+                      className="rounded-lg border border-red-200 dark:border-red-900/40 p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
           <div>
             <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">备注</label>

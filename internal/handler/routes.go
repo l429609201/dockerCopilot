@@ -385,6 +385,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 	server.AddRoutes(
 		[]rest.Route{
 			{
+				// 从零创建新容器（镜像/端口/环境变量/卷/网络/重启策略），支持多 Docker 主机
+				Method:  http.MethodPost,
+				Path:    "/container/create",
+				Handler: ops.CreateContainerHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodPost,
 				Path:    "/container/:id/pause",
 				Handler: ops.PauseHandler(serverCtx),
