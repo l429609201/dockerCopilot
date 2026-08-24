@@ -2,8 +2,6 @@ package bot
 
 import (
 	"fmt"
-	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -170,10 +168,11 @@ func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 	}
 }
 
-// runShellCommand 在 Shell 会话中执行一条命令，并保持工作目录连续。
+// runShellCommand 在容器内执行一条命令，并保持工作目录连续。
+// 采用「一条命令 = 一次非 TTY exec」模型：非 TTY 不回显命令、无提示符、无 ANSI 控制序列，
+// 命令结束时输出流自然 EOF 即判定完成，无需静默超时；退出码由 exec inspect 精确获取。
+// cd 连续性：sh -c 里先 cd 到会话记录的目录再执行，末尾追加哨兵行携带新工作目录。
 // 单屏终端形态：先删除用户的命令消息，执行后把结果编辑更新到常驻的"终端消息"上。
-// cd 连续性：sh -c 里先 cd 到会话记录的目录再执行命令，末尾打印哨兵+pwd，
-// 从输出里解析出执行后的工作目录并回写。
 func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgID int64) {
 	// 立即删除用户发送的命令消息，保持"单屏"干净
 	b.deleteMsg(chatID, cmdMsgID)
@@ -186,132 +185,96 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 		execCmd = strings.Replace(cmd, "ls", "ls -C", 1)
 	}
 
-	// 创建 PTY Shell 会话
-	ptyShell := newPtyShell(b.svcCtx, s.id, chatID, s.resultMsgID)
+	// 哨兵标记：命令执行完毕后由 shell 打印，格式为 <标记>|<新工作目录>。
+	// 非 TTY 下脚本本身不会被回显，哨兵只出现在真实输出末尾，可安全解析后剥离。
+	sentinel := fmt.Sprintf("__DC_END_%d__", time.Now().UnixNano())
 
-	// 尝试多个 shell，按优先级：bash > sh > ash
-	shells := []string{"/bin/bash", "/bin/sh", "/bin/ash"}
+	// 组装一次性脚本：先 cd 到会话工作目录（连续性），执行用户命令，
+	// 再打印哨兵 + 当前目录。退出码由 ContainerExecInspect 获取，无需脚本携带。
+	var script strings.Builder
+	if s.workDir != "" && s.workDir != "." {
+		script.WriteString(fmt.Sprintf("cd %s 2>/dev/null; ", shellQuote(s.workDir)))
+	}
+	script.WriteString(execCmd)
+	script.WriteString(fmt.Sprintf("; printf '\\n%s|%%s\\n' \"$(pwd)\"", sentinel))
+
+	// 创建非 TTY exec，按优先级尝试可用 shell：bash > sh > ash
+	ptyShell := newPtyShell(b.svcCtx, s.id, chatID, s.resultMsgID)
 	var startErr error
-	for _, shell := range shells {
-		if err := ptyShell.Start(shell); err == nil {
-			startErr = nil
+	for _, sh := range []string{"/bin/bash", "/bin/sh", "/bin/ash"} {
+		startErr = ptyShell.Start([]string{sh, "-c", script.String()})
+		if startErr == nil {
 			break
-		} else {
-			startErr = err
 		}
 	}
-
 	if startErr != nil {
 		b.updateShellMsg(chatID, s, fmt.Sprintf("❌ 启动终端失败：%s", escapeHTML(startErr.Error())))
 		return
 	}
 	defer ptyShell.Close()
 
-	// 哨兵标记：命令执行完毕后由 shell 打印，格式为 <标记>|<退出码>|<新工作目录>。
-	// 读到该行即判定命令结束，避免"静默 N 秒才收尾"造成的固定延迟。
-	sentinel := fmt.Sprintf("__DC_END_%d__", time.Now().UnixNano())
+	// 后台解复用输出流，done 关闭即表示命令执行结束（流 EOF）
+	done := ptyShell.StartPump()
 
-	// 组装一次性脚本：先 cd 到会话工作目录（连续性），执行用户命令，
-	// 再打印哨兵 + 退出码 + 当前目录。用 printf 保证哨兵独占一行。
-	var script strings.Builder
-	if s.workDir != "" && s.workDir != "." {
-		script.WriteString(fmt.Sprintf("cd %s 2>/dev/null; ", shellQuote(s.workDir)))
-	}
-	script.WriteString(execCmd)
-	script.WriteString(fmt.Sprintf("; __ec=$?; printf '\\n%s|%%s|%%s\\n' \"$__ec\" \"$(pwd)\"\n", sentinel))
-	ptyShell.Write([]byte(script.String()))
-
-	// 读取循环：读到哨兵即结束；期间每秒节流刷新（Telegram 编辑频率上限）。
-	startTime := time.Now()
-	timeout := 120 * time.Second
-	exitCode := -1
-	newDir := s.workDir
+	// 流式刷新：每秒最多一次编辑消息（Telegram 频率限制），直到 EOF 或超时
+	timeout := time.After(120 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	var lastShown string
+	timedOut := false
 
-	for time.Since(startTime) < timeout {
-		_, err := ptyShell.ReadOutput(1 * time.Second)
-		if err != nil && err != io.EOF {
-			logx.Errorf("读取 PTY 输出错误: %v", err)
-		}
-
-		full := ptyShell.GetFullOutput()
-		// 检测哨兵行，命中则解析退出码/工作目录并结束
-		if ec, dir, body, ok := parseSentinel(full, sentinel); ok {
-			exitCode = ec
-			if dir != "" {
-				newDir = dir
+loop:
+	for {
+		select {
+		case <-done:
+			break loop
+		case <-timeout:
+			timedOut = true
+			break loop
+		case <-ticker.C:
+			body, _ := splitSentinel(ptyShell.GetFullOutput(), sentinel)
+			shown := strings.TrimSpace(body)
+			if shown != "" && shown != lastShown {
+				lastShown = shown
+				b.updateShellMsgWithOutput(chatID, s, cmd, shown, -1)
 			}
-			// 命令结束：最后一帧刷出完整结果（不受节流限制）
-			full = strings.TrimSpace(body)
-			if full == "" {
-				full = "(无输出)"
-			}
-			cleaned := stripCmdEcho(full, execCmd)
-			s.workDir = strings.TrimSpace(newDir)
-			b.recordShellHistory(chatID, s, cmd)
-			b.updateShellMsgWithOutput(chatID, s, cmd, cleaned, exitCode)
-			return
-		}
-
-		// 未结束：流式刷新（每秒最多一次）
-		shown := stripCmdEcho(strings.TrimSpace(full), execCmd)
-		if shown != lastShown && time.Since(ptyShell.lastUpdate) > 1*time.Second {
-			lastShown = shown
-			b.updateShellMsgWithOutput(chatID, s, cmd, shown, -1)
-			ptyShell.lastUpdate = time.Now()
 		}
 	}
 
-	// 超时兜底：未读到哨兵，展示已收集到的输出
-	s.workDir = strings.TrimSpace(newDir)
+	// 收尾：剥离哨兵行，取出正文与新工作目录
+	body, newDir := splitSentinel(ptyShell.GetFullOutput(), sentinel)
+	if newDir != "" {
+		s.workDir = newDir
+	}
 	b.recordShellHistory(chatID, s, cmd)
-	out := strings.TrimSpace(stripCmdEcho(ptyShell.GetFullOutput(), execCmd))
-	if out == "" {
-		out = "(命令执行超时，无输出)"
+
+	out := strings.TrimSpace(body)
+	if timedOut {
+		if out == "" {
+			out = "(命令执行超时，无输出)"
+		}
+		b.updateShellMsgWithOutput(chatID, s, cmd, out+"\n...(执行超时)", -1)
+		return
 	}
-	b.updateShellMsgWithOutput(chatID, s, cmd, out+"\n...(执行超时)", -1)
+	if out == "" {
+		out = "(无输出)"
+	}
+	b.updateShellMsgWithOutput(chatID, s, cmd, out, ptyShell.ExitCode())
 }
 
-// parseSentinel 在完整输出里查找哨兵行 "<sentinel>|<退出码>|<工作目录>"。
-// 命中返回退出码、新工作目录，以及哨兵行之前的正文（供展示），ok=true。
-func parseSentinel(full, sentinel string) (exitCode int, dir string, body string, ok bool) {
+// splitSentinel 从输出里剥离末尾的哨兵行 "<sentinel>|<工作目录>"。
+// 返回哨兵之前的正文，以及解析出的新工作目录（未出现哨兵时目录为空、正文原样返回）。
+func splitSentinel(full, sentinel string) (body, dir string) {
 	idx := strings.Index(full, sentinel+"|")
 	if idx < 0 {
-		return 0, "", "", false
+		return full, ""
 	}
 	body = full[:idx]
 	rest := full[idx+len(sentinel)+1:] // 跳过 "sentinel|"
-	// rest 形如 "<退出码>|<目录>\n..."，按换行截首行再按 | 拆分
 	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
 		rest = rest[:nl]
 	}
-	parts := strings.SplitN(rest, "|", 2)
-	exitCode = -1
-	if len(parts) >= 1 {
-		if ec, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil {
-			exitCode = ec
-		}
-	}
-	if len(parts) >= 2 {
-		dir = strings.TrimSpace(parts[1])
-	}
-	return exitCode, dir, body, true
-}
-
-// stripCmdEcho 去掉终端回显里混入的命令行本身与 shell 提示符行，
-// 让展示更接近"纯命令输出"。仅做保守清理，未识别的内容原样保留。
-func stripCmdEcho(output, execCmd string) string {
-	lines := strings.Split(output, "\n")
-	kept := lines[:0]
-	for _, ln := range lines {
-		t := strings.TrimSpace(ln)
-		// 跳过与执行命令完全相同的回显行
-		if t == strings.TrimSpace(execCmd) {
-			continue
-		}
-		kept = append(kept, ln)
-	}
-	return strings.Join(kept, "\n")
+	return body, strings.TrimSpace(rest)
 }
 
 // recordShellHistory 记录命令历史（最多保留 20 条）并持久化会话。
