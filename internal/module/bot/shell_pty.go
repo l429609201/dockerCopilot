@@ -5,27 +5,27 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"regexp"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
+	dockertypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// ptyShell 管理一个基于 PTY 的交互式 Shell 会话
+// ptyShell 管理一个基于 Docker API exec 的交互式 Shell 会话。
+// 通过 ContainerExecAttach(Tty=true) 直连容器，无需宿主机安装 docker CLI。
 type ptyShell struct {
 	svcCtx      *svc.ServiceContext
 	containerID string
 	chatID      int64
 	resultMsgID int64
 
-	cmd   *exec.Cmd
-	ptmx  *os.File // PTY master 文件描述符
-	mutex sync.Mutex
+	execID string                      // Docker exec 实例 ID（用于 resize）
+	hijack dockertypes.HijackedResponse // 双向流：Reader 读输出，Conn 写输入
+	mutex  sync.Mutex
 
 	buffer      bytes.Buffer // 累积输出缓冲
 	lastUpdate  time.Time    // 上次更新消息的时间
@@ -52,42 +52,53 @@ func newPtyShell(svcCtx *svc.ServiceContext, containerID string, chatID, resultM
 	}
 }
 
-// Start 启动 PTY Shell 会话
+// Start 启动 Shell 会话：通过 Docker API 在目标容器内创建 TTY exec 并挂载双向流。
+// 不依赖宿主机的 docker CLI，避免容器内 $PATH 无 docker 导致启动失败。
 func (p *ptyShell) Start(shell string) error {
-	// 构建 docker exec 命令，使用 -it 启用 PTY
-	p.cmd = exec.CommandContext(p.ctx, "docker", "exec", "-it", p.containerID, shell)
-
-	// 启动带 PTY 的命令
-	ptmx, err := pty.Start(p.cmd)
+	execResp, err := p.svcCtx.DockerClient.ContainerExecCreate(p.ctx, p.containerID, container.ExecOptions{
+		Cmd:          []string{shell},
+		Tty:          true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
 	if err != nil {
-		return fmt.Errorf("启动 PTY 失败: %w", err)
+		return fmt.Errorf("创建 exec 失败: %w", err)
 	}
-	p.ptmx = ptmx
+	p.execID = execResp.ID
 
-	// 设置终端尺寸（80列 x 24行，标准终端尺寸）
-	if err := pty.Setsize(p.ptmx, &pty.Winsize{
-		Rows: 24,
-		Cols: 80,
+	hijack, err := p.svcCtx.DockerClient.ContainerExecAttach(p.ctx, execResp.ID, container.ExecStartOptions{
+		Tty: true,
+	})
+	if err != nil {
+		return fmt.Errorf("挂载 exec 流失败: %w", err)
+	}
+	p.hijack = hijack
+
+	// 设置终端尺寸（80列 x 24行，标准终端尺寸），失败不影响会话可用性
+	if err := p.svcCtx.DockerClient.ContainerExecResize(p.ctx, execResp.ID, container.ResizeOptions{
+		Height: 24,
+		Width:  80,
 	}); err != nil {
-		logx.Errorf("设置 PTY 尺寸失败: %v", err)
+		logx.Errorf("设置 exec 终端尺寸失败: %v", err)
 	}
 
 	return nil
 }
 
-// Write 向 PTY 写入数据（发送命令）
+// Write 向容器 Shell 写入数据（发送命令）
 func (p *ptyShell) Write(data []byte) (int, error) {
-	if p.ptmx == nil {
-		return 0, fmt.Errorf("PTY 未初始化")
+	if p.hijack.Conn == nil {
+		return 0, fmt.Errorf("Shell 会话未初始化")
 	}
-	return p.ptmx.Write(data)
+	return p.hijack.Conn.Write(data)
 }
 
 // ReadOutput 读取 PTY 输出并累积到缓冲区
 // 返回自上次读取后的新增内容
 func (p *ptyShell) ReadOutput(timeout time.Duration) (string, error) {
-	if p.ptmx == nil {
-		return "", fmt.Errorf("PTY 未初始化")
+	if p.hijack.Reader == nil {
+		return "", fmt.Errorf("Shell 会话未初始化")
 	}
 
 	// 使用带超时的读取
@@ -105,7 +116,7 @@ func (p *ptyShell) ReadOutput(timeout time.Duration) (string, error) {
 			case <-readCtx.Done():
 				return
 			default:
-				n, err := p.ptmx.Read(buf)
+				n, err := p.hijack.Reader.Read(buf)
 				if n > 0 {
 					p.mutex.Lock()
 					p.buffer.Write(buf[:n])
@@ -143,25 +154,13 @@ func (p *ptyShell) stripANSI(s string) string {
 	return ansiStripper.ReplaceAllString(s, "")
 }
 
-// Close 关闭 PTY 会话并清理资源
+// Close 关闭 Shell 会话并清理资源。
+// exec 进程随连接关闭由 Docker 守护进程回收，无需额外 kill。
 func (p *ptyShell) Close() error {
-	p.cancel() // 取消上下文
+	p.cancel() // 取消上下文，停止读取 goroutine
 
-	var errs []error
-	if p.ptmx != nil {
-		if err := p.ptmx.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("关闭 PTY: %w", err))
-		}
-	}
-
-	if p.cmd != nil && p.cmd.Process != nil {
-		if err := p.cmd.Process.Kill(); err != nil {
-			errs = append(errs, fmt.Errorf("终止进程: %w", err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("关闭错误: %v", errs)
+	if p.hijack.Conn != nil {
+		p.hijack.Close()
 	}
 	return nil
 }
