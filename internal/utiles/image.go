@@ -17,8 +17,12 @@ func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 }
 
 // GetImagesListFromHost 获取指定 Docker 主机的镜像列表。hostID 为空取本地主机。
+// 返回的每条镜像都会标记其所属主机的 HostID / HostName，便于前端展示与操作路由。
 func GetImagesListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.Image, error) {
 	var imagesList []MyType.Image
+	if hostID == "" {
+		hostID = appconfig.DockerHostLocalID
+	}
 	cli, ok := ctx.DockerManager.GetClient(hostID)
 	if !ok || cli == nil {
 		return imagesList, fmt.Errorf("docker 主机 %s 无可用连接", hostID)
@@ -30,6 +34,12 @@ func GetImagesListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.Ima
 		return imagesList, err
 	}
 
+	// 解析主机展示名，找不到回退主机ID
+	hostName := hostID
+	if h, ok := ctx.AppConfig.FindDockerHost(hostID); ok && h.Name != "" {
+		hostName = h.Name
+	}
+
 	for _, img := range dockerImages {
 		i := MyType.Image{
 			Summary:    img,
@@ -37,11 +47,13 @@ func GetImagesListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.Ima
 			ImageTag:   "",
 			InUsed:     false,
 			SizeFormat: "",
+			HostID:     hostID,
+			HostName:   hostName,
 		}
 		imagesList = append(imagesList, i)
 	}
 	//看不明白就不要看了，这内存反复地申请，如果你看明白了 给这改成指针吧，啥？我为啥不直接写指针，我懒癌犯了就这样，欢迎pr
-	imagesList, err = checkImageInUsed(ctx, splitImageNameAndTag(calculateImageSize(imagesList)))
+	imagesList, err = checkImageInUsedOnHost(ctx, hostID, splitImageNameAndTag(calculateImageSize(imagesList)))
 	if err != nil {
 		return imagesList, err
 	}
@@ -77,6 +89,28 @@ func GetAllImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 	return all, nil
 }
 
+// GetAllImagesListPerHost 聚合所有已启用 Docker 主机的镜像列表，**不去重**。
+// 与 GetAllImagesList 的区别：同一镜像在多个主机上会各自列出一条（均带 HostID/HostName），
+// 用于镜像管理页真实反映各主机的镜像占用与删除路由。
+// 单个主机不可达仅记录日志并跳过，不影响其它主机。
+func GetAllImagesListPerHost(ctx *svc.ServiceContext) ([]MyType.Image, error) {
+	ctx.AppConfig.EnsureLocalHost()
+	hosts := ctx.AppConfig.ListDockerHosts()
+	var all []MyType.Image
+	for _, h := range hosts {
+		if !h.Enabled {
+			continue
+		}
+		list, err := GetImagesListFromHost(ctx, h.ID)
+		if err != nil {
+			logx.Errorf("按主机聚合镜像列表跳过主机[%s:%s]: %v", h.ID, h.Name, err)
+			continue
+		}
+		all = append(all, list...)
+	}
+	return all, nil
+}
+
 func splitImageNameAndTag(imagesList []MyType.Image) []MyType.Image {
 	for i, imageInfo := range imagesList {
 		if len(imageInfo.RepoTags) != 0 {
@@ -93,7 +127,12 @@ func splitImageNameAndTag(imagesList []MyType.Image) []MyType.Image {
 	return imagesList
 }
 func checkImageInUsed(svc *svc.ServiceContext, imageList []MyType.Image) ([]MyType.Image, error) {
-	list, err := GetContainerList(svc)
+	return checkImageInUsedOnHost(svc, appconfig.DockerHostLocalID, imageList)
+}
+
+// checkImageInUsedOnHost 用指定主机的容器列表判断镜像是否在用，避免跨主机误判 InUsed。
+func checkImageInUsedOnHost(svc *svc.ServiceContext, hostID string, imageList []MyType.Image) ([]MyType.Image, error) {
+	list, err := GetContainerListFromHost(svc, hostID)
 	if err != nil {
 		return imageList, err
 	}

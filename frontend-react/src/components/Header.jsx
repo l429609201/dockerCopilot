@@ -35,6 +35,7 @@ export const MOBILE_NAV_ITEMS = [
   { id: '#containers', label: '容器', icon: Server },
   { id: '#images', label: '镜像', icon: Box },
   { id: '#compose', label: '项目', icon: Layers },
+  { id: '#schedules', label: '定时', icon: Clock },
   { id: '#settings', label: '设置', icon: Settings },
 ]
 
@@ -408,12 +409,12 @@ export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) 
     <>
       {windowWidth < 768 && (
         <nav 
-          className="fixed left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full z-40 shadow-lg transition-all duration-300" 
+          className="fixed left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full z-40 shadow-lg transition-all duration-300"
           style={{ 
             bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)'
           }}
         >
-          <div className="flex items-center justify-around px-3 py-3 gap-1">
+          <div className="flex items-center justify-around px-2 py-3 gap-0.5">
             {navItems.map((item) => {
               const Icon = item.icon
               const isActive = activeTab === item.id
@@ -422,7 +423,7 @@ export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) 
                   key={item.id}
                   onClick={() => onTabChange(item.id)}
                   className={cn(
-                    "flex flex-col items-center justify-center gap-1 py-2 px-2.5 rounded-full transition-all duration-200 active:scale-95 flex-1",
+                    "flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-full transition-all duration-200 active:scale-95 flex-1 min-w-0",
                     isActive
                       ? "text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-900/40"
                       : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"

@@ -1280,21 +1280,30 @@ export function Containers() {
                             )}
                           </div>
 
-                          {/* 端口映射标签：宿主机端口:容器端口/协议，最多展示 3 条，多余折叠 */}
-                          {Array.isArray(container.portMappings) && container.portMappings.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                              {container.portMappings.slice(0, 3).map((m) => (
-                                <span key={m} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 text-[10px] font-mono">
-                                  {m}
-                                </span>
-                              ))}
-                              {container.portMappings.length > 3 && (
-                                <span className="text-[10px] text-gray-400" title={container.portMappings.join('\n')}>
-                                  +{container.portMappings.length - 3}
-                                </span>
-                              )}
-                            </div>
-                          )}
+                          {/* 端口映射标签行：始终渲染以保证卡片等高。
+                              有映射时展示端口标签（最多 3 条，多余折叠）；
+                              无映射（host 网络或未映射端口）时用等高的占位提示，避免卡片高度参差。 */}
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5 min-h-[1.25rem]">
+                            {Array.isArray(container.portMappings) && container.portMappings.length > 0 ? (
+                              <>
+                                {container.portMappings.slice(0, 3).map((m) => (
+                                  <span key={m} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 text-[10px] font-mono">
+                                    {m}
+                                  </span>
+                                ))}
+                                {container.portMappings.length > 3 && (
+                                  <span className="text-[10px] text-gray-400" title={container.portMappings.join('\n')}>
+                                    +{container.portMappings.length - 3}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              // 占位：host 网络模式显示提示，其它无映射情况显示占位符，保持与端口标签同等高度
+                              <span className="inline-flex items-center rounded bg-gray-100 dark:bg-gray-700/40 text-gray-400 dark:text-gray-500 px-1.5 py-0.5 text-[10px] font-mono">
+                                {String(container.networkMode).toLowerCase() === 'host' ? 'host 网络' : '无端口映射'}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 

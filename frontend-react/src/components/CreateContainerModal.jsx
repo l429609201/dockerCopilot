@@ -7,7 +7,7 @@ import { ComposeDeployTab } from './ComposeDeployTab.jsx'
 // 创建容器弹窗：仅提供两种业界标准方式——Docker Run 命令 / Docker Compose (YAML)。
 // 支持引入宿主机路径（仅本机 Docker 生效）。提交后返回 taskID 供外层轮询进度。
 export function CreateContainerModal({ onClose, onCreated }) {
-  const [activeTab, setActiveTab] = useState('run') // run | compose
+  const [activeTab, setActiveTab] = useState('compose') // compose | run，默认 Compose
   const [hosts, setHosts] = useState([])
 
   // 加载可用 Docker 主机（用于 Run 页签的目标主机下拉）
@@ -20,8 +20,8 @@ export function CreateContainerModal({ onClose, onCreated }) {
   }, [])
 
   const tabs = [
-    { id: 'run', label: 'Docker Run Command', icon: Terminal },
     { id: 'compose', label: 'Docker Compose (YAML)', icon: FileCode },
+    { id: 'run', label: 'Docker Run Command', icon: Terminal },
   ]
 
   return (

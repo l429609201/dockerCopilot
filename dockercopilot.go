@@ -113,7 +113,8 @@ export const customImageLogos = {
 				logx.Errorf("首轮镜像更新检查发生 panic 已恢复: %v", r)
 			}
 		}()
-		list, err := utiles.GetImagesList(ctx)
+		// 聚合所有已启用主机的镜像（按ID去重），使远程主机容器也能正确显示"可更新"
+		list, err := utiles.GetAllImagesList(ctx)
 		if err != nil {
 			// 获取失败仅记录日志，不清空已有结果、不退出进程
 			logx.Errorf("首轮获取镜像列表出错: %v", err)
@@ -131,7 +132,8 @@ export const customImageLogos = {
 				logx.Errorf("定时镜像更新检查发生 panic 已恢复: %v", r)
 			}
 		}()
-		list, err := utiles.GetImagesList(ctx)
+		// 聚合所有已启用主机的镜像（按ID去重），使远程主机容器也能正确显示"可更新"
+		list, err := utiles.GetAllImagesList(ctx)
 		if err != nil {
 			logx.Errorf("定时获取镜像列表出错: %v", err)
 			return

@@ -192,9 +192,11 @@ export const filesAPI = {
 export const imageAPI = {
   getImages: () => apiClient.get('/api/images'),
   getIcons: () => apiClient.get('/api/icons'),
-  deleteImage: (id, force = false) => apiClient.delete(`/api/image/${id}?force=${force}`),
-  // 异步批量清理镜像：提交 ids 列表，返回 taskID
-  pruneImages: (ids, force = false) => apiClient.post('/api/images/prune', { ids, force }),
+  // 删除镜像：按 hostId 路由到对应主机（空表示本地）
+  deleteImage: (id, force = false, hostId = '') =>
+    apiClient.delete(`/api/image/${id}?force=${force}${hostId ? `&hostId=${encodeURIComponent(hostId)}` : ''}`),
+  // 异步批量清理镜像：提交 ids 列表，返回 taskID；hostId 指定目标主机
+  pruneImages: (ids, force = false, hostId = '') => apiClient.post('/api/images/prune', { ids, force, hostId }),
   // 通过 URL 绑定图标到镜像名（无需上传图片）
   setIconUrl: (imageName, url) => apiClient.post('/api/icons/url', { imageName, url }),
   // 自动抓取站点 favicon 并下载持久化到 /data/images，url 为容器访问地址

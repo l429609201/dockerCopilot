@@ -81,6 +81,8 @@ type RemoveImageReq struct {
 type PruneImagesReq struct {
 	Ids   []string `json:"ids"`
 	Force bool     `json:"force,default=false"`
+	// HostID 目标 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `json:"hostId,optional"`
 }
 
 type RenameContainerReq struct {

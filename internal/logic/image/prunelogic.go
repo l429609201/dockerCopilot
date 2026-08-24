@@ -38,9 +38,15 @@ func (l *PruneLogic) Prune(req *types.PruneImagesReq) (resp *types.Resp, err err
 	taskID := uuid.New().String()
 	ids := req.Ids
 	force := req.Force
-	// 通过任务管理器提交：resourceID 固定为 image_prune，避免并发多次清理相互干扰
-	startErr := l.svcCtx.TaskManager.TryStart(taskID, "image_prune", svc.TaskTypeImagePrune, func(taskCtx context.Context) {
-		utiles.PruneImages(taskCtx, l.svcCtx, taskID, ids, force)
+	hostID := req.HostID
+	// resourceID 带上 hostId，避免不同主机的清理任务被误判为同一资源而互斥
+	resourceID := "image_prune"
+	if hostID != "" {
+		resourceID = "image_prune-" + hostID
+	}
+	// 通过任务管理器提交：按 hostId 路由到对应主机清理（空表示本地）
+	startErr := l.svcCtx.TaskManager.TryStart(taskID, resourceID, svc.TaskTypeImagePrune, func(taskCtx context.Context) {
+		utiles.PruneImagesOnHost(taskCtx, l.svcCtx, hostID, taskID, ids, force)
 	})
 	if startErr != nil {
 		resp.Code = 400
