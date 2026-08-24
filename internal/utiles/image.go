@@ -4,18 +4,29 @@ import (
 	"context"
 	"fmt"
 	"github.com/docker/docker/api/types/image"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	MyType "github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
 	"strings"
 )
 
+// GetImagesList 获取本地 Docker 主机的镜像列表（保留原签名，兼容既有调用）。
 func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
+	return GetImagesListFromHost(ctx, appconfig.DockerHostLocalID)
+}
+
+// GetImagesListFromHost 获取指定 Docker 主机的镜像列表。hostID 为空取本地主机。
+func GetImagesListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.Image, error) {
 	var imagesList []MyType.Image
-	dockerImages, err := ctx.DockerClient.ImageList(context.Background(), image.ListOptions{})
+	cli, ok := ctx.DockerManager.GetClient(hostID)
+	if !ok || cli == nil {
+		return imagesList, fmt.Errorf("docker 主机 %s 无可用连接", hostID)
+	}
+	dockerImages, err := cli.ImageList(context.Background(), image.ListOptions{})
 	if err != nil {
 		// 不能用 log.Fatalf，否则获取镜像失败会直接杀掉整个进程
-		logx.Errorf("Unable to fetch docker images: %s", err)
+		logx.Errorf("Unable to fetch docker images (host=%s): %s", hostID, err)
 		return imagesList, err
 	}
 
@@ -35,6 +46,35 @@ func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 		return imagesList, err
 	}
 	return imagesList, nil
+}
+
+// GetAllImagesList 聚合所有已启用 Docker 主机的镜像列表，按镜像ID去重。
+// 用于更新检查：只有覆盖所有主机的镜像，远程主机容器才能正确显示"可更新"。
+// 单个主机不可达仅记录日志并跳过，不影响其它主机。
+func GetAllImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
+	ctx.AppConfig.EnsureLocalHost()
+	hosts := ctx.AppConfig.ListDockerHosts()
+	var all []MyType.Image
+	seen := make(map[string]struct{})
+	for _, h := range hosts {
+		if !h.Enabled {
+			continue
+		}
+		list, err := GetImagesListFromHost(ctx, h.ID)
+		if err != nil {
+			logx.Errorf("聚合镜像列表跳过主机[%s:%s]: %v", h.ID, h.Name, err)
+			continue
+		}
+		// 按镜像ID去重：不同主机上相同镜像 digest 相同，检查一次即可
+		for _, img := range list {
+			if _, ok := seen[img.ID]; ok {
+				continue
+			}
+			seen[img.ID] = struct{}{}
+			all = append(all, img)
+		}
+	}
+	return all, nil
 }
 
 func splitImageNameAndTag(imagesList []MyType.Image) []MyType.Image {

@@ -35,11 +35,14 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	}
 
 	// 默认：自动更新容器
+	// 解析本规则的有效目标：优先 ContainerTargets（精确到主机）；为空时回退 ContainerNames（视为本地）
+	targets := effectiveTargets(rule)
 	if notifier != nil && rule.NotifyOnStart {
-		notifier.Notify("定时更新开始", fmt.Sprintf("规则「%s」开始执行，容器数：%d", rule.Name, len(rule.ContainerNames)))
+		notifier.Notify("定时更新开始", fmt.Sprintf("规则「%s」开始执行，容器数：%d", rule.Name, len(targets)))
 	}
 
-	containers, err := utiles.GetContainerList(svcCtx)
+	// 聚合所有主机的容器，保证远程主机的目标也能被匹配到
+	containers, err := utiles.GetAllContainers(svcCtx)
 	if err != nil {
 		logx.Errorf("定时更新规则[%s]获取容器列表失败: %v", rule.Name, err)
 		if notifier != nil && rule.NotifyOnError {
@@ -64,19 +67,10 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 	}
 
-	// 自动清理：把规则里已不存在于当前容器列表的容器名移除并持久化，
-	// 避免规则长期残留已删除的容器名。
-	existingNames := make(map[string]struct{}, len(containers))
-	for _, c := range containers {
-		if n := containerName(c); n != "" {
-			existingNames[n] = struct{}{}
-		}
-	}
-	rule.ContainerNames = pruneMissingContainers(svcCtx, rule, existingNames)
-
-	nameSet := make(map[string]struct{}, len(rule.ContainerNames))
-	for _, n := range rule.ContainerNames {
-		nameSet[n] = struct{}{}
+	// 目标集合：以「主机ID|容器名」为键，精确匹配到具体主机的容器
+	targetSet := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		targetSet[targetKey(t.HostID, t.Name)] = struct{}{}
 	}
 
 	var updated, skipped, failed int
@@ -88,20 +82,26 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 
 	for _, c := range containers {
 		name := containerName(c)
-		if _, want := nameSet[name]; !want {
+		hostID := normalizeHostID(c.HostID)
+		if _, want := targetSet[targetKey(hostID, name)]; !want {
 			continue
+		}
+		// 展示名：非本地容器带主机名，便于通知区分
+		dispName := name
+		if hostID != appconfig.DockerHostLocalID && c.HostName != "" {
+			dispName = fmt.Sprintf("%s@%s", name, c.HostName)
 		}
 		// 策略：仅在有更新时执行
 		if rule.OnlyWhenUpdate && !c.Update {
 			skipped++
-			skippedList = append(skippedList, fmt.Sprintf("%s (已是最新版本)", name))
+			skippedList = append(skippedList, fmt.Sprintf("%s (已是最新版本)", dispName))
 			continue
 		}
 		// 策略：跳过无 tag 或 digest 形式镜像
 		if rule.SkipInvalidTag && !isValidImageRef(c.Image) {
-			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, name, c.Image)
+			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, dispName, c.Image)
 			skipped++
-			skippedList = append(skippedList, fmt.Sprintf("%s (镜像标签无效: %s)", name, shortImage(c.Image)))
+			skippedList = append(skippedList, fmt.Sprintf("%s (镜像标签无效: %s)", dispName, shortImage(c.Image)))
 			continue
 		}
 		// 自适应模式：按当前容器镜像匹配凭据；否则用预编码的复用凭据
@@ -109,12 +109,12 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if autoAuth {
 			auth = utiles.MatchRegistryAuthByImage(svcCtx.AppConfig, c.Image)
 		}
-		if runOne(svcCtx, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
+		if runOne(svcCtx, hostID, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			updated++
-			updatedList = append(updatedList, fmt.Sprintf("%s (镜像: %s)", name, shortImage(c.Image)))
+			updatedList = append(updatedList, fmt.Sprintf("%s (镜像: %s)", dispName, shortImage(c.Image)))
 		} else {
 			failed++
-			failedList = append(failedList, fmt.Sprintf("%s (镜像: %s)", name, shortImage(c.Image)))
+			failedList = append(failedList, fmt.Sprintf("%s (镜像: %s)", dispName, shortImage(c.Image)))
 		}
 	}
 
@@ -156,19 +156,21 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 }
 
 // runOne 提交单个容器的更新任务并等待其结束，返回是否成功。
-func runOne(svcCtx *svc.ServiceContext, id, name, image string, delOld bool, registryAuth string, timeoutSec int) bool {
+// hostID 指定容器所属 Docker 主机（多 Docker 管理），空表示本地。
+func runOne(svcCtx *svc.ServiceContext, hostID, id, name, image string, delOld bool, registryAuth string, timeoutSec int) bool {
 	taskID := uuid.New().String()
 	done := make(chan bool, 1)
 	startErr := svcCtx.TaskManager.TryStart(taskID, id, svc.TaskTypeScheduledUpdate, func(taskCtx context.Context) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
-		// 定时更新命中本程序自身时，同样走辅助容器方案，避免自己停自己卡死。
-		if utiles.IsSelfContainer(svcCtx, id) {
+		// 本地容器命中本程序自身时走辅助容器方案，避免自己停自己卡死。
+		// 远程主机的容器不涉及自身，直接在目标主机上执行更新。
+		if normalizeHostID(hostID) == appconfig.DockerHostLocalID && utiles.IsSelfContainer(svcCtx, id) {
 			e := utiles.SelfUpdate(ctxWithTimeout, svcCtx, id, name, image, delOld, taskID, registryAuth)
 			done <- e == nil
 			return
 		}
-		e := utiles.UpdateContainerWithAuth(ctxWithTimeout, svcCtx, id, name, image, delOld, taskID, registryAuth)
+		e := utiles.UpdateContainerOnHost(ctxWithTimeout, svcCtx, hostID, id, name, image, delOld, taskID, registryAuth)
 		done <- e == nil
 	})
 	if startErr != nil {
@@ -176,6 +178,42 @@ func runOne(svcCtx *svc.ServiceContext, id, name, image string, delOld bool, reg
 		return false
 	}
 	return <-done
+}
+
+// targetKey 生成「主机ID|容器名」的匹配键。
+func targetKey(hostID, name string) string {
+	return normalizeHostID(hostID) + "|" + name
+}
+
+// normalizeHostID 归一化主机ID：空视为本地。
+func normalizeHostID(hostID string) string {
+	if hostID == "" {
+		return appconfig.DockerHostLocalID
+	}
+	return hostID
+}
+
+// effectiveTargets 解析规则的有效更新目标。
+// 优先使用 ContainerTargets（精确到主机）；为空时回退 ContainerNames（视为本地容器），兼容历史规则。
+func effectiveTargets(rule appconfig.ScheduledUpdateRule) []appconfig.ContainerTarget {
+	if len(rule.ContainerTargets) > 0 {
+		out := make([]appconfig.ContainerTarget, 0, len(rule.ContainerTargets))
+		for _, t := range rule.ContainerTargets {
+			if t.Name == "" {
+				continue
+			}
+			out = append(out, appconfig.ContainerTarget{HostID: normalizeHostID(t.HostID), Name: t.Name})
+		}
+		return out
+	}
+	out := make([]appconfig.ContainerTarget, 0, len(rule.ContainerNames))
+	for _, n := range rule.ContainerNames {
+		if n == "" {
+			continue
+		}
+		out = append(out, appconfig.ContainerTarget{HostID: appconfig.DockerHostLocalID, Name: n})
+	}
+	return out
 }
 
 // recordResult 将执行结果写回规则记录。
@@ -190,35 +228,6 @@ func recordResult(svcCtx *svc.ServiceContext, ruleID, result string) {
 		}
 		return nil
 	})
-}
-
-// pruneMissingContainers 过滤掉规则中已不存在的容器名，并在有变化时持久化。
-// 返回过滤后的容器名列表，供本次执行直接使用。
-func pruneMissingContainers(svcCtx *svc.ServiceContext, rule appconfig.ScheduledUpdateRule, existing map[string]struct{}) []string {
-	kept := make([]string, 0, len(rule.ContainerNames))
-	var removed []string
-	for _, n := range rule.ContainerNames {
-		if _, ok := existing[n]; ok {
-			kept = append(kept, n)
-		} else {
-			removed = append(removed, n)
-		}
-	}
-	if len(removed) == 0 {
-		return kept
-	}
-	logx.Infof("定时更新规则[%s]自动移除已不存在的容器: %s", rule.Name, strings.Join(removed, ", "))
-	// 持久化：把 kept 写回该规则的 ContainerNames
-	_ = svcCtx.AppConfig.Update(func(cfg *appconfig.AppConfig) error {
-		for i := range cfg.ScheduledUpdates {
-			if cfg.ScheduledUpdates[i].ID == rule.ID {
-				cfg.ScheduledUpdates[i].ContainerNames = kept
-				break
-			}
-		}
-		return nil
-	})
-	return kept
 }
 
 // containerName 提取容器主名称（去掉前导斜杠）。

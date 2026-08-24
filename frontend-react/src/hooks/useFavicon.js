@@ -1,9 +1,38 @@
 import { useState, useEffect } from 'react'
-import { faviconAPI, imageAPI } from '../api/client.js'
+import { faviconAPI, imageAPI, dockerHostAPI } from '../api/client.js'
 
 // favicon 结果本地缓存（key: 容器id，value: {url, ts}）
 const CACHE_KEY = 'dc_favicon_cache'
 const TTL = 7 * 24 * 60 * 60 * 1000 // 7天
+
+// 从 Docker 主机连接地址（tcp://ip:port）解析出主机 IP/域名。
+function parseHostIP(address) {
+  if (!address) return ''
+  let a = address.replace(/^tcp:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0]
+  const idx = a.lastIndexOf(':')
+  return idx > 0 ? a.slice(0, idx) : a
+}
+
+// 模块级 hostId→IP 映射缓存：多个容器卡片共享，避免每张卡都请求主机列表。
+let _hostIPMap = null
+let _hostIPPromise = null
+async function getHostIP(hostId) {
+  if (!hostId || hostId === 'local') return window.location.hostname || 'localhost'
+  if (!_hostIPMap) {
+    if (!_hostIPPromise) {
+      _hostIPPromise = dockerHostAPI.list().then((r) => {
+        const map = {}
+        if (r.data?.code === 200 && Array.isArray(r.data.data)) {
+          for (const h of r.data.data) map[h.id] = parseHostIP(h.address)
+        }
+        _hostIPMap = map
+        return map
+      }).catch(() => { _hostIPMap = {}; return {} })
+    }
+    await _hostIPPromise
+  }
+  return _hostIPMap[hostId] || (window.location.hostname || 'localhost')
+}
 
 function readCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') } catch { return {} }
@@ -36,10 +65,12 @@ export function useFavicon(container) {
     }
 
     let cancelled = false
-    const host = window.location.hostname || 'localhost'
 
     const tryPorts = async () => {
       setLoading(true)
+      // 远程容器用其所属主机 IP，本地用当前访问 hostname
+      const host = await getHostIP(container.hostId)
+      if (cancelled) return
       // 优先尝试常见 Web 端口，其次遍历全部
       const ordered = [...ports].sort((a, b) => scorePort(b) - scorePort(a))
       for (const port of ordered) {
@@ -101,7 +132,6 @@ export function useFaviconMap(containers) {
     )
     if (list.length === 0) return
     let cancelled = false
-    const host = window.location.hostname || 'localhost'
 
     const run = async () => {
       const cache = readCache()
@@ -114,6 +144,9 @@ export function useFaviconMap(containers) {
           result[c.id] = hit.url
           continue
         }
+        // 远程容器用其所属主机 IP，本地用当前访问 hostname
+        const host = await getHostIP(c.hostId)
+        if (cancelled) return
         const ordered = [...pickProbePorts(c)].sort((a, b) => scorePort(b) - scorePort(a))
         for (const port of ordered) {
           if (cancelled) return

@@ -67,16 +67,16 @@ func (s *Scheduler) runUpdateCheck() {
 		return
 	}
 
-	// 获取镜像列表并触发更新检查（CheckUpdate 内部去重防并发）
-	images, err := utiles.GetImagesList(s.svcCtx)
+	// 获取所有主机的镜像列表并触发更新检查（覆盖远程主机，CheckUpdate 内部去重防并发）
+	images, err := utiles.GetAllImagesList(s.svcCtx)
 	if err != nil {
 		logx.Errorf("更新检测获取镜像列表失败: %v", err)
 		return
 	}
 	s.svcCtx.HubImageInfo.CheckUpdate(images)
 
-	// 标记容器更新状态
-	containers, err := utiles.GetContainerList(s.svcCtx)
+	// 标记容器更新状态（聚合所有主机的容器，保证远程容器也能标记）
+	containers, err := utiles.GetAllContainers(s.svcCtx)
 	if err != nil {
 		logx.Errorf("更新检测获取容器列表失败: %v", err)
 		return

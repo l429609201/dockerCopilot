@@ -85,3 +85,32 @@ func (l *CreateLogic) Create(req *types.CreateContainerReq) (*types.Resp, error)
 	resp.Data = map[string]string{"taskID": taskID}
 	return resp, nil
 }
+
+// ParseRunCommand 解析 docker run 命令为创建参数（仅解析，不创建）。
+// 返回结构与 CreateContainerReq 对齐，供前端回填预览、确认后再走 Create。
+func (l *CreateLogic) ParseRunCommand(req *types.ParseRunCommandReq) (*types.Resp, error) {
+	resp := &types.Resp{}
+	if strings.TrimSpace(req.Command) == "" {
+		return fail(resp, "命令不能为空"), nil
+	}
+	spec, err := containerops.ParseRunCommand(req.Command)
+	if err != nil {
+		return fail(resp, err.Error()), nil
+	}
+	resp.Code = 200
+	resp.Msg = "success"
+	// 字段命名与前端 createContainer 请求体保持一致，便于直接回填
+	resp.Data = map[string]interface{}{
+		"name":          spec.Name,
+		"image":         spec.Image,
+		"env":           spec.Env,
+		"portBindings":  spec.PortBindings,
+		"binds":         spec.Binds,
+		"restartPolicy": spec.RestartPolicy,
+		"networkMode":   spec.NetworkMode,
+		"labels":        spec.Labels,
+		"cmd":           spec.Cmd,
+		"entrypoint":    spec.Entrypoint,
+	}
+	return resp, nil
+}

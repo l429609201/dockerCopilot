@@ -109,6 +109,8 @@ export const containerAPI = {
   getContainers: () => apiClient.get('/api/containers'),
   // 从零创建新容器（任务化，返回 taskID 供轮询进度）。spec 见后端 CreateContainerReq。
   createContainer: (spec) => apiClient.post('/api/container/create', spec),
+  // 解析 docker run 命令为创建参数（仅解析预览，不创建）
+  parseRunCommand: (command) => apiClient.post('/api/container/parseRunCommand', { command }),
   startContainer: (id, hostId) => apiClient.post(`/api/container/${id}/start${hostQ(hostId)}`),
   stopContainer: (id, hostId) => apiClient.post(`/api/container/${id}/stop${hostQ(hostId)}`),
   restartContainer: (id, hostId) => apiClient.post(`/api/container/${id}/restart${hostQ(hostId)}`),
@@ -249,6 +251,8 @@ export const composeAPI = {
   saveFile: (id, filename, content) =>
     apiClient.put(`/api/compose/projects/${id}/files/${encodeURIComponent(filename)}`, { content }),
   validate: (content) => apiClient.post('/api/compose/validate', { content }),
+  // 从内容创建并部署一个新 Compose 项目（写入工作目录后 up），返回 taskID
+  create: (payload) => apiClient.post('/api/compose/create', payload),
   action: (id, action, confirmWarnings = false) =>
     apiClient.post(`/api/compose/projects/${id}/action`, { action, confirmWarnings }),
   // 读取/保存 Compose 扫描配置（扫描目录、深度等）

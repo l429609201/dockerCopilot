@@ -19,7 +19,10 @@ import {
   FolderOpen,
   Pencil,
   Network,
-  Plus
+  Plus,
+  Trash2,
+  Search,
+  Server
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -59,6 +62,9 @@ export function Containers() {
   const [updateTasks, setUpdateTasks] = useState({}) // 跟踪更新任务
   // 添加筛选状态
   const [filterStatus, setFilterStatus] = useState(null) // null 表示显示全部
+  // 主机过滤（'all' 全部主机 / 具体 hostId）与关键词搜索（按容器名/镜像）
+  const [hostFilter, setHostFilter] = useState('all')
+  const [searchKeyword, setSearchKeyword] = useState('')
   // 视图模式：card 卡片 / list 列表，持久化到 localStorage
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('dc_container_view') || 'card')
   const changeViewMode = (mode) => {
@@ -142,6 +148,17 @@ export function Containers() {
 
   // 阶段8：批量解析容器站点 favicon（运行中且有暴露端口的容器），按容器id取图标
   const faviconMap = useFaviconMap(containers)
+
+  // 从容器列表提取去重后的主机列表，供主机下拉筛选使用（含本地）
+  const hostOptions = React.useMemo(() => {
+    const map = new Map()
+    for (const c of containers) {
+      const id = c.hostId || 'local'
+      const name = c.hostName || (id === 'local' ? '本地 Docker' : id)
+      if (!map.has(id)) map.set(id, name)
+    }
+    return Array.from(map, ([id, name]) => ({ id, name }))
+  }, [containers])
 
   const handleContainerAction = async (containerId, action) => {
     try {
@@ -348,6 +365,45 @@ export function Containers() {
         type: 'danger'
       });
     }
+  }
+
+  // 删除容器：二次确认后调用后端删除接口（支持远程主机 hostId），成功后刷新列表
+  const handleDeleteContainer = (containerId) => {
+    const target = containers.find(c => c.id === containerId) || {}
+    const hostId = target.hostId
+    const isRunning = target.status && target.status.toLowerCase() === 'running'
+    setConfirmModal({
+      isOpen: true,
+      title: '删除容器',
+      message: `确定要删除容器「${target.name || containerId.slice(0, 12)}」吗？此操作不可恢复。${isRunning ? '\n该容器正在运行，将被强制删除。' : ''}`,
+      type: 'danger',
+      onCancel: () => setConfirmModal({ isOpen: false }),
+      onConfirm: async () => {
+        setConfirmModal({ isOpen: false })
+        // 标记操作中，复用卡片 loading 展示
+        setContainerActions(prev => ({ ...prev, [containerId]: { action: 'delete', loading: true } }))
+        try {
+          // 运行中的容器需 force 才能删除
+          await containerAPI.removeContainer(containerId, isRunning, false, hostId)
+          await refetch()
+        } catch (error) {
+          setConfirmModal({
+            isOpen: true,
+            title: '删除失败',
+            message: '删除容器失败: ' + (error.response?.data?.msg || error.message || '未知错误'),
+            type: 'danger',
+            onConfirm: () => setConfirmModal({ isOpen: false }),
+            onCancel: null,
+          })
+        } finally {
+          setContainerActions(prev => {
+            const n = { ...prev }
+            delete n[containerId]
+            return n
+          })
+        }
+      },
+    })
   }
 
   const handleRenameContainer = async (containerId, newName) => {
@@ -966,9 +1022,46 @@ export function Containers() {
           </div>
         )}
 
-        {/* 视图切换工具栏：卡片 / 列表 */}
+        {/* 工具栏：左侧主机筛选+搜索，右侧视图切换 */}
         {containers.length > 0 && (
-          <div className="flex justify-end mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            {/* 左侧：主机下拉 + 搜索框 */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 主机下拉：仅当存在多个主机时显示，否则无意义 */}
+              {hostOptions.length > 1 && (
+                <div className="relative">
+                  <Server className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <select
+                    value={hostFilter}
+                    onChange={(e) => setHostFilter(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="all">全部主机</option>
+                    {hostOptions.map((h) => (
+                      <option key={h.id} value={h.id}>{h.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* 搜索框：按容器名或镜像过滤 */}
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  placeholder="搜索容器名 / 镜像"
+                  className="pl-8 pr-8 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-48"
+                />
+                {searchKeyword && (
+                  <button onClick={() => setSearchKeyword('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* 右侧：卡片 / 列表切换 */}
             <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
               <button
                 onClick={() => changeViewMode('card')}
@@ -1004,6 +1097,15 @@ export function Containers() {
                 if (filterStatus === 'update') return container.haveUpdate
                 return true
               })
+              // 主机过滤：'all' 不限；否则按容器所属主机（本地容器 hostId 可能为空，视为 'local'）
+              .filter((container) => hostFilter === 'all' || (container.hostId || 'local') === hostFilter)
+              // 关键词过滤：匹配容器名或镜像（大小写不敏感）
+              .filter((container) => {
+                const kw = searchKeyword.trim().toLowerCase()
+                if (!kw) return true
+                return (container.name || '').toLowerCase().includes(kw) ||
+                       (container.usingImage || '').toLowerCase().includes(kw)
+              })
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
                 // 列表模式：渲染横向一条的列表行
@@ -1028,6 +1130,7 @@ export function Containers() {
                       onFiles={() => setFileTarget(container)}
                       onEdit={(c) => setEditTarget(c)}
                       onProcess={(c) => setProcessTarget(c)}
+                      onDelete={() => handleDeleteContainer(container.id)}
                     />
                   )
                 }
@@ -1176,6 +1279,22 @@ export function Containers() {
                               </div>
                             )}
                           </div>
+
+                          {/* 端口映射标签：宿主机端口:容器端口/协议，最多展示 3 条，多余折叠 */}
+                          {Array.isArray(container.portMappings) && container.portMappings.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                              {container.portMappings.slice(0, 3).map((m) => (
+                                <span key={m} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 text-[10px] font-mono">
+                                  {m}
+                                </span>
+                              ))}
+                              {container.portMappings.length > 3 && (
+                                <span className="text-[10px] text-gray-400" title={container.portMappings.join('\n')}>
+                                  +{container.portMappings.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1186,17 +1305,18 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部 4 列网格排列（运行中共 8 个按钮，2 行） */}
+                      {/* 操作按钮栏 - 底部 5 列网格排列（运行中共 10 个按钮，2 行） */}
                       {!isBatchMode && (
-                        <div className="grid grid-cols-4 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="grid grid-cols-5 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
-                            <div className="col-span-4 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
+                            <div className="col-span-5 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
                                 <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
                                 <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
                                   {containerActions[container.id].action === 'start' && '启动中'}
                                   {containerActions[container.id].action === 'stop' && '停止中'}
                                   {containerActions[container.id].action === 'restart' && '重启中'}
+                                  {containerActions[container.id].action === 'delete' && '删除中'}
                                   {containerActions[container.id].action === 'update' && `更新中${containerActions[container.id].percentage ? ` ${Math.round(containerActions[container.id].percentage)}%` : ''}`}
                                 </span>
                               </div>
@@ -1209,9 +1329,18 @@ export function Containers() {
                             </div>
                           ) : (
                             <>
+                              {/* 详情：始终位于第一格，点击打开详情弹窗 */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedContainer(container) }}
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                title="详情"
+                              >
+                                <Info className="h-4 w-4" />
+                                <span>详情</span>
+                              </button>
                               {container.status === 'running' ? (
                                 <>
-                                  {/* 第一行：停止 / 编辑 / 重启 / 更新 */}
+                                  {/* 第一行：详情 / 停止 / 编辑 / 重启 / 更新 */}
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'stop') }}
                                     className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
@@ -1295,6 +1424,15 @@ export function Containers() {
                               >
                                 <FolderOpen className="h-4 w-4" />
                                 <span>文件</span>
+                              </button>
+                              {/* 删除：二次确认后删除容器（支持远程主机） */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteContainer(container.id) }}
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                title="删除容器"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                <span>删除</span>
                               </button>
                             </>
                           )}

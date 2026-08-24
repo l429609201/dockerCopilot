@@ -5,8 +5,10 @@ import { filesAPI } from '../api/client.js'
 // 容器内路径选择器弹窗：浏览指定容器的文件系统，仅选择目录。
 // 复用结构化的 filesAPI.list（后端已做防穿越校验），无需解析 ls 文本。
 // onSelect(path) 选中当前目录后回调；onClose 关闭。
+// hostId 定位容器所属 Docker 主机（多 Docker 管理），远程容器必须传入，
+// 否则 exec 请求会打到本地 daemon 报「No such container」。
 // 注意：底层通过 docker exec 列目录，要求容器处于运行状态。
-export function ContainerPathPicker({ containerId, initialPath = '/', onSelect, onClose }) {
+export function ContainerPathPicker({ containerId, hostId, initialPath = '/', onSelect, onClose }) {
   const [current, setCurrent] = useState('/') // 当前所在目录
   const [dirs, setDirs] = useState([])        // 当前目录下的子目录（仅目录）
   const [loading, setLoading] = useState(false)
@@ -24,7 +26,8 @@ export function ContainerPathPicker({ containerId, initialPath = '/', onSelect, 
     setLoading(true)
     setError('')
     try {
-      const r = await filesAPI.list(containerId, p)
+      // 传入 hostId，保证远程容器的 exec 列目录请求路由到正确的 Docker 主机
+      const r = await filesAPI.list(containerId, p, hostId)
       if (r.data?.code === 200) {
         const entries = r.data.data?.entries || []
         setDirs(entries.filter((e) => e.isDir))
@@ -37,7 +40,7 @@ export function ContainerPathPicker({ containerId, initialPath = '/', onSelect, 
     } finally {
       setLoading(false)
     }
-  }, [containerId])
+  }, [containerId, hostId])
 
   useEffect(() => { load(initialPath) }, [load, initialPath])
 

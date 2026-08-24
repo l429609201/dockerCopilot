@@ -935,8 +935,8 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 		return
 	}
 
-	// 获取镜像列表并触发检查（CheckUpdate 方法会去重避免并发）
-	images, err := utiles.GetImagesList(b.svcCtx)
+	// 获取所有主机镜像列表并触发检查（覆盖远程主机，CheckUpdate 方法会去重避免并发）
+	images, err := utiles.GetAllImagesList(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取镜像列表失败："+err.Error())
 		return
@@ -1673,8 +1673,8 @@ func (b *Bot) recheckUpdates(chatID int64, messageID int64) {
 		b.reply(chatID, "🔍 正在检查所有容器的镜像更新，请稍候...")
 	}
 
-	// 获取镜像列表并触发检查
-	images, err := utiles.GetImagesList(b.svcCtx)
+	// 获取所有主机镜像列表并触发检查（覆盖远程主机）
+	images, err := utiles.GetAllImagesList(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取镜像列表失败："+err.Error())
 		return

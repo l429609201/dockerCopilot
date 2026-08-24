@@ -410,6 +410,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
       {picker?.type === 'container' && (
         <ContainerPathPicker
           containerId={container.ID}
+          hostId={container.hostId || container.HostID}
           initialPath={form.binds[picker.index]?.target || '/'}
           onSelect={(p) => bindOps.update(picker.index, 'target', p)}
           onClose={() => setPicker(null)}

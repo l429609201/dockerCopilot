@@ -42,6 +42,14 @@ func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err
 		resp.Data = map[string]interface{}{}
 		return resp, nil
 	}
+	// 将请求中的容器目标转换为持久化结构（精确到主机+容器名）
+	targets := make([]appconfig.ContainerTarget, 0, len(req.ContainerTargets))
+	for _, t := range req.ContainerTargets {
+		if t.Name == "" {
+			continue
+		}
+		targets = append(targets, appconfig.ContainerTarget{HostID: t.HostID, Name: t.Name})
+	}
 	rule := appconfig.ScheduledUpdateRule{
 		ID:               req.ID,
 		Name:             req.Name,
@@ -50,6 +58,8 @@ func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err
 		Enabled:          req.Enabled,
 		Cron:             req.Cron,
 		ContainerNames:   req.ContainerNames,
+		ContainerTargets: targets,
+		HostIDs:          req.HostIDs,
 		OnlyWhenUpdate:   req.OnlyWhenUpdate,
 		SkipInvalidTag:   req.SkipInvalidTag,
 		RegistryID:       req.RegistryID,

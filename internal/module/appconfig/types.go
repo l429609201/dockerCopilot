@@ -108,8 +108,13 @@ type ScheduledUpdateRule struct {
 	Cron string `json:"cron"`
 	// PruneMode 镜像清理范围（仅 prune 类型使用）：dangling(无tag) / unused(未使用)。
 	PruneMode string `json:"pruneMode,omitempty"`
-	// ContainerNames 需要纳入本规则的容器名列表。
+	// ContainerNames 需要纳入本规则的容器名列表（历史字段，视为本地主机的容器，用于向后兼容）。
 	ContainerNames []string `json:"containerNames"`
+	// ContainerTargets 精确到「主机+容器名」的更新目标（多 Docker 管理）。
+	// 优先使用本字段；为空时回退按 ContainerNames 处理（视为本地容器）。
+	ContainerTargets []ContainerTarget `json:"containerTargets,omitempty"`
+	// HostIDs 目标 Docker 主机列表，用于 prune/backup 这类整机级任务（为空视为仅本地）。
+	HostIDs []string `json:"hostIds,omitempty"`
 	// OnlyWhenUpdate 仅在检测到有新版本时才执行更新。
 	OnlyWhenUpdate bool `json:"onlyWhenUpdate"`
 	// SkipInvalidTag 跳过无 tag 或 digest 形式（sha256:）的镜像，避免误更新。
@@ -125,6 +130,12 @@ type ScheduledUpdateRule struct {
 	// LastRunAt / LastResult 记录最近一次执行的时间与结果摘要。
 	LastRunAt  int64  `json:"lastRunAt,omitempty"`
 	LastResult string `json:"lastResult,omitempty"`
+}
+
+// ContainerTarget 精确定位某个 Docker 主机上的某个容器（按名称匹配）。
+type ContainerTarget struct {
+	HostID string `json:"hostId"` // 目标主机ID，空表示本地
+	Name   string `json:"name"`   // 容器名
 }
 
 // HostPathMapperConfig 宿主机路径映射配置。

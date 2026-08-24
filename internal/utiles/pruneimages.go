@@ -9,10 +9,20 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// PruneImages 异步批量删除镜像：逐个删除并通过任务系统上报进度。
-// imageIDs 为待删除的镜像ID列表；force 是否强制删除。
-// 支持通过 taskCtx 取消（取消后停止后续删除并标记任务取消）。
+// PruneImages 异步批量删除本地主机镜像（保留原签名，兼容既有调用）。
 func PruneImages(taskCtx context.Context, ctx *svc.ServiceContext, taskID string, imageIDs []string, force bool) {
+	PruneImagesOnHost(taskCtx, ctx, "", taskID, imageIDs, force)
+}
+
+// PruneImagesOnHost 在指定 Docker 主机上异步批量删除镜像：逐个删除并通过任务系统上报进度。
+// hostID 为空表示本地；imageIDs 为待删除的镜像ID列表；force 是否强制删除。
+// 支持通过 taskCtx 取消（取消后停止后续删除并标记任务取消）。
+func PruneImagesOnHost(taskCtx context.Context, ctx *svc.ServiceContext, hostID string, taskID string, imageIDs []string, force bool) {
+	// 定位目标主机客户端；不可用则回退本地，避免 nil 崩溃
+	cli, ok := ctx.DockerManager.GetClient(hostID)
+	if !ok || cli == nil {
+		cli = ctx.DockerClient
+	}
 	total := len(imageIDs)
 	progress := svc.TaskProgress{
 		TaskID:     taskID,
@@ -35,7 +45,7 @@ func PruneImages(taskCtx context.Context, ctx *svc.ServiceContext, taskID string
 			return
 		}
 
-		_, err := ctx.DockerClient.ImageRemove(taskCtx, id, image.RemoveOptions{Force: force})
+		_, err := cli.ImageRemove(taskCtx, id, image.RemoveOptions{Force: force})
 		if err != nil {
 			failed++
 			progress.DetailMsg = fmt.Sprintf("删除 %s 失败: %v", shortID(id), err)

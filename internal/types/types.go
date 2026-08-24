@@ -36,6 +36,11 @@ type CreateContainerReq struct {
 	HostID        string            `json:"hostId,optional"`         // 目标 Docker 主机
 }
 
+// ParseRunCommandReq 解析一条 docker run 命令为容器创建参数（仅解析预览，不创建）。
+type ParseRunCommandReq struct {
+	Command string `json:"command"` // 完整的 docker run 命令
+}
+
 type DelContainerBackupReq struct {
 	Filename string `form:"filename"`
 }

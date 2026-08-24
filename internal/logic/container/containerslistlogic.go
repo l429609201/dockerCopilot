@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,8 @@ type Info struct {
 	HaveUpdate  bool   `json:"haveUpdate"`
 	// Ports 暴露到宿主机的端口列表（仅含有 PublicPort 的），供前端抓取站点 favicon
 	Ports []int `json:"ports"`
+	// PortMappings 端口映射对（宿主机端口:容器端口/协议），供前端卡片/列表展示映射信息
+	PortMappings []string `json:"portMappings"`
 	// NetworkMode 网络模式（如 host / bridge / 自定义网络名），供前端判断 host 模式
 	NetworkMode string `json:"networkMode"`
 	// ExposedPorts 容器内暴露的端口（来自镜像/配置）。host 网络模式下等同于宿主机端口，
@@ -95,16 +98,28 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 		containerInfo.HaveUpdate = v.Update
 		// 收集暴露到宿主机的公共端口并去重，供前端探测站点 favicon
 		seenPorts := make(map[int]struct{})
+		// 同时收集端口映射对（宿主机端口:容器端口/协议），去重后供前端展示
+		seenMapping := make(map[string]struct{})
 		for _, p := range v.Ports {
 			if p.PublicPort == 0 {
 				continue
 			}
 			port := int(p.PublicPort)
-			if _, ok := seenPorts[port]; ok {
+			if _, ok := seenPorts[port]; !ok {
+				seenPorts[port] = struct{}{}
+				containerInfo.Ports = append(containerInfo.Ports, port)
+			}
+			// 组装映射串：如 8080:80/tcp；协议缺省按 tcp
+			proto := p.Type
+			if proto == "" {
+				proto = "tcp"
+			}
+			mapping := fmt.Sprintf("%d:%d/%s", p.PublicPort, p.PrivatePort, proto)
+			if _, ok := seenMapping[mapping]; ok {
 				continue
 			}
-			seenPorts[port] = struct{}{}
-			containerInfo.Ports = append(containerInfo.Ports, port)
+			seenMapping[mapping] = struct{}{}
+			containerInfo.PortMappings = append(containerInfo.PortMappings, mapping)
 		}
 		// 网络模式与暴露端口：host 模式下容器内端口即宿主机端口，供前端探测图标
 		if containerInspect.HostConfig != nil {

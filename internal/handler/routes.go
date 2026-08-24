@@ -281,6 +281,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: compose.ValidateHandler(serverCtx),
 			},
 			{
+				// 从内容创建并部署一个新的 Compose 项目（写入工作目录后 up）
+				Method:  http.MethodPost,
+				Path:    "/compose/create",
+				Handler: compose.CreateHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodGet,
 				Path:    "/compose/projects/:id/files/:filename",
 				Handler: compose.ReadFileHandler(serverCtx),
@@ -389,6 +395,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodPost,
 				Path:    "/container/create",
 				Handler: ops.CreateContainerHandler(serverCtx),
+			},
+			{
+				// 解析 docker run 命令为创建参数（仅解析预览，不创建）
+				Method:  http.MethodPost,
+				Path:    "/container/parseRunCommand",
+				Handler: ops.ParseRunCommandHandler(serverCtx),
 			},
 			{
 				Method:  http.MethodPost,
