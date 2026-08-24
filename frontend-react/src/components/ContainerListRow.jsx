@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity } from 'lucide-react'
+import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity, Network } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
 import { ContainerStats } from './ContainerStats.jsx'
@@ -57,7 +57,16 @@ export function ContainerListRow({
 
       {/* 名称 + 镜像 */}
       <div className="min-w-0 flex-1">
-        <div className="font-medium text-gray-900 dark:text-white truncate">{container.name}</div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="font-medium text-gray-900 dark:text-white truncate">{container.name}</div>
+          {/* 来源主机标识：非本地容器才展示 */}
+          {container.hostName && container.hostId && container.hostId !== 'local' && (
+            <span className="flex-shrink-0 inline-flex items-center gap-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-medium">
+              <Network className="h-2.5 w-2.5" />
+              {container.hostName}
+            </span>
+          )}
+        </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{container.usingImage}</div>
       </div>
 

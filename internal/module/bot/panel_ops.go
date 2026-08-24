@@ -6,19 +6,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 )
 
 // doUpdate 提交容器更新任务（沿用当前镜像），并在原管理面板上持续显示进度。
-// messageID > 0 时编辑原消息显示进度，否则发送新消息。
-func (b *Bot) doUpdate(chatID int64, id, name string, messageID int64) {
-	c, ok := b.findContainer(id)
+// messageID > 0 时编辑原消息显示进度，否则发送新消息。hostID 定位容器所属主机。
+func (b *Bot) doUpdate(chatID int64, id, name, hostID string, messageID int64) {
+	c, ok := b.findContainerOnHost(id, hostID)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
 		return
 	}
-	// 沿用容器当前镜像进行更新（拉取同名 tag 的最新镜像并重建）
-	taskID, err := b.ops.Update(c.ID, name, c.Image)
+	// 沿用容器当前镜像进行更新（拉取同名 tag 的最新镜像并重建），按主机路由
+	taskID, err := containerops.NewForHost(b.svcCtx, hostID).Update(c.ID, name, c.Image)
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 提交更新失败：%s", err.Error()))
 		return
@@ -29,12 +30,14 @@ func (b *Bot) doUpdate(chatID int64, id, name string, messageID int64) {
 }
 
 // sendContainerLogs 推送容器最近日志（最后 50 行，限制长度避免超 TG 消息上限）。
-// messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) sendContainerLogs(chatID int64, id, name string, messageID int64) {
+// messageID > 0 时编辑原消息，否则发送新消息。hostID 定位容器所属主机。
+func (b *Bot) sendContainerLogs(chatID int64, id, name, hostID string, messageID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	ops := containerops.NewForHost(b.svcCtx, hostID)
+	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
 	// TG 单条消息上限约 4096 字符，日志控制在 3500 字节内
-	out, err := b.ops.Logs(ctx, id, 50, "", false, 3500)
+	out, err := ops.Logs(ctx, id, 50, "", false, 3500)
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 获取日志失败：%s", err.Error()))
 		return
@@ -50,8 +53,8 @@ func (b *Bot) sendContainerLogs(chatID int64, id, name string, messageID int64) 
 	text := fmt.Sprintf("<b>📄 %s 最近日志</b>\n<pre>%s</pre>", escapeHTML(name), escapeHTML(out))
 	// 键盘：下载完整日志 + 返回管理
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
-		{{Text: "⬇ 下载完整日志", CallbackData: fmt.Sprintf("logdl|%s|%s", id, name)}},
-		{{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s", id, name)}},
+		{{Text: "⬇ 下载完整日志", CallbackData: fmt.Sprintf("logdl|%s|%s%s", id, name, hs)}},
+		{{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s%s", id, name, hs)}},
 	}}
 	// 如果有 messageID，编辑原消息；否则发送新消息
 	if messageID > 0 {
@@ -62,11 +65,11 @@ func (b *Bot) sendContainerLogs(chatID int64, id, name string, messageID int64) 
 }
 
 // sendContainerLogFile 拉取更多行日志并作为 .log 文档发送（突破 TG 文本消息 4096 上限）。
-func (b *Bot) sendContainerLogFile(chatID int64, id, name string) {
+func (b *Bot) sendContainerLogFile(chatID int64, id, name, hostID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// 文件形式可容纳更多内容：取最近 2000 行，上限 2MB
-	out, err := b.ops.Logs(ctx, id, 2000, "", true, 2*1024*1024)
+	out, err := containerops.NewForHost(b.svcCtx, hostID).Logs(ctx, id, 2000, "", true, 2*1024*1024)
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 获取日志失败：%s", err.Error()))
 		return
@@ -94,8 +97,8 @@ func (b *Bot) sendContainerLogFile(chatID int64, id, name string) {
 
 // sendContainerInspect 推送容器详情（镜像/状态/端口/网络/时间）。
 // messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) sendContainerInspect(chatID int64, id, name string, messageID int64) {
-	c, ok := b.findContainer(id)
+func (b *Bot) sendContainerInspect(chatID int64, id, name, hostID string, messageID int64) {
+	c, ok := b.findContainerOnHost(id, hostID)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
 		return
@@ -133,7 +136,7 @@ func (b *Bot) sendContainerInspect(chatID int64, id, name string, messageID int6
 	if c.Status != "" {
 		t.WriteString(fmt.Sprintf("运行：%s\n", escapeHTML(c.Status)))
 	}
-	kb := b.backToPanelKb(id, name)
+	kb := b.backToPanelKb(id, name, hostID)
 	// 如果有 messageID，编辑原消息；否则发送新消息
 	if messageID > 0 {
 		b.editMessageKeyboard(chatID, messageID, t.String(), kb)
@@ -143,9 +146,9 @@ func (b *Bot) sendContainerInspect(chatID int64, id, name string, messageID int6
 }
 
 // sendContainerStats 推送容器实时资源占用（CPU/内存），采样一次。
-// messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) sendContainerStats(chatID int64, id, name string, messageID int64) {
-	stat, err := b.ops.Stats(id)
+// messageID > 0 时编辑原消息，否则发送新消息。hostID 定位容器所属主机。
+func (b *Bot) sendContainerStats(chatID int64, id, name, hostID string, messageID int64) {
+	stat, err := containerops.NewForHost(b.svcCtx, hostID).Stats(id)
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 获取资源占用失败：%s", err.Error()))
 		return
@@ -155,7 +158,7 @@ func (b *Bot) sendContainerStats(chatID int64, id, name string, messageID int64)
 	t.WriteString(fmt.Sprintf("CPU：%.2f%%\n", stat.CPUPercent))
 	t.WriteString(fmt.Sprintf("内存：%.1f MB / %.1f MB（%.1f%%）\n",
 		float64(stat.MemUsage)/1024/1024, float64(stat.MemLimit)/1024/1024, stat.MemPercent))
-	kb := b.backToPanelKb(id, name)
+	kb := b.backToPanelKb(id, name, hostID)
 	// 如果有 messageID，编辑原消息；否则发送新消息
 	if messageID > 0 {
 		b.editMessageKeyboard(chatID, messageID, t.String(), kb)
@@ -164,10 +167,11 @@ func (b *Bot) sendContainerStats(chatID int64, id, name string, messageID int64)
 	}
 }
 
-// backToPanelKb 生成"返回容器面板"的键盘。
-func (b *Bot) backToPanelKb(id, name string) *telegram.InlineKeyboardMarkup {
+// backToPanelKb 生成"返回容器面板"的键盘。hostID 决定回到哪个主机的面板。
+func (b *Bot) backToPanelKb(id, name, hostID string) *telegram.InlineKeyboardMarkup {
+	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
-		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s", id, name)},
+		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s%s", id, name, hs)},
 	}}}
 }
 

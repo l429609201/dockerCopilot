@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -13,12 +14,13 @@ import (
 // sendTagSwitch 展示可切换的镜像标签：列出本地与当前镜像同名的其它 tag 作为按钮，
 // 并提供"手动输入标签"入口。切换标签本质是用目标 tag 镜像重建容器。
 // messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
-	c, ok := b.findContainer(id)
+func (b *Bot) sendTagSwitch(chatID int64, id, name, hostID string, messageID int64) {
+	c, ok := b.findContainerOnHost(id, hostID)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
 		return
 	}
+	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
 	// 解析当前镜像名（去掉 tag）
 	curImage := c.Image
 	repo := curImage
@@ -41,7 +43,7 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
 			}
 			seen[full] = true
 			rows = append(rows, []telegram.InlineKeyboardButton{
-				{Text: "🏷 " + img.ImageTag, CallbackData: fmt.Sprintf("dotag|%s|%s|%s", id, name, img.ImageTag)},
+				{Text: "🏷 " + img.ImageTag, CallbackData: fmt.Sprintf("dotag|%s|%s|%s%s", id, name, img.ImageTag, hs)},
 			})
 		}
 	}
@@ -57,10 +59,10 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
 
 	// 手动输入 + 返回
 	rows = append(rows, []telegram.InlineKeyboardButton{
-		{Text: "✏ 手动输入标签", CallbackData: fmt.Sprintf("tagin|%s|%s", id, name)},
+		{Text: "✏ 手动输入标签", CallbackData: fmt.Sprintf("tagin|%s|%s%s", id, name, hs)},
 	})
 	rows = append(rows, []telegram.InlineKeyboardButton{
-		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s", id, name)},
+		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s%s", id, name, hs)},
 	})
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
 	// 如果有 messageID，编辑原消息；否则发送新消息
@@ -73,10 +75,10 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name string, messageID int64) {
 
 // doSwitchTag 用指定 tag 重建容器：拼出 repo:tag 后走更新流程。
 // messageID > 0 时把进度编辑到原消息（面板点击），否则发新消息（文本输入切标签）。
-func (b *Bot) doSwitchTag(chatID int64, id, name, tag string, messageID int64) {
-	c, ok := b.findContainer(id)
+func (b *Bot) doSwitchTag(chatID int64, id, name, tag, hostID string, messageID int64) {
+	c, ok := b.findContainerOnHost(id, hostID)
 	if !ok {
-		b.editOrReplyKeyboard(chatID, messageID, "❌ 容器不存在或已被删除", b.backToPanelKb(id, name))
+		b.editOrReplyKeyboard(chatID, messageID, "❌ 容器不存在或已被删除", b.backToPanelKb(id, name, hostID))
 		return
 	}
 	repo := c.Image
@@ -84,19 +86,19 @@ func (b *Bot) doSwitchTag(chatID int64, id, name, tag string, messageID int64) {
 		repo = c.Image[:idx]
 	}
 	target := repo + ":" + strings.TrimSpace(tag)
-	taskID, err := b.ops.Update(c.ID, name, target)
+	taskID, err := containerops.NewForHost(b.svcCtx, hostID).Update(c.ID, name, target)
 	if err != nil {
 		b.editOrReplyKeyboard(chatID, messageID,
-			fmt.Sprintf("❌ 提交切换失败：%s", escapeHTML(err.Error())), b.backToPanelKb(id, name))
+			fmt.Sprintf("❌ 提交切换失败：%s", escapeHTML(err.Error())), b.backToPanelKb(id, name, hostID))
 		return
 	}
 	// 复用更新进度监听：把切标签进度持续编辑到原消息上
 	go b.watchUpdateProgress(chatID, messageID, taskID, name, target)
 }
 
-// promptRename 进入重命名等待：提示用户发送新名称。
-func (b *Bot) promptRename(chatID int64, id, name string) {
-	b.setPending(chatID, &pendingAction{kind: "rename", id: id, name: name})
+// promptRename 进入重命名等待：提示用户发送新名称。hostID 记入待处理动作。
+func (b *Bot) promptRename(chatID int64, id, name, hostID string) {
+	b.setPending(chatID, &pendingAction{kind: "rename", id: id, name: name, hostID: hostID})
 	b.reply(chatID, fmt.Sprintf("✏ 请发送容器 <b>%s</b> 的新名称（发送 /cancel 取消）：", escapeHTML(name)))
 }
 
@@ -105,7 +107,7 @@ func (b *Bot) promptRename(chatID int64, id, name string) {
 // 会话采用"单屏终端"形态：直接在面板消息(panelMsgID)上编辑成终端界面，
 // 之后每条命令的结果都编辑更新到这条消息上，退出后再把这条消息恢复为容器面板菜单。
 // panelMsgID > 0 时复用该消息（不新发消息）；为 0 时回退发送新消息。
-func (b *Bot) promptExec(chatID int64, id, name string, panelMsgID int64) {
+func (b *Bot) promptExec(chatID int64, id, name, hostID string, panelMsgID int64) {
 	welcome := fmt.Sprintf(
 		"🖥 <b>%s</b> Shell 会话已就绪\n\n"+
 			"• 直接发送命令即可连续执行（支持管道/重定向）\n"+
@@ -115,32 +117,33 @@ func (b *Bot) promptExec(chatID int64, id, name string, panelMsgID int64) {
 	var msgID int64
 	if panelMsgID > 0 {
 		// 复用面板消息：编辑为终端界面，会话结果都更新在这一条上
-		b.editMessageKeyboard(chatID, panelMsgID, welcome, b.shellKb(id, name))
+		b.editMessageKeyboard(chatID, panelMsgID, welcome, b.shellKb(id, name, hostID))
 		msgID = panelMsgID
 	} else {
 		// 无面板消息（如命令触发）：新发一条终端消息
 		var err error
-		msgID, err = b.client.SendMessageReturnID(chatID, welcome, b.shellKb(id, name))
+		msgID, err = b.client.SendMessageReturnID(chatID, welcome, b.shellKb(id, name, hostID))
 		if err != nil {
 			logx.Errorf("Telegram 发送 Shell 终端消息失败 chat=%d: %v", chatID, err)
 			b.reply(chatID, "❌ 无法进入 Shell 会话，请稍后重试。")
 			return
 		}
 	}
-	b.setShell(chatID, &shellSession{id: id, name: name, workDir: "", resultMsgID: msgID})
+	b.setShell(chatID, &shellSession{id: id, name: name, hostID: hostID, workDir: "", resultMsgID: msgID})
 }
 
 // shellKb 返回 Shell 会话终端消息下方的内联键盘：查看历史命令 / 退出交互。
-func (b *Bot) shellKb(id, name string) *telegram.InlineKeyboardMarkup {
+func (b *Bot) shellKb(id, name, hostID string) *telegram.InlineKeyboardMarkup {
+	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
-		{Text: "📜 历史命令", CallbackData: fmt.Sprintf("shhist|%s|%s", id, name)},
-		{Text: "⏹ 退出交互", CallbackData: fmt.Sprintf("shexit|%s|%s", id, name)},
+		{Text: "📜 历史命令", CallbackData: fmt.Sprintf("shhist|%s|%s%s", id, name, hs)},
+		{Text: "⏹ 退出交互", CallbackData: fmt.Sprintf("shexit|%s|%s%s", id, name, hs)},
 	}}}
 }
 
-// promptTagInput 进入标签输入等待：提示用户发送目标标签。
-func (b *Bot) promptTagInput(chatID int64, id, name string) {
-	b.setPending(chatID, &pendingAction{kind: "tag", id: id, name: name})
+// promptTagInput 进入标签输入等待：提示用户发送目标标签。hostID 记入待处理动作。
+func (b *Bot) promptTagInput(chatID int64, id, name, hostID string) {
+	b.setPending(chatID, &pendingAction{kind: "tag", id: id, name: name, hostID: hostID})
 	b.reply(chatID, fmt.Sprintf("🏷 请发送容器 <b>%s</b> 要切换到的镜像标签（发送 /cancel 取消）：\n例如：<code>latest</code> 或 <code>v1.2.3</code>", escapeHTML(name)))
 }
 
@@ -154,15 +157,16 @@ func (b *Bot) completePending(chatID int64, p *pendingAction, input string) {
 	}
 	switch p.kind {
 	case "rename":
-		if err := b.ops.Rename(p.id, input); err != nil {
-			b.replyKeyboard(chatID, fmt.Sprintf("❌ 重命名失败：%s", escapeHTML(err.Error())), b.backToPanelKb(p.id, p.name))
+		// 按容器所属主机执行重命名
+		if err := containerops.NewForHost(b.svcCtx, p.hostID).Rename(p.id, input); err != nil {
+			b.replyKeyboard(chatID, fmt.Sprintf("❌ 重命名失败：%s", escapeHTML(err.Error())), b.backToPanelKb(p.id, p.name, p.hostID))
 			return
 		}
 		// 重命名成功后容器名已变，用新名称构造返回面板按钮
-		b.replyKeyboard(chatID, fmt.Sprintf("✅ 容器已重命名为 <b>%s</b>", escapeHTML(input)), b.backToPanelKb(p.id, input))
+		b.replyKeyboard(chatID, fmt.Sprintf("✅ 容器已重命名为 <b>%s</b>", escapeHTML(input)), b.backToPanelKb(p.id, input, p.hostID))
 	case "tag":
 		// 文本输入切标签无面板 messageID，传 0 发新消息
-		b.doSwitchTag(chatID, p.id, p.name, input, 0)
+		b.doSwitchTag(chatID, p.id, p.name, input, p.hostID, 0)
 	default:
 		b.reply(chatID, "未知的待处理动作")
 	}
@@ -199,7 +203,7 @@ func (b *Bot) runShellCommand(chatID int64, s *shellSession, cmd string, cmdMsgI
 	script.WriteString(fmt.Sprintf("; printf '\\n%s|%%s\\n' \"$(pwd)\"", sentinel))
 
 	// 创建非 TTY exec，按优先级尝试可用 shell：bash > sh > ash
-	ptyShell := newPtyShell(b.svcCtx, s.id, chatID, s.resultMsgID)
+	ptyShell := newPtyShell(b.svcCtx, s.id, s.hostID, chatID, s.resultMsgID)
 	var startErr error
 	for _, sh := range []string{"/bin/bash", "/bin/sh", "/bin/ash"} {
 		startErr = ptyShell.Start([]string{sh, "-c", script.String()})
@@ -288,7 +292,7 @@ func (b *Bot) recordShellHistory(chatID int64, s *shellSession, cmd string) {
 
 // updateShellMsg 把内容编辑更新到会话的终端消息上（始终保持单屏），并带上会话键盘。
 func (b *Bot) updateShellMsg(chatID int64, s *shellSession, text string) {
-	b.editMessageKeyboard(chatID, s.resultMsgID, text, b.shellKb(s.id, s.name))
+	b.editMessageKeyboard(chatID, s.resultMsgID, text, b.shellKb(s.id, s.name, s.hostID))
 }
 
 // updateShellMsgWithOutput 实时更新终端消息（用于 PTY 流式输出）
@@ -325,7 +329,7 @@ func (b *Bot) updateShellMsgWithOutput(chatID int64, s *shellSession, cmd, outpu
 func (b *Bot) finishShell(chatID int64, s *shellSession) {
 	b.clearShell(chatID)
 	// 退出后把这条消息重新编辑为容器面板菜单（复用 resultMsgID）
-	b.sendContainerPanel(chatID, s.id, s.name, s.resultMsgID)
+	b.sendContainerPanel(chatID, s.id, s.name, s.hostID, s.resultMsgID)
 }
 
 // showShellHistory 把历史命令列表编辑更新到终端消息上。

@@ -68,7 +68,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
     (async () => {
       setLoading(true)
       try {
-        const r = await containerAPI.inspectContainer(container.ID)
+        const r = await containerAPI.inspectContainer(container.ID, container.hostId || container.HostID)
         const cfg = r.data?.data || {}
         const hc = cfg.HostConfig || {}
         const cc = cfg.Config || {}
@@ -168,7 +168,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         nanoCpus,
         confirmWarnings: true,
       }
-      await containerAPI.editContainer(container.ID, spec)
+      await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
       alert('编辑任务已提交，容器将重建')
       onSuccess?.()
       onClose()

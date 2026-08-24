@@ -38,6 +38,8 @@ type GetProgressReq struct {
 
 type IdReq struct {
 	Id string `path:"id"`
+	// HostID 容器所属 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `form:"hostId,optional"`
 }
 
 type LoginReq struct {
@@ -116,4 +118,19 @@ type HostPathConfigReq struct {
 type HostPathMappingItem struct {
 	ContainerPath string `json:"containerPath"`
 	HostPath      string `json:"hostPath"`
+}
+
+// DockerHostReq 多 Docker 主机的创建/更新请求。
+// ID 为空表示新建；非空表示更新。本地主机（id=local）仅允许改名，地址/类型固定。
+type DockerHostReq struct {
+	ID      string `json:"id,optional"`
+	Name    string `json:"name"`
+	Address string `json:"address,optional"` // 远程形如 tcp://ip:2375；本地忽略此字段
+	Enabled bool   `json:"enabled,optional"`
+	Note    string `json:"note,optional"`
+}
+
+// DockerHostIDReq 按 ID 操作 Docker 主机（删除、连通性测试）。
+type DockerHostIDReq struct {
+	ID string `path:"id"`
 }

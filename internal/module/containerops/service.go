@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
@@ -16,18 +17,33 @@ import (
 
 // Service 封装容器生命周期操作，供 HTTP handler、Telegram Bot 等复用。
 // 单一职责：只做“对某个容器执行某个动作”，不关心调用来源。
+// hostID 标记操作目标所在的 Docker 主机（多 Docker 管理），空表示本地。
 type Service struct {
 	svcCtx *svc.ServiceContext
+	hostID string
 }
 
-// New 创建容器操作服务。
+// New 创建针对本地 Docker 主机的容器操作服务（保留原签名，兼容既有调用）。
 func New(svcCtx *svc.ServiceContext) *Service {
 	return &Service{svcCtx: svcCtx}
 }
 
+// NewForHost 创建针对指定 Docker 主机的容器操作服务。hostID 为空时等同本地。
+func NewForHost(svcCtx *svc.ServiceContext, hostID string) *Service {
+	return &Service{svcCtx: svcCtx, hostID: hostID}
+}
+
+// cli 返回当前主机对应的 docker client，未找到时回退本地。
+func (s *Service) cli() *dockerclient.Client {
+	if c, ok := s.svcCtx.DockerManager.GetClient(s.hostID); ok {
+		return c
+	}
+	return s.svcCtx.DockerClient
+}
+
 // ResolveIDByName 按容器名查找容器ID，未找到返回错误。
 func (s *Service) ResolveIDByName(name string) (string, error) {
-	list, err := utiles.GetContainerList(s.svcCtx)
+	list, err := utiles.GetContainerListFromHost(s.svcCtx, s.hostID)
 	if err != nil {
 		return "", err
 	}
@@ -44,7 +60,7 @@ func (s *Service) ResolveIDByName(name string) (string, error) {
 
 // Start 启动容器。
 func (s *Service) Start(id string) error {
-	return s.svcCtx.DockerClient.ContainerStart(context.Background(), id, container.StartOptions{})
+	return s.cli().ContainerStart(context.Background(), id, container.StartOptions{})
 }
 
 // Stop 停止容器，timeout 为优雅停止秒数。
@@ -53,7 +69,7 @@ func (s *Service) Stop(id string, timeoutSec int) error {
 		timeoutSec = 10
 	}
 	opts := container.StopOptions{Signal: "SIGINT", Timeout: &timeoutSec}
-	return s.svcCtx.DockerClient.ContainerStop(context.Background(), id, opts)
+	return s.cli().ContainerStop(context.Background(), id, opts)
 }
 
 // Restart 重启容器。
@@ -62,27 +78,27 @@ func (s *Service) Restart(id string, timeoutSec int) error {
 		timeoutSec = 10
 	}
 	opts := container.StopOptions{Signal: "SIGINT", Timeout: &timeoutSec}
-	return s.svcCtx.DockerClient.ContainerRestart(context.Background(), id, opts)
+	return s.cli().ContainerRestart(context.Background(), id, opts)
 }
 
 // Pause 暂停容器。
 func (s *Service) Pause(id string) error {
-	return s.svcCtx.DockerClient.ContainerPause(context.Background(), id)
+	return s.cli().ContainerPause(context.Background(), id)
 }
 
 // Unpause 恢复容器。
 func (s *Service) Unpause(id string) error {
-	return s.svcCtx.DockerClient.ContainerUnpause(context.Background(), id)
+	return s.cli().ContainerUnpause(context.Background(), id)
 }
 
 // Kill 强制终止容器（默认 SIGKILL）。
 func (s *Service) Kill(id string) error {
-	return s.svcCtx.DockerClient.ContainerKill(context.Background(), id, "SIGKILL")
+	return s.cli().ContainerKill(context.Background(), id, "SIGKILL")
 }
 
 // Remove 删除容器。force 强制删除运行中容器，removeVolumes 删除匿名卷。
 func (s *Service) Remove(id string, force, removeVolumes bool) error {
-	return s.svcCtx.DockerClient.ContainerRemove(context.Background(), id, container.RemoveOptions{
+	return s.cli().ContainerRemove(context.Background(), id, container.RemoveOptions{
 		Force:         force,
 		RemoveVolumes: removeVolumes,
 	})
@@ -90,7 +106,7 @@ func (s *Service) Remove(id string, force, removeVolumes bool) error {
 
 // Rename 重命名容器。
 func (s *Service) Rename(id, newName string) error {
-	return s.svcCtx.DockerClient.ContainerRename(context.Background(), id, newName)
+	return s.cli().ContainerRename(context.Background(), id, newName)
 }
 
 // Update 更新容器：拉取 imageNameAndTag 指定镜像并重建容器。
@@ -113,7 +129,7 @@ func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
 			}
 			return
 		}
-		if e := utiles.UpdateContainerWithContext(ctxWithTimeout, s.svcCtx, id, name, imageNameAndTag, delOldContainer, taskID); e != nil {
+		if e := utiles.UpdateContainerOnHost(ctxWithTimeout, s.svcCtx, s.hostID, id, name, imageNameAndTag, delOldContainer, taskID, ""); e != nil {
 			logx.Errorf("Bot 更新容器失败: %v", e)
 		}
 	})

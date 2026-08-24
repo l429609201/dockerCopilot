@@ -127,9 +127,10 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
                   ) : (
                     candidates.map((name) => (
                       <button key={name} type="button"
-                        onClick={() => { addMuted(name); setSearchText(''); setPickerOpen(false) }}
-                        className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 truncate">
-                        {name}
+                        onClick={() => addMuted(name)}
+                        className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <Plus className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                        <span className="truncate">{name}</span>
                       </button>
                     ))
                   )}

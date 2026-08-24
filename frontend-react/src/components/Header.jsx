@@ -3,6 +3,7 @@ import {
   Box,
   LogOut,
   Server,
+  Network,
   DatabaseBackup,
   Info,
   Clock,
@@ -20,6 +21,7 @@ import { useVersionCheck } from '../hooks/useVersionCheck.js'
 // 全局导航项，桌面侧边栏与移动端底部导航共用，保证一致性
 export const NAV_ITEMS = [
   { id: '#containers', label: '容器', icon: Server },
+  { id: '#docker-hosts', label: '多 Docker', icon: Network },
   { id: '#images', label: '镜像', icon: Box },
   { id: '#compose', label: '项目', icon: Layers },
   { id: '#schedules', label: '定时', icon: Clock },

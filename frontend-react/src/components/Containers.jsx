@@ -17,7 +17,8 @@ import {
   FileText,
   TerminalSquare,
   FolderOpen,
-  Pencil
+  Pencil,
+  Network
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -140,6 +141,8 @@ export function Containers() {
 
   const handleContainerAction = async (containerId, action) => {
     try {
+      // 从列表中定位容器，取得其所属 Docker 主机（多 Docker 管理）
+      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
       // 设置操作状态为加载中
       setContainerActions(prev => ({
         ...prev,
@@ -148,13 +151,13 @@ export function Containers() {
 
       switch (action) {
         case 'start':
-          await containerAPI.startContainer(containerId)
+          await containerAPI.startContainer(containerId, hostId)
           break
         case 'stop':
-          await containerAPI.stopContainer(containerId)
+          await containerAPI.stopContainer(containerId, hostId)
           break
         case 'restart':
-          await containerAPI.restartContainer(containerId)
+          await containerAPI.restartContainer(containerId, hostId)
           break
         default:
           break
@@ -259,16 +262,17 @@ export function Containers() {
       for (const containerId of selectedContainers) {
         try {
           const container = containers.find(c => c.id === containerId)
+          const hostId = container?.hostId
 
           switch (action) {
             case 'start':
-              await containerAPI.startContainer(containerId)
+              await containerAPI.startContainer(containerId, hostId)
               break
             case 'stop':
-              await containerAPI.stopContainer(containerId)
+              await containerAPI.stopContainer(containerId, hostId)
               break
             case 'restart':
-              await containerAPI.restartContainer(containerId)
+              await containerAPI.restartContainer(containerId, hostId)
               break
             case 'update':
               if (container) {
@@ -276,7 +280,8 @@ export function Containers() {
                   containerId,
                   container.name,
                   container.usingImage,
-                  true
+                  true,
+                  hostId
                 )
 
                 if (response.data.code === 200 || response.data.code === 0) {
@@ -343,7 +348,8 @@ export function Containers() {
 
   const handleRenameContainer = async (containerId, newName) => {
     try {
-      const response = await containerAPI.renameContainer(containerId, newName)
+      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
+      const response = await containerAPI.renameContainer(containerId, newName, hostId)
       if (response.data.code === 200 || response.data.code === 0) {
         await refetch()
         console.log('重命名成功')
@@ -379,12 +385,13 @@ export function Containers() {
         return
       }
 
-      // 注意参数顺序: id, containerName, imageNameAndTag, delOldContainer
+      // 注意参数顺序: id, containerName, imageNameAndTag, delOldContainer, hostId
       const response = await containerAPI.updateContainer(
         containerId,
         container.name,
         container.usingImage,
-        true
+        true,
+        container.hostId
       )
 
       console.log('更新容器响应:', response.data)
@@ -1112,10 +1119,17 @@ export function Containers() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center">
+                              <div className="flex items-center gap-1.5">
                                 <h3 className="font-semibold text-gray-900 dark:text-white truncate text-base group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
                                   {container.name}
                                 </h3>
+                                {/* 来源主机标识：非本地容器才展示，避免本地冗余 */}
+                                {container.hostName && container.hostId && container.hostId !== 'local' && (
+                                  <span className="flex-shrink-0 inline-flex items-center gap-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-medium">
+                                    <Network className="h-2.5 w-2.5" />
+                                    {container.hostName}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
                                 {container.usingImage}
@@ -1383,7 +1397,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     ;(async () => {
       setInspectLoading(true)
       try {
-        const r = await containerAPI.inspectContainer(container.id)
+        const r = await containerAPI.inspectContainer(container.id, container.hostId)
         const d = r.data?.data || r.data || null
         if (!cancelled) setInspectData(d)
       } catch (e) {
@@ -1529,7 +1543,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           container.id,
           container.name,
           imageNameAndTag,
-          true // 删除旧容器
+          true, // 删除旧容器
+          container.hostId
         )
 
         console.log('更新容器响应:', response.data)

@@ -35,7 +35,7 @@ export function ContainerOps({ container, onClose, initialTab = 'logs' }) {
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')} icon={FileText} label="日志" />
           <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="终端" />
         </div>
-        {tab === 'logs' ? <LogsPanel id={container.id} name={container.name} /> : <ExecPanel id={container.id} fullscreen={fullscreen} />}
+        {tab === 'logs' ? <LogsPanel id={container.id} name={container.name} hostId={container.hostId} /> : <ExecPanel id={container.id} fullscreen={fullscreen} hostId={container.hostId} />}
       </div>
     </div>
   )
@@ -76,7 +76,7 @@ export function ContainerLogs({ container, onClose }) {
             </button>
           </div>
         </div>
-        <LogsPanel id={container.id} name={container.name} />
+        <LogsPanel id={container.id} name={container.name} hostId={container.hostId} />
       </div>
     </div>
   )
@@ -108,7 +108,7 @@ export function ContainerConsole({ container, onClose }) {
             </button>
           </div>
         </div>
-        <ExecPanel id={container.id} fullscreen={fullscreen} />
+        <ExecPanel id={container.id} fullscreen={fullscreen} hostId={container.hostId} />
       </div>
     </div>
   )
@@ -131,7 +131,7 @@ function highlightLine(text, keyword) {
 }
 
 // 日志面板：支持行数/时间戳、关键词搜索过滤+高亮、日志下载
-function LogsPanel({ id, name }) {
+function LogsPanel({ id, name, hostId }) {
   const [logs, setLogs] = useState('')
   const [tail, setTail] = useState(200)
   const [timestamps, setTimestamps] = useState(false)
@@ -141,12 +141,12 @@ function LogsPanel({ id, name }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await containerAPI.getContainerLogs(id, { tail, timestamps })
+      const r = await containerAPI.getContainerLogs(id, { tail, timestamps }, hostId)
       setLogs(r.data?.data?.logs || '(无日志)')
     } catch (e) {
       setLogs('读取失败：' + e.message)
     } finally { setLoading(false) }
-  }, [id, tail, timestamps])
+  }, [id, tail, timestamps, hostId])
 
   React.useEffect(() => { load() }, [load])
 
@@ -216,7 +216,7 @@ function LogsPanel({ id, name }) {
 }
 
 // 交互式控制台面板（Portainer 风格）：选 shell + 用户 -> 连接 -> xterm 终端
-function ExecPanel({ id, fullscreen }) {
+function ExecPanel({ id, fullscreen, hostId }) {
   const [shell, setShell] = useState('/bin/bash')
   const [custom, setCustom] = useState(false)
   const [customCmd, setCustomCmd] = useState('/bin/bash')
@@ -265,7 +265,7 @@ function ExecPanel({ id, fullscreen }) {
       </div>
 
       {connected ? (
-        <Terminal key={sessionKey} containerId={id} cmd={effectiveCmd} user={user} fullscreen={fullscreen} />
+        <Terminal key={sessionKey} containerId={id} cmd={effectiveCmd} user={user} fullscreen={fullscreen} hostId={hostId} />
       ) : (
         <div className="flex-1 min-h-[280px] flex items-center justify-center text-gray-400 text-sm bg-gray-900/50 rounded-lg">
           选择 shell 与用户后点击「连接」进入交互式终端

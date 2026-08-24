@@ -18,11 +18,13 @@ export function FileManager({ container, onClose }) {
   const [editing, setEditing] = useState(null) // 文本编辑 { name, path, content }
   const fileInputRef = useRef(null)
   const id = container.id
+  // 容器所属 Docker 主机（多 Docker 管理），透传给文件 API
+  const hostId = container.hostId || container.HostID
 
   const load = useCallback(async (p) => {
     setLoading(true); setError('')
     try {
-      const r = await filesAPI.list(id, p)
+      const r = await filesAPI.list(id, p, hostId)
       if (r.data?.code === 200) {
         setEntries(r.data.data.entries || [])
       } else {
@@ -31,7 +33,7 @@ export function FileManager({ container, onClose }) {
     } catch (e) {
       setError(e.response?.data?.msg || e.message); setEntries([])
     } finally { setLoading(false) }
-  }, [id])
+  }, [id, hostId])
 
   useEffect(() => { load(path) }, [path, load])
 
@@ -51,7 +53,7 @@ export function FileManager({ container, onClose }) {
   // 下载
   const handleDownload = async (entry) => {
     try {
-      const r = await filesAPI.download(id, joinPath(path, entry.name))
+      const r = await filesAPI.download(id, joinPath(path, entry.name), hostId)
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
       a.href = url; a.download = entry.name; a.click()
@@ -63,7 +65,7 @@ export function FileManager({ container, onClose }) {
   const handleDelete = async (entry) => {
     if (!confirm(`确定删除 ${entry.name}${entry.isDir ? '（含其下所有内容）' : ''}？此操作不可恢复`)) return
     try {
-      await filesAPI.remove(id, joinPath(path, entry.name))
+      await filesAPI.remove(id, joinPath(path, entry.name), hostId)
       load(path)
     } catch (e) { alert('删除失败：' + (e.response?.data?.msg || e.message)) }
   }
@@ -73,7 +75,7 @@ export function FileManager({ container, onClose }) {
     const newName = prompt('新名称', entry.name)
     if (!newName || newName === entry.name) return
     try {
-      await filesAPI.rename(id, joinPath(path, entry.name), joinPath(path, newName))
+      await filesAPI.rename(id, joinPath(path, entry.name), joinPath(path, newName), hostId)
       load(path)
     } catch (e) { alert('重命名失败：' + (e.response?.data?.msg || e.message)) }
   }
@@ -83,7 +85,7 @@ export function FileManager({ container, onClose }) {
     const name = prompt('新目录名')
     if (!name) return
     try {
-      await filesAPI.mkdir(id, path, name)
+      await filesAPI.mkdir(id, path, name, hostId)
       load(path)
     } catch (e) { alert('创建失败：' + (e.response?.data?.msg || e.message)) }
   }
@@ -93,7 +95,7 @@ export function FileManager({ container, onClose }) {
     const file = e.target.files?.[0]
     if (!file) return
     try {
-      await filesAPI.upload(id, path, file)
+      await filesAPI.upload(id, path, file, undefined, hostId)
       load(path)
     } catch (err) { alert('上传失败：' + (err.response?.data?.msg || err.message)) }
     finally { e.target.value = '' }
@@ -102,7 +104,7 @@ export function FileManager({ container, onClose }) {
   // 打开文本编辑
   const handleEdit = async (entry) => {
     try {
-      const r = await filesAPI.read(id, joinPath(path, entry.name))
+      const r = await filesAPI.read(id, joinPath(path, entry.name), hostId)
       if (r.data?.code === 200) {
         setEditing({ name: entry.name, path: joinPath(path, entry.name), content: r.data.data.content, truncated: r.data.data.truncated })
       } else { alert(r.data?.msg || '读取失败') }
@@ -153,7 +155,7 @@ export function FileManager({ container, onClose }) {
           onRename={handleRename} onDelete={handleDelete} />
       )}
       {editing && (
-        <TextEditor id={id} editing={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(path) }} />
+        <TextEditor id={id} hostId={hostId} editing={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(path) }} />
       )}
     </div>
   )
@@ -277,14 +279,14 @@ function MenuItem({ icon: Icon, label, onClick, danger }) {
 }
 
 // 文本编辑器弹窗
-function TextEditor({ id, editing, onClose, onSaved }) {
+function TextEditor({ id, editing, onClose, onSaved, hostId }) {
   const [content, setContent] = useState(editing.content)
   const [saving, setSaving] = useState(false)
 
   const save = async () => {
     setSaving(true)
     try {
-      await filesAPI.write(id, editing.path, content)
+      await filesAPI.write(id, editing.path, content, hostId)
       onSaved()
     } catch (e) { alert('保存失败：' + (e.response?.data?.msg || e.message)) }
     finally { setSaving(false) }

@@ -15,7 +15,6 @@ type InspectExecLogic struct {
 	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
-	ops    *containerops.Service
 }
 
 func NewInspectExecLogic(ctx context.Context, svcCtx *svc.ServiceContext) *InspectExecLogic {
@@ -23,14 +22,18 @@ func NewInspectExecLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Inspe
 		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
-		ops:    containerops.New(svcCtx),
 	}
+}
+
+// opsFor 按目标主机构建容器操作服务，hostID 为空即本地。
+func (l *InspectExecLogic) opsFor(hostID string) *containerops.Service {
+	return containerops.NewForHost(l.svcCtx, hostID)
 }
 
 // Inspect 返回容器完整配置（供参数查看/编辑前端使用）。
 func (l *InspectExecLogic) Inspect(req *types.ContainerInspectReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	info, err := utiles.GetContainerInspect(l.svcCtx, req.Id)
+	info, err := utiles.GetContainerInspectFromHost(l.svcCtx, req.HostID, req.Id)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}
@@ -43,7 +46,7 @@ func (l *InspectExecLogic) Inspect(req *types.ContainerInspectReq) (*types.Resp,
 // Logs 返回容器日志文本。
 func (l *InspectExecLogic) Logs(req *types.ContainerLogsReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	output, err := l.ops.Logs(l.ctx, req.Id, req.Tail, req.Since, req.Timestamps, 512*1024)
+	output, err := l.opsFor(req.HostID).Logs(l.ctx, req.Id, req.Tail, req.Since, req.Timestamps, 512*1024)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}
@@ -59,7 +62,7 @@ func (l *InspectExecLogic) Exec(req *types.ContainerExecReq) (*types.Resp, error
 	if len(req.Cmd) == 0 {
 		return fail(resp, "命令不能为空"), nil
 	}
-	result, err := l.ops.Exec(l.ctx, req.Id, req.Cmd, req.WorkDir, req.User, 60, 64*1024)
+	result, err := l.opsFor(req.HostID).Exec(l.ctx, req.Id, req.Cmd, req.WorkDir, req.User, 60, 64*1024)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}
@@ -76,7 +79,7 @@ func (l *InspectExecLogic) Exec(req *types.ContainerExecReq) (*types.Resp, error
 // Top 获取容器进程列表。
 func (l *InspectExecLogic) Top(req *types.IdReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	result, err := l.ops.Top(l.ctx, req.Id)
+	result, err := l.opsFor(req.HostID).Top(l.ctx, req.Id)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}

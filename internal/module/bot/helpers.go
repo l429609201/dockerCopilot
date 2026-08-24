@@ -75,6 +75,26 @@ func (b *Bot) deleteMsg(chatID, messageID int64) {
 // helpText 返回帮助文案。
 // 现版本以「按钮式菜单」为主，帮助内容对齐主菜单的 8 个入口，指导用户点击操作，
 // 而非记忆命令（命令仍可用，作为补充在末尾列出）。
+// hostFromParts 从 callback 分段里安全取出 host 码（位于索引 idx），还原为 hostID。
+// 缺省（旧格式无 host 段）时返回本地主机 ID，保证向后兼容。
+func (b *Bot) hostFromParts(parts []string, idx int) string {
+	code := ""
+	if len(parts) > idx {
+		code = parts[idx]
+	}
+	return b.svcCtx.DockerManager.HostByCode(code)
+}
+
+// isPanelSubAction 判断是否为携带 host 段（4 段）的面板子功能动作，
+// 用于与「act|confirm|dotag」等其它 4 段回调区分。
+func isPanelSubAction(action string) bool {
+	switch action {
+	case "logs", "logdl", "inspect", "stats", "tags", "execp", "shexit", "shhist", "rename", "tagin":
+		return true
+	}
+	return false
+}
+
 func helpText() string {
 	return "<b>DockerCopilot 使用帮助</b>\n\n" +
 		"发送 /menu 或 /start 打开主菜单，全部操作都能点按钮完成：\n\n" +

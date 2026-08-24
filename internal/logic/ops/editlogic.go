@@ -15,7 +15,6 @@ type EditLogic struct {
 	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
-	ops    *containerops.Service
 }
 
 func NewEditLogic(ctx context.Context, svcCtx *svc.ServiceContext) *EditLogic {
@@ -23,7 +22,6 @@ func NewEditLogic(ctx context.Context, svcCtx *svc.ServiceContext) *EditLogic {
 		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
-		ops:    containerops.New(svcCtx),
 	}
 }
 
@@ -48,12 +46,14 @@ func (l *EditLogic) Edit(req *types.ContainerEditReq) (*types.Resp, error) {
 	}
 	taskID := uuid.New().String()
 	id := req.Id
+	// 按容器所属主机构建操作服务，保证远程主机的容器也能正确重建
+	ops := containerops.NewForHost(l.svcCtx, req.HostID)
 	startErr := l.svcCtx.TaskManager.TryStart(taskID, id, svc.TaskTypeContainerUpdate, func(taskCtx context.Context) {
 		l.svcCtx.UpdateProgress(taskID, svc.TaskProgress{
 			TaskID: taskID, Name: "编辑容器参数", Percentage: 5,
 			Message: "开始重建", DetailMsg: "开始重建", TaskType: svc.TaskTypeContainerUpdate, ResourceID: id,
 		})
-		err := l.ops.Recreate(taskCtx, id, spec, func(pct int, msg string) {
+		err := ops.Recreate(taskCtx, id, spec, func(pct int, msg string) {
 			l.svcCtx.UpdateProgress(taskID, svc.TaskProgress{
 				TaskID: taskID, Name: "编辑容器参数", Percentage: pct,
 				Message: msg, DetailMsg: msg, TaskType: svc.TaskTypeContainerUpdate, ResourceID: id,

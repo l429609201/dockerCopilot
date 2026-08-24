@@ -10,6 +10,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 )
@@ -22,6 +23,7 @@ import (
 type ptyShell struct {
 	svcCtx      *svc.ServiceContext
 	containerID string
+	hostID      string // 目标容器所属 Docker 主机（多 Docker 管理），空表示本地
 	chatID      int64
 	resultMsgID int64
 
@@ -50,12 +52,13 @@ var (
 	ctrlChars = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 )
 
-// newPtyShell 创建一个新的 PTY Shell 会话
-func newPtyShell(svcCtx *svc.ServiceContext, containerID string, chatID, resultMsgID int64) *ptyShell {
+// newPtyShell 创建一个新的 PTY Shell 会话。hostID 定位容器所属 Docker 主机（空为本地）。
+func newPtyShell(svcCtx *svc.ServiceContext, containerID, hostID string, chatID, resultMsgID int64) *ptyShell {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ptyShell{
 		svcCtx:      svcCtx,
 		containerID: containerID,
+		hostID:      hostID,
 		chatID:      chatID,
 		resultMsgID: resultMsgID,
 		ctx:         ctx,
@@ -64,10 +67,18 @@ func newPtyShell(svcCtx *svc.ServiceContext, containerID string, chatID, resultM
 	}
 }
 
+// cli 返回本会话目标主机的 docker client，未找到回退本地。
+func (p *ptyShell) cli() *dockerclient.Client {
+	if c, ok := p.svcCtx.DockerManager.GetClient(p.hostID); ok && c != nil {
+		return c
+	}
+	return p.svcCtx.DockerClient
+}
+
 // Start 在目标容器内以非 TTY 方式执行给定命令数组，并挂载输出流。
 // 不依赖宿主机 docker CLI；非 TTY 保证输出中不含命令回显与终端控制序列。
 func (p *ptyShell) Start(cmd []string) error {
-	execResp, err := p.svcCtx.DockerClient.ContainerExecCreate(p.ctx, p.containerID, container.ExecOptions{
+	execResp, err := p.cli().ContainerExecCreate(p.ctx, p.containerID, container.ExecOptions{
 		Cmd:          cmd,
 		Tty:          false,
 		AttachStdin:  false,
@@ -79,7 +90,7 @@ func (p *ptyShell) Start(cmd []string) error {
 	}
 	p.execID = execResp.ID
 
-	hijack, err := p.svcCtx.DockerClient.ContainerExecAttach(p.ctx, execResp.ID, container.ExecStartOptions{
+	hijack, err := p.cli().ContainerExecAttach(p.ctx, execResp.ID, container.ExecStartOptions{
 		Tty: false,
 	})
 	if err != nil {
@@ -95,7 +106,7 @@ func (p *ptyShell) ExitCode() int {
 	if p.execID == "" {
 		return -1
 	}
-	insp, err := p.svcCtx.DockerClient.ContainerExecInspect(context.Background(), p.execID)
+	insp, err := p.cli().ContainerExecInspect(context.Background(), p.execID)
 	if err != nil {
 		return -1
 	}

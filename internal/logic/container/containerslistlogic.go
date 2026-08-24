@@ -36,6 +36,9 @@ type Info struct {
 	// ExposedPorts 容器内暴露的端口（来自镜像/配置）。host 网络模式下等同于宿主机端口，
 	// 供前端在无端口映射时探测站点 favicon。
 	ExposedPorts []int `json:"exposedPorts"`
+	// HostID / HostName 该容器所属的 Docker 主机（多 Docker 管理），空表示本地。
+	HostID   string `json:"hostId,omitempty"`
+	HostName string `json:"hostName,omitempty"`
 }
 
 func NewContainersListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ContainersListLogic {
@@ -49,7 +52,8 @@ func NewContainersListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Co
 func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 	// 获取所有容器（包括停止的容器）
 	resp = &types.Resp{}
-	list, err := utiles.GetContainerList(l.svcCtx)
+	// 聚合所有已启用 Docker 主机的容器（单主机离线自动跳过）
+	list, err := utiles.GetAllContainers(l.svcCtx)
 	if err != nil {
 		resp.Code = 500
 		resp.Msg = err.Error()
@@ -76,12 +80,15 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 			containerInfo.UsingImage = v.ImageID
 			l.Error("image dont have name" + v.ID)
 		}
-		containerInspect, err := utiles.GetContainerInspect(l.svcCtx, v.ID)
+		// 按容器所属主机查询详情，保证远程容器也能拿到 inspect 信息
+		containerInspect, err := utiles.GetContainerInspectFromHost(l.svcCtx, v.HostID, v.ID)
 		if err != nil {
-			containerInfo.CreateImage = ""
 			l.Error("get image name error" + v.ID)
 		}
-		containerInfo.CreateImage = containerInspect.Config.Image
+		// inspect 失败时 Config 可能为 nil，需防御性判空（远程主机不可达时尤为常见）
+		if containerInspect.Config != nil {
+			containerInfo.CreateImage = containerInspect.Config.Image
+		}
 		t := time.Unix(v.Created, 0)
 		containerInfo.CreateTime = t.Format("2006-01-02 15:04:05")
 		containerInfo.RunningTime = v.Status
@@ -121,6 +128,9 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 				containerInfo.ExposedPorts = append(containerInfo.ExposedPorts, n)
 			}
 		}
+		// 标记来源主机（多 Docker 管理）
+		containerInfo.HostID = v.HostID
+		containerInfo.HostName = v.HostName
 		containerInfoList = append(containerInfoList, containerInfo)
 	}
 	resp.Data = containerInfoList

@@ -18,6 +18,28 @@ type AppConfig struct {
 	Compose ComposeConfig `json:"compose"`
 	// HostPathMapper 宿主机路径映射配置，用于文件选择器。
 	HostPathMapper HostPathMapperConfig `json:"hostPathMapper"`
+	// DockerHosts 多 Docker 主机列表。第一个恒为本地（local），不可删除。
+	DockerHosts []DockerHost `json:"dockerHosts,omitempty"`
+}
+
+// Docker 主机连接类型常量。
+const (
+	DockerHostTypeLocal  = "local"  // 本地，固定走 unix socket
+	DockerHostTypeRemote = "remote" // 远程，走 tcp:// HTTP 地址
+)
+
+// DockerHostLocalID 本地主机固定 ID，保证唯一且不可变。
+const DockerHostLocalID = "local"
+
+// DockerHost 单个 Docker 主机配置。
+// 本地主机 Type=local、Address 固定 unix socket 不可编辑；远程主机 Type=remote、Address 形如 tcp://ip:2375。
+type DockerHost struct {
+	ID      string `json:"id"`             // 唯一标识，本地恒为 "local"
+	Name    string `json:"name"`           // 展示名称（可编辑）
+	Type    string `json:"type"`           // local / remote
+	Address string `json:"address"`        // 连接地址：本地 unix:///var/run/docker.sock；远程 tcp://ip:2375
+	Enabled bool   `json:"enabled"`        // 是否启用（禁用则不纳入聚合与操作）
+	Note    string `json:"note,omitempty"` // 备注
 }
 
 // ComposeConfig 是 Compose 项目管理的动态配置（持久化到 config.json，前端可编辑）。

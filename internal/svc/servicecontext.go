@@ -21,7 +21,11 @@ type ServiceContext struct {
 	HubImageInfo               *module.ImageUpdateData
 	IndexCheckMiddleware       rest.Middleware
 	ProgressStore              ProgressStoreType
-	DockerClient               *client.Client
+	// DockerClient 本地默认 client，等价于 DockerManager.Local()。
+	// 保留此字段是为兼容大量既有代码；跨主机操作请用 DockerManager.GetClient(hostID)。
+	DockerClient *client.Client
+	// DockerManager 多 Docker 主机连接池，按 hostID 路由到不同 client。
+	DockerManager *DockerManager
 	// TaskManager 统一管理异步任务的并发、去重和取消，供容器更新、
 	// 定时更新、Compose 操作等复用，避免各处各自 go func 失控。
 	TaskManager *TaskManager
@@ -96,15 +100,10 @@ type LayerProgress struct {
 type ProgressStoreType map[string]TaskProgress
 
 func NewServiceContext(c config.Config) *ServiceContext {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		logx.Errorf("Unable to create docker client: %s", err)
-	}
 	svcCtx := &ServiceContext{
 		Config:        c,
 		HubImageInfo:  module.NewImageCheck(),
 		ProgressStore: make(ProgressStoreType),
-		DockerClient:  cli,
 	}
 	// 默认并发上限取配置值，未配置时回退为 2，避免同时拉取过多镜像压垮 Docker daemon
 	maxConcurrent := c.Task.MaxConcurrent
@@ -112,9 +111,25 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		maxConcurrent = 2
 	}
 	svcCtx.TaskManager = NewTaskManager(maxConcurrent)
-	// 加载持久化配置（定时更新、Registry凭据、Bot），失败时使用默认配置
+	// 加载持久化配置（定时更新、Registry凭据、Bot、Docker主机），失败时使用默认配置
 	svcCtx.AppConfig = appconfig.NewStore()
+	// 保证本地 Docker 主机始终存在（首项、不可删）
+	svcCtx.AppConfig.EnsureLocalHost()
+	// 按主机列表构建多 Docker 连接池；DockerClient 指向本地默认 client 以兼容既有代码
+	svcCtx.DockerManager = NewDockerManager(svcCtx.AppConfig.ListDockerHosts())
+	svcCtx.DockerClient = svcCtx.DockerManager.Local()
+	if svcCtx.DockerClient == nil {
+		logx.Error("本地 Docker client 初始化失败，请检查 docker.sock 是否挂载")
+	}
 	return svcCtx
+}
+
+// ReloadDockerHosts 按最新配置重建 Docker 连接池，并刷新本地默认 client 引用。
+// 供多 Docker 主机配置变更后调用。
+func (ctx *ServiceContext) ReloadDockerHosts() {
+	ctx.AppConfig.EnsureLocalHost()
+	ctx.DockerManager.Reload(ctx.AppConfig.ListDockerHosts())
+	ctx.DockerClient = ctx.DockerManager.Local()
 }
 
 func (ctx *ServiceContext) UpdateProgress(taskID string, progress TaskProgress) {

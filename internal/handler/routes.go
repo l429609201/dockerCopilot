@@ -326,6 +326,38 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		rest.WithPrefix("/api"),
 	)
 
+	// 多 Docker 主机管理
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				// 列出全部 Docker 主机及在线状态
+				Method:  http.MethodGet,
+				Path:    "/docker/hosts",
+				Handler: ops.DockerHostListHandler(serverCtx),
+			},
+			{
+				// 新建或更新 Docker 主机
+				Method:  http.MethodPost,
+				Path:    "/docker/hosts",
+				Handler: ops.DockerHostSaveHandler(serverCtx),
+			},
+			{
+				// 删除远程 Docker 主机
+				Method:  http.MethodDelete,
+				Path:    "/docker/hosts/:id",
+				Handler: ops.DockerHostDeleteHandler(serverCtx),
+			},
+			{
+				// 测试指定 Docker 主机连通性
+				Method:  http.MethodPost,
+				Path:    "/docker/hosts/:id/ping",
+				Handler: ops.DockerHostPingHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
 	// Telegram Bot 配置
 	server.AddRoutes(
 		[]rest.Route{

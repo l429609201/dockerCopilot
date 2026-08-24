@@ -35,9 +35,10 @@ type Bot struct {
 
 // pendingAction 描述一个等待用户文本输入的动作。
 type pendingAction struct {
-	kind string // rename / tag
-	id   string // 目标容器ID
-	name string // 目标容器名
+	kind   string // rename / tag
+	id     string // 目标容器ID
+	name   string // 目标容器名
+	hostID string // 目标容器所属 Docker 主机（多 Docker 管理），空表示本地
 }
 
 // shellSession 描述一个持续的容器 Shell 会话。
@@ -46,6 +47,7 @@ type pendingAction struct {
 type shellSession struct {
 	id          string   // 目标容器ID
 	name        string   // 目标容器名
+	hostID      string   // 目标容器所属 Docker 主机（多 Docker 管理），空表示本地
 	workDir     string   // 当前工作目录（空表示容器默认目录）
 	resultMsgID int64    // "终端消息"ID：结果始终更新在这一条上
 	history     []string // 已执行命令历史（用于"查看历史命令"）

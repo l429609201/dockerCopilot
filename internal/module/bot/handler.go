@@ -12,6 +12,7 @@ import (
 
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/module/compose"
+	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	MyType "github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
@@ -123,8 +124,8 @@ func (b *Bot) doAction(chatID int64, args []string, action string) {
 		b.reply(chatID, "❌ "+err.Error())
 		return
 	}
-	// 复用统一的二次确认逻辑
-	b.askConfirm(chatID, action, id, name)
+	// 复用统一的二次确认逻辑（命令行按名操作默认本地主机）
+	b.askConfirm(chatID, action, id, name, "")
 }
 
 // handleCallback 处理 inline 按钮回调：主菜单跳转、列表操作确认、执行已确认操作。
@@ -197,41 +198,43 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		b.toggleMute(chatID, parts[1], messageID)
 		return
 	}
-	// 单容器操作面板：panel|<id>|<name>
-	if parts[0] == "panel" && len(parts) == 3 {
-		b.sendContainerPanel(chatID, parts[1], parts[2], messageID)
+	// 单容器操作面板：panel|<id>|<name>[|<hostCode>]
+	if parts[0] == "panel" && len(parts) >= 3 {
+		host := b.hostFromParts(parts, 3)
+		b.sendContainerPanel(chatID, parts[1], parts[2], host, messageID)
 		return
 	}
-	// 面板子功能路由
-	if len(parts) == 3 {
+	// 面板子功能路由：<action>|<id>|<name>[|<hostCode>]
+	if len(parts) == 3 || (len(parts) == 4 && isPanelSubAction(parts[0])) {
 		id, name := parts[1], parts[2]
+		host := b.hostFromParts(parts, 3)
 		switch parts[0] {
 		case "logs":
-			b.sendContainerLogs(chatID, id, name, messageID)
+			b.sendContainerLogs(chatID, id, name, host, messageID)
 			return
 		case "logdl":
 			// 下载完整日志：作为文档发送
-			b.sendContainerLogFile(chatID, id, name)
+			b.sendContainerLogFile(chatID, id, name, host)
 			return
 		case "inspect":
-			b.sendContainerInspect(chatID, id, name, messageID)
+			b.sendContainerInspect(chatID, id, name, host, messageID)
 			return
 		case "stats":
-			b.sendContainerStats(chatID, id, name, messageID)
+			b.sendContainerStats(chatID, id, name, host, messageID)
 			return
 		case "tags":
-			b.sendTagSwitch(chatID, id, name, messageID)
+			b.sendTagSwitch(chatID, id, name, host, messageID)
 			return
 		case "execp":
 			// 在面板消息上直接开启 Shell（编辑本条消息），退出后恢复面板菜单
-			b.promptExec(chatID, id, name, messageID)
+			b.promptExec(chatID, id, name, host, messageID)
 			return
 		case "shexit":
 			// 退出 Shell 会话按钮：无论会话是否仍在，都把本条消息恢复为容器面板菜单
 			if s := b.getShell(chatID); s != nil {
 				b.finishShell(chatID, s)
 			} else if messageID > 0 {
-				b.sendContainerPanel(chatID, id, name, messageID)
+				b.sendContainerPanel(chatID, id, name, host, messageID)
 			}
 			return
 		case "shhist":
@@ -243,33 +246,36 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			}
 			return
 		case "rename":
-			b.promptRename(chatID, id, name)
+			b.promptRename(chatID, id, name, host)
 			return
 		case "tagin":
-			b.promptTagInput(chatID, id, name)
+			b.promptTagInput(chatID, id, name, host)
 			return
 		}
 	}
-	// 切换 tag 执行：dotag|<id>|<name>|<tag>
-	if parts[0] == "dotag" && len(parts) == 4 {
-		b.doSwitchTag(chatID, parts[1], parts[2], parts[3], messageID)
+	// 切换 tag 执行：dotag|<id>|<name>|<tag>[|<hostCode>]
+	if parts[0] == "dotag" && len(parts) >= 4 {
+		host := b.hostFromParts(parts, 4)
+		b.doSwitchTag(chatID, parts[1], parts[2], parts[3], host, messageID)
 		return
 	}
-	// 列表操作按钮：act|<action>|<id>|<name>
-	if len(parts) == 4 && parts[0] == "act" {
+	// 列表操作按钮：act|<action>|<id>|<name>[|<hostCode>]
+	if len(parts) >= 4 && parts[0] == "act" {
 		action := parts[1]
+		host := b.hostFromParts(parts, 4)
 		// 低风险操作（启动/停止/重启/暂停/恢复/更新）直接执行；危险操作走二次确认
 		switch action {
 		case "start", "stop", "restart", "pause", "unpause", "update":
-			b.execAction(chatID, action, parts[2], parts[3], messageID)
+			b.execAction(chatID, action, parts[2], parts[3], host, messageID)
 		default:
-			b.askConfirm(chatID, action, parts[2], parts[3])
+			b.askConfirm(chatID, action, parts[2], parts[3], host)
 		}
 		return
 	}
-	// 二次确认通过：confirm|<action>|<id>|<name>
-	if len(parts) == 4 && parts[0] == "confirm" {
-		b.execAction(chatID, parts[1], parts[2], parts[3], messageID)
+	// 二次确认通过：confirm|<action>|<id>|<name>[|<hostCode>]
+	if len(parts) >= 4 && parts[0] == "confirm" {
+		host := b.hostFromParts(parts, 4)
+		b.execAction(chatID, parts[1], parts[2], parts[3], host, messageID)
 		return
 	}
 	// 批量更新确认：batchupdate|confirm
@@ -427,25 +433,27 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 
 // execAction 统一执行容器操作并回报结果，供直接点击与二次确认后调用。
 // messageID > 0 时用于编辑原消息（特别是更新操作的进度显示）。
-func (b *Bot) execAction(chatID int64, action, id, name string, messageID int64) {
+func (b *Bot) execAction(chatID int64, action, id, name, hostID string, messageID int64) {
+	// 按容器所属主机构建操作服务（多 Docker 管理），本地/远程统一
+	ops := containerops.NewForHost(b.svcCtx, hostID)
 	var err error
 	switch action {
 	case "start":
-		err = b.ops.Start(id)
+		err = ops.Start(id)
 	case "stop":
-		err = b.ops.Stop(id, 10)
+		err = ops.Stop(id, 10)
 	case "restart":
-		err = b.ops.Restart(id, 10)
+		err = ops.Restart(id, 10)
 	case "pause":
-		err = b.ops.Pause(id)
+		err = ops.Pause(id)
 	case "unpause":
-		err = b.ops.Unpause(id)
+		err = ops.Unpause(id)
 	case "kill":
-		err = b.ops.Kill(id)
+		err = ops.Kill(id)
 	case "remove":
-		err = b.ops.Remove(id, true, false)
+		err = ops.Remove(id, true, false)
 	case "update":
-		b.doUpdate(chatID, id, name, messageID)
+		b.doUpdate(chatID, id, name, hostID, messageID)
 		return
 	default:
 		b.reply(chatID, "不支持的操作")
@@ -458,7 +466,7 @@ func (b *Bot) execAction(chatID int64, action, id, name string, messageID int64)
 			{Text: "⬅ 返回列表", CallbackData: "menu|ps|0"},
 		}}}
 	} else {
-		backKb = b.backToPanelKb(id, name)
+		backKb = b.backToPanelKb(id, name, hostID)
 	}
 	if err != nil {
 		b.editOrReplyKeyboard(chatID, messageID,
@@ -471,9 +479,14 @@ func (b *Bot) execAction(chatID int64, action, id, name string, messageID int64)
 		backKb)
 }
 
-// findContainer 按 id 前缀查找容器，返回容器信息与是否找到。
+// findContainer 按 id 前缀查找容器（本地，兼容旧调用）。
 func (b *Bot) findContainer(id string) (MyType.Container, bool) {
-	list, err := utiles.GetContainerList(b.svcCtx)
+	return b.findContainerOnHost(id, "")
+}
+
+// findContainerOnHost 在指定主机上按 id 前缀查找容器。hostID 为空则查本地。
+func (b *Bot) findContainerOnHost(id, hostID string) (MyType.Container, bool) {
+	list, err := utiles.GetContainerListFromHost(b.svcCtx, hostID)
 	if err != nil {
 		return MyType.Container{}, false
 	}
@@ -489,18 +502,24 @@ func (b *Bot) findContainer(id string) (MyType.Container, bool) {
 // sendContainerPanel 推送单容器操作面板：把该容器所有可用操作收纳到二级菜单，
 // 避免列表页按钮爆炸。按钮随容器状态动态变化。
 // messageID > 0 时编辑原消息，否则发送新消息。
-func (b *Bot) sendContainerPanel(chatID int64, id, name string, messageID int64) {
-	c, ok := b.findContainer(id)
+func (b *Bot) sendContainerPanel(chatID int64, id, name, hostID string, messageID int64) {
+	c, ok := b.findContainerOnHost(id, hostID)
 	if !ok {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
 		return
 	}
 	running := strings.EqualFold(c.State, "running")
 	paused := strings.EqualFold(c.State, "paused")
+	// host 码后缀：拼到每个 callback 末尾，让子操作知道目标主机
+	hc := b.svcCtx.DockerManager.HostCode(hostID)
+	hs := "|" + hc
 
-	// 面板文字：状态 + 镜像 + 更新标识
+	// 面板文字：状态 + 镜像 + 更新标识 + 来源主机
 	var text strings.Builder
 	text.WriteString(fmt.Sprintf("<b>⚙ 容器管理：%s</b>\n", escapeHTML(name)))
+	if hostID != "" && hostID != appconfig.DockerHostLocalID && c.HostName != "" {
+		text.WriteString(fmt.Sprintf("来源：🖥 %s\n", escapeHTML(c.HostName)))
+	}
 	text.WriteString(fmt.Sprintf("状态：%s\n", stateLabel(c.State)))
 	text.WriteString(fmt.Sprintf("镜像：<code>%s</code>\n", escapeHTML(shortImage(c.Image))))
 	if c.Update {
@@ -512,48 +531,48 @@ func (b *Bot) sendContainerPanel(chatID int64, id, name string, messageID int64)
 	var lifeRow []telegram.InlineKeyboardButton
 	if running {
 		lifeRow = append(lifeRow,
-			telegram.InlineKeyboardButton{Text: "⏹ 停止", CallbackData: fmt.Sprintf("act|stop|%s|%s", id, name)},
-			telegram.InlineKeyboardButton{Text: "🔄 重启", CallbackData: fmt.Sprintf("act|restart|%s|%s", id, name)},
-			telegram.InlineKeyboardButton{Text: "⏸ 暂停", CallbackData: fmt.Sprintf("act|pause|%s|%s", id, name)},
+			telegram.InlineKeyboardButton{Text: "⏹ 停止", CallbackData: fmt.Sprintf("act|stop|%s|%s%s", id, name, hs)},
+			telegram.InlineKeyboardButton{Text: "🔄 重启", CallbackData: fmt.Sprintf("act|restart|%s|%s%s", id, name, hs)},
+			telegram.InlineKeyboardButton{Text: "⏸ 暂停", CallbackData: fmt.Sprintf("act|pause|%s|%s%s", id, name, hs)},
 		)
 	} else if paused {
 		lifeRow = append(lifeRow,
-			telegram.InlineKeyboardButton{Text: "▶ 恢复", CallbackData: fmt.Sprintf("act|unpause|%s|%s", id, name)},
-			telegram.InlineKeyboardButton{Text: "⏹ 停止", CallbackData: fmt.Sprintf("act|stop|%s|%s", id, name)},
+			telegram.InlineKeyboardButton{Text: "▶ 恢复", CallbackData: fmt.Sprintf("act|unpause|%s|%s%s", id, name, hs)},
+			telegram.InlineKeyboardButton{Text: "⏹ 停止", CallbackData: fmt.Sprintf("act|stop|%s|%s%s", id, name, hs)},
 		)
 	} else {
 		lifeRow = append(lifeRow,
-			telegram.InlineKeyboardButton{Text: "▶ 启动", CallbackData: fmt.Sprintf("act|start|%s|%s", id, name)},
+			telegram.InlineKeyboardButton{Text: "▶ 启动", CallbackData: fmt.Sprintf("act|start|%s|%s%s", id, name, hs)},
 		)
 	}
 	rows = append(rows, lifeRow)
 
 	// 第二行：更新 / 切换 tag
 	updRow := []telegram.InlineKeyboardButton{
-		{Text: "⬆ 更新", CallbackData: fmt.Sprintf("act|update|%s|%s", id, name)},
-		{Text: "🏷 切换标签", CallbackData: fmt.Sprintf("tags|%s|%s", id, name)},
+		{Text: "⬆ 更新", CallbackData: fmt.Sprintf("act|update|%s|%s%s", id, name, hs)},
+		{Text: "🏷 切换标签", CallbackData: fmt.Sprintf("tags|%s|%s%s", id, name, hs)},
 	}
 	rows = append(rows, updRow)
 
 	// 第三行：信息查看 + 命令行
 	infoRow := []telegram.InlineKeyboardButton{
-		{Text: "📄 日志", CallbackData: fmt.Sprintf("logs|%s|%s", id, name)},
-		{Text: "🔍 详情", CallbackData: fmt.Sprintf("inspect|%s|%s", id, name)},
-		{Text: "📊 资源", CallbackData: fmt.Sprintf("stats|%s|%s", id, name)},
-		{Text: "💻 命令行", CallbackData: fmt.Sprintf("execp|%s|%s", id, name)},
+		{Text: "📄 日志", CallbackData: fmt.Sprintf("logs|%s|%s%s", id, name, hs)},
+		{Text: "🔍 详情", CallbackData: fmt.Sprintf("inspect|%s|%s%s", id, name, hs)},
+		{Text: "📊 资源", CallbackData: fmt.Sprintf("stats|%s|%s%s", id, name, hs)},
+		{Text: "💻 命令行", CallbackData: fmt.Sprintf("execp|%s|%s%s", id, name, hs)},
 	}
 	rows = append(rows, infoRow)
 
 	// 第四行：重命名
 	opRow := []telegram.InlineKeyboardButton{
-		{Text: "✏ 重命名", CallbackData: fmt.Sprintf("rename|%s|%s", id, name)},
+		{Text: "✏ 重命名", CallbackData: fmt.Sprintf("rename|%s|%s%s", id, name, hs)},
 	}
 	rows = append(rows, opRow)
 
 	// 第五行：危险操作（删除 / 强杀）
 	dangerRow := []telegram.InlineKeyboardButton{
-		{Text: "💀 强制终止", CallbackData: fmt.Sprintf("act|kill|%s|%s", id, name)},
-		{Text: "🗑 删除", CallbackData: fmt.Sprintf("act|remove|%s|%s", id, name)},
+		{Text: "💀 强制终止", CallbackData: fmt.Sprintf("act|kill|%s|%s%s", id, name, hs)},
+		{Text: "🗑 删除", CallbackData: fmt.Sprintf("act|remove|%s|%s%s", id, name, hs)},
 	}
 	rows = append(rows, dangerRow)
 
@@ -601,11 +620,12 @@ func (b *Bot) editMainMenu(chatID int64, messageID int64) {
 	}
 }
 
-// askConfirm 对指定容器操作弹出二次确认按钮。
-func (b *Bot) askConfirm(chatID int64, action, id, name string) {
+// askConfirm 对指定容器操作弹出二次确认按钮。hostID 定位容器所属主机。
+func (b *Bot) askConfirm(chatID int64, action, id, name, hostID string) {
+	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
 	kb := &telegram.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
-			{Text: "✅ 确认" + actionLabel(action), CallbackData: fmt.Sprintf("confirm|%s|%s|%s", action, id, name)},
+			{Text: "✅ 确认" + actionLabel(action), CallbackData: fmt.Sprintf("confirm|%s|%s|%s%s", action, id, name, hs)},
 			{Text: "取消", CallbackData: "cancel"},
 		}},
 	}
@@ -619,7 +639,8 @@ const pageSize = 10
 // onlyRunning=true 时仅展示运行中容器；page 从 0 开始。
 // messageID > 0 时编辑原消息（用于翻页），否则发送新消息。
 func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int, messageID int64) {
-	list, err := utiles.GetContainerList(b.svcCtx)
+	// 多 Docker 管理：聚合所有已启用主机的容器，展示时标注来源主机
+	list, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取容器列表失败："+err.Error())
 		return
@@ -683,20 +704,27 @@ func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int, messa
 		if c.Update {
 			updateFlag = " 🔺有更新"
 		}
-		// 文字列表：序号 + 汉化状态 + 名称 + 更新标识，第二行显示镜像:标签
-		text.WriteString(fmt.Sprintf("\n<b>%d.</b> %s <b>%s</b>%s\n    <code>%s</code>",
-			seq, stateLabel(c.State), escapeHTML(name), updateFlag, escapeHTML(shortImage(c.Image))))
+		// 来源主机标注：非本地容器附带 🖥 主机名，方便区分多 Docker 来源
+		hostFlag := ""
+		if c.HostID != "" && c.HostID != appconfig.DockerHostLocalID && c.HostName != "" {
+			hostFlag = fmt.Sprintf(" 🖥<i>%s</i>", escapeHTML(c.HostName))
+		}
+		// 文字列表：序号 + 汉化状态 + 名称 + 更新标识 + 来源，第二行显示镜像:标签
+		text.WriteString(fmt.Sprintf("\n<b>%d.</b> %s <b>%s</b>%s%s\n    <code>%s</code>",
+			seq, stateLabel(c.State), escapeHTML(name), updateFlag, hostFlag, escapeHTML(shortImage(c.Image))))
 
+		// host 码后缀：让列表按钮点击后定位到容器所属主机
+		hs := "|" + b.svcCtx.DockerManager.HostCode(c.HostID)
 		// 每行按钮：常用操作 + 更新（常驻）+ 「管理」进入面板
 		var row []telegram.InlineKeyboardButton
 		if strings.EqualFold(c.State, "running") {
 			row = append(row,
-				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.⏹停止", seq), CallbackData: fmt.Sprintf("act|stop|%s|%s", id, name)},
-				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.🔄重启", seq), CallbackData: fmt.Sprintf("act|restart|%s|%s", id, name)},
+				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.⏹停止", seq), CallbackData: fmt.Sprintf("act|stop|%s|%s%s", id, name, hs)},
+				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.🔄重启", seq), CallbackData: fmt.Sprintf("act|restart|%s|%s%s", id, name, hs)},
 			)
 		} else {
 			row = append(row,
-				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.▶启动", seq), CallbackData: fmt.Sprintf("act|start|%s|%s", id, name)},
+				telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.▶启动", seq), CallbackData: fmt.Sprintf("act|start|%s|%s%s", id, name, hs)},
 			)
 		}
 		// 更新按钮常驻显示（有更新时显示提示标记）
@@ -704,8 +732,8 @@ func (b *Bot) replyContainerList(chatID int64, onlyRunning bool, page int, messa
 		if c.Update {
 			updateText = fmt.Sprintf("%d.⬆更新🔺", seq)
 		}
-		row = append(row, telegram.InlineKeyboardButton{Text: updateText, CallbackData: fmt.Sprintf("act|update|%s|%s", id, name)})
-		row = append(row, telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.⚙管理", seq), CallbackData: fmt.Sprintf("panel|%s|%s", id, name)})
+		row = append(row, telegram.InlineKeyboardButton{Text: updateText, CallbackData: fmt.Sprintf("act|update|%s|%s%s", id, name, hs)})
+		row = append(row, telegram.InlineKeyboardButton{Text: fmt.Sprintf("%d.⚙管理", seq), CallbackData: fmt.Sprintf("panel|%s|%s%s", id, name, hs)})
 		rows = append(rows, row)
 	}
 

@@ -47,7 +47,7 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 			}
 			return
 		}
-		if e := utiles.UpdateContainerWithContext(ctxWithTimeout, l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID); e != nil {
+		if e := utiles.UpdateContainerOnHost(ctxWithTimeout, l.svcCtx, req.HostID, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID, ""); e != nil {
 			l.Errorf("Error in UpdateContainer: %v", e)
 		}
 	})
