@@ -173,6 +173,8 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 删除旧容器（释放容器名，如果配置要求保留则重命名）
+	// backupName 用于失败回滚时恢复（仅 !delOldContainer 时有值）
+	var backupName string
 	if delOldContainer {
 		err = serviceContext.DockerClient.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
 		if err != nil {
@@ -182,7 +184,7 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	} else {
 		// 保留旧容器：重命名为带时间戳的备份名
 		currentDate := time.Now().Format("2006-01-02-15-04-05")
-		backupName := name + "-" + currentDate
+		backupName = name + "-" + currentDate
 		err = serviceContext.DockerClient.ContainerRename(context.Background(), id, backupName)
 		if err != nil {
 			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "重命名旧容器失败", err)
@@ -199,7 +201,20 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	// 用原名创建新容器（旧容器已删除或重命名，名称可用）
 	newContainerResp, err := serviceContext.DockerClient.ContainerCreate(context.Background(), config, hostConfig, networkingConfig, nil, name)
 	if err != nil {
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败", err)
+		// 【修复】创建失败时尝试回滚旧容器（避免用户容器永久丢失）
+		logx.Errorf("创建新容器失败，尝试回滚旧容器: %v", err)
+		if !delOldContainer && backupName != "" {
+			// 旧容器被重命名为备份，尝试改回原名并重启
+			logx.Infof("尝试将备份容器 %s 恢复为原名 %s", backupName, name)
+			if renameErr := serviceContext.DockerClient.ContainerRename(context.Background(), backupName, name); renameErr != nil {
+				logx.Errorf("恢复容器名失败: %v，用户需手动重命名 %s", renameErr, backupName)
+			} else if startErr := serviceContext.DockerClient.ContainerStart(context.Background(), id, container.StartOptions{}); startErr != nil {
+				logx.Errorf("重启旧容器失败: %v", startErr)
+			} else {
+				logx.Info("✅ 已成功回滚并重启旧容器")
+			}
+		}
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败（已尝试回滚旧容器）", err)
 		return err
 	}
 	newContainerID := newContainerResp.ID
@@ -212,7 +227,21 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	// 启动新容器
 	err = serviceContext.DockerClient.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
 	if err != nil {
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败", err)
+		// 【修复】启动失败时回滚：删除失败的新容器 + 恢复旧容器
+		logx.Errorf("启动新容器失败，尝试回滚: %v", err)
+		_ = serviceContext.DockerClient.ContainerRemove(context.Background(), newContainerID, container.RemoveOptions{Force: true})
+		if !delOldContainer && backupName != "" {
+			// 旧容器被重命名为备份，尝试改回原名并重启
+			logx.Infof("尝试将备份容器 %s 恢复为原名 %s", backupName, name)
+			if renameErr := serviceContext.DockerClient.ContainerRename(context.Background(), backupName, name); renameErr != nil {
+				logx.Errorf("恢复容器名失败: %v，用户需手动重命名 %s", renameErr, backupName)
+			} else if startErr := serviceContext.DockerClient.ContainerStart(context.Background(), id, container.StartOptions{}); startErr != nil {
+				logx.Errorf("重启旧容器失败: %v", startErr)
+			} else {
+				logx.Info("✅ 已成功回滚并重启旧容器")
+			}
+		}
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败（已尝试回滚旧容器）", err)
 		return err
 	}
 
