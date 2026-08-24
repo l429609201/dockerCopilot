@@ -82,7 +82,7 @@ export function ContainerListRow({
             {onOps && (
               <>
                 <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="blue" />
-                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="purple" />
+                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="终端" color="purple" />
                 {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="yellow" />}
                 {onEdit && <IconBtn onClick={() => onEdit({ ...container, ID: container.id })} icon={Edit3} title="编辑容器" color="orange" />}
                 {onProcess && <IconBtn onClick={() => onProcess({ ...container, ID: container.id })} icon={Activity} title="查看进程" color="green" />}
@@ -146,7 +146,7 @@ export function ContainerListRow({
                         <>
                           <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
                           <MenuItem onClick={() => { onOps('logs'); setMenuOpen(false) }} icon={FileText} text="日志" />
-                          <MenuItem onClick={() => { onOps('exec'); setMenuOpen(false) }} icon={TerminalSquare} text="控制台" />
+                          <MenuItem onClick={() => { onOps('exec'); setMenuOpen(false) }} icon={TerminalSquare} text="终端" />
                           {onFiles && <MenuItem onClick={() => { onFiles(); setMenuOpen(false) }} icon={FolderOpen} text="文件管理" />}
                         </>
                       )}

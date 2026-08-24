@@ -33,7 +33,7 @@ export function ContainerOps({ container, onClose, initialTab = 'logs' }) {
         </div>
         <div className="flex gap-2 mb-3">
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')} icon={FileText} label="日志" />
-          <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="控制台" />
+          <TabBtn active={tab === 'exec'} onClick={() => setTab('exec')} icon={TerminalIcon} label="终端" />
         </div>
         {tab === 'logs' ? <LogsPanel id={container.id} name={container.name} /> : <ExecPanel id={container.id} fullscreen={fullscreen} />}
       </div>
@@ -95,7 +95,7 @@ export function ContainerConsole({ container, onClose }) {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
             <TerminalIcon className="h-5 w-5 text-teal-600 dark:text-teal-400" />
-            控制台 · {container.name}
+            终端 · {container.name}
           </h3>
           <div className="flex items-center gap-1">
             <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}

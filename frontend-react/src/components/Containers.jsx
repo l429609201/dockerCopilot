@@ -1252,10 +1252,10 @@ export function Containers() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); setConsoleTarget(container) }}
                                 className="flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
-                                title="控制台"
+                                title="终端"
                               >
                                 <TerminalSquare className="h-4 w-4" />
-                                <span>控制台</span>
+                                <span>终端</span>
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
@@ -1936,7 +1936,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 <>
                   <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
                   <ActionBtn onClick={() => onProcess({ ...currentContainer, ID: currentContainer.id })} icon={Activity} label="进程" color="emerald" />
-                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
+                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="终端" color="teal" />
                   <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
                 </>
               )}
@@ -1951,22 +1951,24 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
 // ActionBtn 辅助组件（用于详情弹窗底部按钮）
 function ActionBtn({ onClick, disabled, loading, icon: Icon, label, color, fullWidth }) {
+  // 与外部容器卡片按钮统一：浅色模式浅白底 + 灰边框，仅用字体/图标颜色区分。
+  // 每个颜色包含：文字色 + hover 浅背景 + hover 边框色。
   const colorMap = {
-    red: 'bg-red-600 hover:bg-red-700 dark:bg-red-500',
-    orange: 'bg-orange-600 hover:bg-orange-700 dark:bg-orange-500',
-    yellow: 'bg-yellow-500 hover:bg-yellow-600 dark:bg-yellow-500',
-    green: 'bg-green-600 hover:bg-green-700 dark:bg-green-500',
-    blue: 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500',
-    purple: 'bg-purple-600 hover:bg-purple-700 dark:bg-purple-500',
-    sky: 'bg-sky-600 hover:bg-sky-700 dark:bg-sky-500',
-    teal: 'bg-teal-600 hover:bg-teal-700 dark:bg-teal-500',
-    emerald: 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500',
-    amber: 'bg-amber-500 hover:bg-amber-600 dark:bg-amber-500',
+    red: 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-200 dark:hover:border-red-800',
+    orange: 'text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 hover:border-orange-200 dark:hover:border-orange-800',
+    yellow: 'text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 hover:border-yellow-200 dark:hover:border-yellow-800',
+    green: 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-200 dark:hover:border-green-800',
+    blue: 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800',
+    purple: 'text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800',
+    sky: 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 hover:border-sky-200 dark:hover:border-sky-800',
+    teal: 'text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 hover:border-teal-200 dark:hover:border-teal-800',
+    emerald: 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-200 dark:hover:border-emerald-800',
+    amber: 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:border-amber-200 dark:hover:border-amber-800',
   }
   return (
     <button onClick={onClick} disabled={disabled || loading}
-      className={`${fullWidth ? 'w-full' : ''} px-3 py-2 text-sm rounded-lg text-white transition-colors flex items-center justify-center gap-1.5 ${
-        disabled || loading ? 'bg-gray-300 dark:bg-gray-700 cursor-not-allowed' : colorMap[color]
+      className={`${fullWidth ? 'w-full' : ''} px-3 py-2 text-sm rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow active:scale-95 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium ${
+        disabled || loading ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed' : colorMap[color]
       }`}>
       {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       <span>{loading ? '处理中' : label}</span>
