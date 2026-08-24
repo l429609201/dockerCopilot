@@ -335,6 +335,12 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		b.replyUpdateCenter(chatID, messageID, page)
 		return
 	}
+	// 周期更新提醒「查看并管理」：updnotify|<page> —— 编辑摘要消息为分页详情
+	if parts[0] == "updnotify" && len(parts) == 2 {
+		page, _ := strconv.Atoi(parts[1])
+		b.resendUpdateNotification(chatID, page, messageID)
+		return
+	}
 	// 更新中心操作：updc|<action>
 	if parts[0] == "updc" && len(parts) == 2 {
 		switch parts[1] {
@@ -1981,12 +1987,34 @@ func (b *Bot) executePruneImages(chatID int64, mode string, messageID int64) {
 	}()
 }
 
-// sendUpdateNotificationToChat 向指定会话发送带交互式键盘的更新通知（支持分页）。
+// sendUpdateNotificationToChat 周期检测的更新推送入口：只发精简摘要 + 一个「查看并管理」按钮，
+// 避免一次性铺开大量容器按钮刷屏。点按钮后（回调 updnotify|0）再进入分页详情。
+// 仅在有可更新容器时才会被调用（调用方 notifier 已保证 len>0 且已排除屏蔽容器）。
 func (b *Bot) sendUpdateNotificationToChat(chatID int64, containers []UpdateContainer) {
-	b.sendUpdateNotificationToChatWithPage(chatID, containers, 0, 0)
+	if len(containers) == 0 {
+		return
+	}
+	var text strings.Builder
+	text.WriteString("<b>🔔 容器更新提醒</b>\n\n")
+	text.WriteString(fmt.Sprintf("检测到 <b>%d</b> 个容器有可用更新：\n\n", len(containers)))
+	// 摘要只列容器名（最多展示 15 个，超出以省略提示），不含按钮，保持消息简洁
+	const maxPreview = 15
+	for i, c := range containers {
+		if i >= maxPreview {
+			text.WriteString(fmt.Sprintf("… 还有 %d 个\n", len(containers)-maxPreview))
+			break
+		}
+		text.WriteString(fmt.Sprintf("🔺 %s\n", escapeHTML(c.Name)))
+	}
+	text.WriteString("\n点击下方按钮查看详情并逐个更新 / 屏蔽。")
+	// 单个「查看并管理」按钮，点击进入分页详情（编辑本条消息）
+	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
+		{Text: "📋 查看并管理", CallbackData: "updnotify|0"},
+	}}}
+	b.replyKeyboard(chatID, text.String(), kb)
 }
 
-// sendUpdateNotificationToChatWithPage 向指定会话发送带分页的更新通知。
+// sendUpdateNotificationToChatWithPage 向指定会话发送带分页的更新通知（详情页，含逐容器操作按钮）。
 func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []UpdateContainer, page int, messageID int64) {
 	if len(containers) == 0 {
 		return
