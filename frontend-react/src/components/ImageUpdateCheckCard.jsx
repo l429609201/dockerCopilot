@@ -89,12 +89,16 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
           ))}
         </div>
 
-        {/* 从容器列表勾选（下拉） */}
-        <div className="relative inline-block">
-          <button type="button" onClick={() => setPickerOpen((v) => !v)}
-            className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
-            <Plus className="h-4 w-4" /> 从容器列表添加 <ChevronDown className="h-3 w-3" />
-          </button>
+        {/* 从容器列表勾选（输入框样式的下拉选择器） */}
+        <div className="relative">
+          <div
+            onClick={() => setPickerOpen((v) => !v)}
+            className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:border-primary-500 dark:hover:border-primary-400 bg-white dark:bg-gray-800 transition-colors"
+          >
+            <Plus className="h-4 w-4 text-gray-400" />
+            <span className="flex-1 text-gray-500 dark:text-gray-400">从容器列表添加...</span>
+            <ChevronDown className="h-4 w-4 text-gray-400" />
+          </div>
           {pickerOpen && (
             <>
               {/* 点击外部关闭 */}
