@@ -58,11 +58,22 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           const [port, proto] = containerPort.split('/')
           ports.push({ host: hostBindings[0].HostPort || '', container: port, proto: proto || 'tcp' })
         }
-        // 挂载（从 HostConfig.Binds 解析 "source:target:mode"）
-        const binds = (hc.Binds || []).map((b) => {
-          const segs = b.split(':')
-          return { source: segs[0] || '', target: segs[1] || '', mode: segs[2] || 'rw' }
-        })
+        // 挂载：优先从 Mounts 数组解析（新格式），回退到 HostConfig.Binds（旧格式）
+        let binds = []
+        if (cfg.Mounts && cfg.Mounts.length > 0) {
+          // 新格式：Mounts 数组（Docker API v1.20+）
+          binds = cfg.Mounts.map((m) => ({
+            source: m.Source || '',
+            target: m.Destination || m.Target || '',
+            mode: m.RW === false ? 'ro' : 'rw',
+          }))
+        } else if (hc.Binds && hc.Binds.length > 0) {
+          // 旧格式：Binds 字符串数组（"source:target:mode"）
+          binds = hc.Binds.map((b) => {
+            const segs = b.split(':')
+            return { source: segs[0] || '', target: segs[1] || '', mode: segs[2] || 'rw' }
+          })
+        }
         // 标签（过滤 Docker/Compose 内部标签，避免误改）
         const labels = Object.entries(cc.Labels || {})
           .filter(([k]) => !k.startsWith('com.docker.') && !k.startsWith('org.opencontainers.'))
