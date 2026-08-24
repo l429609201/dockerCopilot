@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Save, AlertTriangle } from 'lucide-react'
+import { X, Plus, Trash2, Save, AlertTriangle, FolderSearch } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
+import { DirectoryPicker } from './DirectoryPicker.jsx'
+import { ContainerPathPicker } from './ContainerPathPicker.jsx'
 
 // Tab 定义：常规 / 网络 / 挂载 / 环境变量 / 资源 / 标签&命令
 const TABS = [
@@ -19,6 +21,10 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [tab, setTab] = useState('general')
+  // 路径选择器状态：{ type: 'host'|'container', index } 表示正在为哪一行的哪个字段选路径
+  const [picker, setPicker] = useState(null)
+  // 容器是否运行中（决定容器内路径浏览是否可用，exec 需容器运行）
+  const running = container.status === 'running'
   // 表单状态（覆盖 6 个 Tab 的所有可编辑字段）
   const [form, setForm] = useState({
     image: '',
@@ -272,8 +278,18 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                   render={(b, i) => (
                     <>
                       <input placeholder="宿主机路径" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
+                      <button type="button" onClick={() => setPicker({ type: 'host', index: i })}
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0" title="浏览宿主机目录">
+                        <FolderSearch className="h-4 w-4" />
+                      </button>
                       <span className="text-gray-500">:</span>
                       <input placeholder="容器内路径" value={b.target} onChange={(e) => bindOps.update(i, 'target', e.target.value)} className="input flex-1" />
+                      <button type="button" onClick={() => running && setPicker({ type: 'container', index: i })}
+                        disabled={!running}
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={running ? '浏览容器内目录' : '容器需运行中才能浏览'}>
+                        <FolderSearch className="h-4 w-4" />
+                      </button>
                       <select value={b.mode} onChange={(e) => bindOps.update(i, 'mode', e.target.value)} className="input w-20">
                         <option value="rw">读写</option>
                         <option value="ro">只读</option>
@@ -353,6 +369,24 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           </button>
         </div>
       </div>
+
+      {/* 宿主机路径选择器：浏览 DC 自身挂载的宿主机目录树 */}
+      {picker?.type === 'host' && (
+        <DirectoryPicker
+          initialPath={form.binds[picker.index]?.source || ''}
+          onSelect={(p) => bindOps.update(picker.index, 'source', p)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      {/* 容器内路径选择器：浏览目标容器文件系统（需容器运行中） */}
+      {picker?.type === 'container' && (
+        <ContainerPathPicker
+          containerId={container.ID}
+          initialPath={form.binds[picker.index]?.target || '/'}
+          onSelect={(p) => bindOps.update(picker.index, 'target', p)}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </div>
   )
 }
