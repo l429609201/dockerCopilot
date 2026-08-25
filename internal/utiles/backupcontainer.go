@@ -3,6 +3,8 @@ package utiles
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+
 	dockerBackend "github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/api/types/network"
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
@@ -25,10 +27,11 @@ func BackupContainerOnHost(ctx *svc.ServiceContext, hostID string) error {
 	if hostID == "" {
 		hostID = appconfig.DockerHostLocalID
 	}
-	// 定位目标主机客户端；不可用则回退本地
+	// 定位目标主机客户端；不可达直接报错，绝不回退本地：
+	// 否则会把本地容器配置写进远程主机的备份文件，造成备份数据错乱。
 	cli, ok := ctx.DockerManager.GetClient(hostID)
 	if !ok || cli == nil {
-		cli = ctx.DockerClient
+		return fmt.Errorf("docker 主机 %s 无可用连接", hostID)
 	}
 	containerList, err := GetContainerListFromHost(ctx, hostID)
 	if err != nil {

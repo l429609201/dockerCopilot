@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity, Network, Info, Trash2 } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
+import { stateLabel, stateDotColor } from '../utils/containerState.js'
 import { ContainerStats } from './ContainerStats.jsx'
 
 // 容器列表行：横向一条展示（图标 + 名称/镜像 + 资源 + 状态 + 操作按钮）
@@ -51,9 +52,9 @@ export function ContainerListRow({
         )}
       </div>
 
-      {/* 状态圆点 */}
-      <span className={cn("flex-shrink-0 w-2.5 h-2.5 rounded-full",
-        running ? "bg-emerald-500" : "bg-gray-400")} title={running ? '运行中' : '已停止'} />
+      {/* 状态圆点：按 Docker 原生 State 上色并提示具体状态，不再笼统显示「已停止」 */}
+      <span className={cn("flex-shrink-0 w-2.5 h-2.5 rounded-full", stateDotColor(container.status))}
+        title={stateLabel(container.status)} />
 
       {/* 名称 + 镜像 */}
       <div className="min-w-0 flex-1">
@@ -91,9 +92,9 @@ export function ContainerListRow({
         </div>
       )}
 
-      {/* 运行时间/状态（中大屏显示） */}
+      {/* 运行时间/状态（中大屏显示）：非运行态展示具体状态名 */}
       <div className="hidden md:block text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 w-28 text-right truncate">
-        {running ? `运行 ${formatRunningTime(container.runningTime)}` : '已停止'}
+        {running ? `运行 ${formatRunningTime(container.runningTime)}` : stateLabel(container.status)}
       </div>
 
       {/* 操作按钮区 */}

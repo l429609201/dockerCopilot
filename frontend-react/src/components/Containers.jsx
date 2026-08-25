@@ -42,6 +42,8 @@ import { FileManager } from './FileManager.jsx'
 import { CreateContainerModal } from './CreateContainerModal.jsx'
 import { IconEditor } from './IconEditor.jsx'
 import { ContainerLogs, ContainerConsole } from './ContainerOps.jsx'
+// 容器状态统一口径（分类/标签/配色/筛选判定），与列表视图共用同一套定义
+import { FILTER_OPTIONS, matchFilter, stateLabel, stateDotColor } from '../utils/containerState.js'
 
 export function Containers() {
   const { addTask } = useTasks()
@@ -675,29 +677,9 @@ export function Containers() {
     }
   }
 
-  // 获取状态指示器颜色
-  const getStatusIndicatorColor = (status) => {
-    const statusConfig = {
-      running: 'bg-green-500',
-      stopped: 'bg-red-500',
-      restarting: 'bg-yellow-500',
-      paused: 'bg-blue-500'
-    }
-
-    return statusConfig[status?.toLowerCase()] || 'bg-gray-500'
-  }
-
-  // 获取状态颜色（用于小圆点）
-  const getStatusColor = (status) => {
-    const statusConfig = {
-      running: 'bg-green-500',
-      stopped: 'bg-red-500',
-      restarting: 'bg-yellow-500',
-      paused: 'bg-blue-500'
-    }
-
-    return statusConfig[status?.toLowerCase()] || 'bg-gray-500'
-  }
+  // 状态指示器与小圆点共用同一套 Docker 原生 State 配色
+  const getStatusIndicatorColor = stateDotColor
+  const getStatusColor = stateDotColor
 
   if (isLoading) {
     return (
@@ -928,7 +910,7 @@ export function Containers() {
             <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div className="relative">
               <div className="text-2xl sm:text-3xl font-bold text-red-600 dark:text-red-400 transition-transform duration-300 group-hover:scale-110">
-                {containers.filter(c => c.status && c.status.toLowerCase() !== 'running').length}
+                {containers.filter(c => matchFilter(c, 'stopped')).length}
               </div>
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">已停止</div>
             </div>
@@ -963,9 +945,7 @@ export function Containers() {
                   {filterStatus && (
                     <>
                       筛选中：
-                      {filterStatus === 'running' && '运行中容器 '}
-                      {filterStatus === 'stopped' && '已停止容器 '}
-                      {filterStatus === 'update' && '有更新容器 '}
+                      {(FILTER_OPTIONS.find(o => o.value === filterStatus)?.label || filterStatus) + ' '}
                     </>
                   )}
                   {!filterStatus && selectedContainers.length > 0 && (
@@ -993,13 +973,7 @@ export function Containers() {
                     </button>
                     <button
                       onClick={() => {
-                        const filteredContainers = containers.filter((container) => {
-                          if (!filterStatus) return true
-                          if (filterStatus === 'running') return container.status && container.status.toLowerCase() === 'running'
-                          if (filterStatus === 'stopped') return container.status && container.status.toLowerCase() !== 'running'
-                          if (filterStatus === 'update') return container.haveUpdate
-                          return true
-                        })
+                        const filteredContainers = containers.filter((container) => matchFilter(container, filterStatus))
                         setSelectedContainers(filteredContainers.map(c => c.id))
                         setIsBatchMode(true)
                       }}
@@ -1043,6 +1017,28 @@ export function Containers() {
                   </select>
                 </div>
               )}
+              {/* 状态下拉：Docker 原生启动状态分类，与顶部统计栏共用 filterStatus 单一数据源，
+                  两者天然联动（点统计按钮下拉同步变化）。选项带实时计数，无该状态容器时置灰。 */}
+              <div className="relative">
+                <Activity className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <select
+                  value={filterStatus || ''}
+                  onChange={(e) => setFilterStatus(e.target.value || null)}
+                  className="pl-8 pr-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  {FILTER_OPTIONS.map((opt) => {
+                    // 全部状态展示总数；其余按该分类口径统计
+                    const count = opt.value
+                      ? containers.filter(c => matchFilter(c, opt.value)).length
+                      : containers.length
+                    return (
+                      <option key={opt.value} value={opt.value} disabled={opt.value !== '' && count === 0}>
+                        {opt.label} ({count})
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
               {/* 搜索框：按容器名或镜像过滤 */}
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -1090,13 +1086,8 @@ export function Containers() {
               : "grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           )}>
             {containers
-              .filter((container) => {
-                if (!filterStatus) return true
-                if (filterStatus === 'running') return container.status && container.status.toLowerCase() === 'running'
-                if (filterStatus === 'stopped') return container.status && container.status.toLowerCase() !== 'running'
-                if (filterStatus === 'update') return container.haveUpdate
-                return true
-              })
+              // 状态过滤：统一走 matchFilter，与统计栏、全选结果口径一致
+              .filter((container) => matchFilter(container, filterStatus))
               // 主机过滤：'all' 不限；否则按容器所属主机（本地容器 hostId 可能为空，视为 'local'）
               .filter((container) => hostFilter === 'all' || (container.hostId || 'local') === hostFilter)
               // 关键词过滤：匹配容器名或镜像（大小写不敏感）
@@ -1275,7 +1266,7 @@ export function Containers() {
                               </div>
                             ) : (
                               <div className="text-xs text-gray-500 dark:text-gray-400">
-                                状态: 已停止
+                                状态: {stateLabel(container.status)}
                               </div>
                             )}
                           </div>

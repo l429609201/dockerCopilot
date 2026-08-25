@@ -20,7 +20,11 @@ type StatSample struct {
 func (s *Service) Stats(id string) (*StatSample, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := s.cli().ContainerStatsOneShot(ctx, id)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cli.ContainerStatsOneShot(ctx, id)
 	if err != nil {
 		return nil, err
 	}

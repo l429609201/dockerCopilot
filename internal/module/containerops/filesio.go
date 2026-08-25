@@ -34,7 +34,11 @@ func (s *Service) DownloadFile(ctx context.Context, id, target string) (string, 
 	if err != nil {
 		return "", nil, err
 	}
-	rc, stat, err := s.cli().CopyFromContainer(ctx, id, safe)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return "", nil, err
+	}
+	rc, stat, err := cli.CopyFromContainer(ctx, id, safe)
 	if err != nil {
 		return "", nil, fmt.Errorf("读取容器文件失败: %w", err)
 	}
@@ -92,7 +96,11 @@ func (s *Service) downloadLimited(ctx context.Context, id, target string, limit 
 	if err != nil {
 		return "", nil, err
 	}
-	rc, stat, err := s.cli().CopyFromContainer(ctx, id, safe)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return "", nil, err
+	}
+	rc, stat, err := cli.CopyFromContainer(ctx, id, safe)
 	if err != nil {
 		return "", nil, fmt.Errorf("读取容器文件失败: %w", err)
 	}
@@ -171,7 +179,11 @@ func (s *Service) UploadFile(ctx context.Context, id, dir, name string, content 
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("关闭归档失败: %w", err)
 	}
-	if err := s.cli().CopyToContainer(ctx, id, safeDir, &tarBuf, dcontainer.CopyToContainerOptions{}); err != nil {
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	if err := cli.CopyToContainer(ctx, id, safeDir, &tarBuf, dcontainer.CopyToContainerOptions{}); err != nil {
 		return fmt.Errorf("写入容器失败: %w", err)
 	}
 	return nil

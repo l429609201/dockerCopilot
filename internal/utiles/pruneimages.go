@@ -18,11 +18,6 @@ func PruneImages(taskCtx context.Context, ctx *svc.ServiceContext, taskID string
 // hostID 为空表示本地；imageIDs 为待删除的镜像ID列表；force 是否强制删除。
 // 支持通过 taskCtx 取消（取消后停止后续删除并标记任务取消）。
 func PruneImagesOnHost(taskCtx context.Context, ctx *svc.ServiceContext, hostID string, taskID string, imageIDs []string, force bool) {
-	// 定位目标主机客户端；不可用则回退本地，避免 nil 崩溃
-	cli, ok := ctx.DockerManager.GetClient(hostID)
-	if !ok || cli == nil {
-		cli = ctx.DockerClient
-	}
 	total := len(imageIDs)
 	progress := svc.TaskProgress{
 		TaskID:     taskID,
@@ -32,6 +27,18 @@ func PruneImagesOnHost(taskCtx context.Context, ctx *svc.ServiceContext, hostID 
 		Message:    fmt.Sprintf("准备清理 %d 个镜像", total),
 	}
 	ctx.UpdateProgress(taskID, progress)
+
+	// 定位目标主机客户端；不可达直接标记任务失败，绝不回退本地：
+	// 批量删除不可逆，回退会误删本地镜像。
+	cli, ok := ctx.DockerManager.GetClient(hostID)
+	if !ok || cli == nil {
+		progress.IsDone = true
+		progress.Failed = true
+		progress.Message = fmt.Sprintf("docker 主机 %s 无可用连接，已终止清理", hostID)
+		ctx.UpdateProgress(taskID, progress)
+		logx.Errorf("批量清理镜像终止：docker 主机 %s 无可用连接", hostID)
+		return
+	}
 
 	var success, failed int
 	for i, id := range imageIDs {

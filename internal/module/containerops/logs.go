@@ -33,7 +33,11 @@ func (s *Service) Logs(ctx context.Context, id string, tail int, since string, t
 		Tail:       tailStr,
 		Since:      since,
 	}
-	reader, err := s.cli().ContainerLogs(logCtx, id, options)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return "", err
+	}
+	reader, err := cli.ContainerLogs(logCtx, id, options)
 	if err != nil {
 		return "", err
 	}

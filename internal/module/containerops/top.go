@@ -16,7 +16,11 @@ type TopResult struct {
 func (s *Service) Top(ctx context.Context, id string) (*TopResult, error) {
 	// Docker SDK ContainerTop(ctx, containerID, arguments)
 	// arguments 传空数组时使用默认 ps 参数（通常返回 UID/PID/PPID/C/STIME/TTY/TIME/CMD）
-	top, err := s.cli().ContainerTop(ctx, id, nil)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return nil, err
+	}
+	top, err := cli.ContainerTop(ctx, id, nil)
 	if err != nil {
 		return nil, fmt.Errorf("获取容器进程失败: %w", err)
 	}

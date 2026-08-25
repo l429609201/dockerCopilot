@@ -99,7 +99,14 @@ func (m *DockerManager) Reload(hosts []appconfig.DockerHost) {
 	m.hosts = newHosts
 }
 
-// GetClient 返回指定 hostID 的 client。hostID 为空或未找到时回退本地 client。
+// GetClient 返回指定 hostID 的 client。
+// hostID 为空视为本地（兼容既有大量以空串代表本地的调用）；
+// 指定了具体 hostID 但该主机无可用连接时直接返回 (nil, false)，不回退本地。
+//
+// 不回退的原因：远程主机建连失败时若静默返回本地 client，
+// 读路径会把本地容器伪装成远程主机的容器返回给前端（远程已停止容器"消失"的根因），
+// 写路径（start/stop/restart/update/removeimage/prune/backup）更会把操作误打到本地 Docker。
+// 失败即失败，由调用方记日志跳过或向用户报错。
 func (m *DockerManager) GetClient(hostID string) (*client.Client, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -107,10 +114,6 @@ func (m *DockerManager) GetClient(hostID string) (*client.Client, bool) {
 		hostID = appconfig.DockerHostLocalID
 	}
 	if cli, ok := m.clients[hostID]; ok && cli != nil {
-		return cli, true
-	}
-	// 回退本地
-	if cli, ok := m.clients[appconfig.DockerHostLocalID]; ok && cli != nil {
 		return cli, true
 	}
 	return nil, false
