@@ -12,12 +12,14 @@
 #
 # 标签洁癖约定：
 #   两个构建 job 均以 push-by-digest 方式推送（只推 digest，不打任何 tag），
-#   manifest 阶段再用 digest 引用创建最终标签。因此仓库中永远不会出现
+#   且只推 Docker Hub 一个仓库；manifest 阶段再用 digest 引用创建最终标签，
+#   GHCR 的标签由 imagetools 跨 registry 拷贝生成。因此仓库中永远不会出现
 #   :xxx-amd64 / :xxx-arm64 这类中间标签，只保留 :{版本号}、:latest、:test。
 #
 # 失败语义：
 #   main 分支要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
-#   不会把仅含 AMD64 的镜像伪装成多架构镜像发布出去。
+#   不会把仅含 AMD64 的镜像伪装成多架构镜像发布出去；
+#   最后一步会逐个 inspect 最终标签，架构组成与预期不符即失败。
 # =============================================================================
 
 name: docker-build-push
@@ -94,10 +96,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 计算小写 GHCR 镜像名
-        id: img
-        run: echo "ghcr=$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3.0.0
 
@@ -107,15 +105,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 登录 GitHub Container Registry
-        uses: docker/login-action@v3.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       # 按 digest 推送（push-by-digest），不打任何 tag，避免中间标签污染仓库。
-      # 同一份内容推送到两个 registry，digest 相同，故只需一个 digest 输出。
+      # 注意：build-push-action 会对 outputs 做 CSV 解析并剥掉引号，
+      # 因此 name= 只能写单个镜像名（写两个会被拆成非法字段）。
+      # 这里只推 Docker Hub，GHCR 的标签在 manifest 阶段由 imagetools 跨 registry 创建。
       - name: 构建并按 digest 推送 AMD64 镜像
         id: build
         uses: docker/build-push-action@v5.0.0
@@ -123,7 +116,7 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/amd64
-          outputs: type=image,"name=${{ env.DH_IMAGE }},${{ steps.img.outputs.ghcr }}",push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.DH_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
@@ -152,10 +145,6 @@ jobs:
         with:
           platforms: arm64
 
-      - name: 计算小写 GHCR 镜像名
-        id: img
-        run: echo "ghcr=$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3.0.0
 
@@ -165,14 +154,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 登录 GitHub Container Registry
-        uses: docker/login-action@v3.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # 按 digest 推送，不打 tag（同 AMD64）
+      # 按 digest 推送，不打 tag（同 AMD64，只推 Docker Hub）
       - name: 构建并按 digest 推送 ARM64 镜像
         id: build
         uses: docker/build-push-action@v5.0.0
@@ -180,7 +162,7 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/arm64
-          outputs: type=image,"name=${{ env.DH_IMAGE }},${{ steps.img.outputs.ghcr }}",push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.DH_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
@@ -216,8 +198,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 用 digest 引用创建 manifest。digest 由构建 job 输出，
-      # 镜像本身未打过 tag，因此仓库里只会出现最终标签(版本号 / latest / test)。
+      # 用 digest 引用创建最终标签。构建阶段只按 digest 推到 Docker Hub，
+      # 从未打过 tag，因此仓库里只会出现最终标签(版本号 / latest / test)。
+      # GHCR 的标签同样以 Docker Hub 的 digest 为源，由 imagetools 跨 registry 拷贝 blob。
       - name: 创建并推送多架构 Manifest
         run: |
           set -euo pipefail
@@ -236,7 +219,7 @@ jobs:
             exit 1
           fi
 
-          # 组装参与合并的 digest 引用列表
+          # 组装参与合并的 digest 引用列表（源统一为 Docker Hub）
           if [ "$BUILD_ARM" = "true" ]; then
             # main 分支：ARM64 必须成功，缺失则直接失败，绝不降级为单架构发布
             if [ -z "$ARM_DIGEST" ]; then
@@ -244,28 +227,45 @@ jobs:
               exit 1
             fi
             echo "📦 合并双架构 manifest (AMD64 + ARM64)"
-            DH_SRCS="${DH}@${AMD_DIGEST} ${DH}@${ARM_DIGEST}"
-            GHCR_SRCS="${GHCR}@${AMD_DIGEST} ${GHCR}@${ARM_DIGEST}"
+            SRCS="${DH}@${AMD_DIGEST} ${DH}@${ARM_DIGEST}"
+            EXPECT_ARCHS="amd64 arm64"
           else
-            # test 分支：设计上只构建 AMD64
+            # test 分支：设计上只构建 AMD64，产出单架构镜像
             echo "📦 创建单架构 manifest (仅 AMD64)"
-            DH_SRCS="${DH}@${AMD_DIGEST}"
-            GHCR_SRCS="${GHCR}@${AMD_DIGEST}"
+            SRCS="${DH}@${AMD_DIGEST}"
+            EXPECT_ARCHS="amd64"
           fi
+          echo "EXPECT_ARCHS=${EXPECT_ARCHS}" >> $GITHUB_ENV
 
           # 主标签 + 额外标签(如 latest)统一处理
           for T in ${TAG} ${EXTRA_TAGS}; do
             echo "🏷️  创建标签 ${T}"
-            docker buildx imagetools create -t ${DH}:${T} ${DH_SRCS}
-            docker buildx imagetools create -t ${GHCR}:${T} ${GHCR_SRCS}
+            docker buildx imagetools create -t ${DH}:${T} ${SRCS}
+            docker buildx imagetools create -t ${GHCR}:${T} ${SRCS}
           done
           echo "✅ Manifest 创建完成"
 
-      - name: 校验多架构 Manifest
+      # 逐个校验最终标签的架构组成，与预期不符则失败，
+      # 防止"绿色构建但镜像架构缺失"的情况再次发生。
+      - name: 校验最终标签架构
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.image_tag }}"
+          EXTRA_TAGS="${{ needs.prepare.outputs.extra_tags }}"
           DH="${{ env.DH_IMAGE }}"
-          echo "🔍 ${DH}:${TAG} 包含的架构："
-          docker buildx imagetools inspect ${DH}:${TAG} \
-            --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}}{{"\n"}}{{end}}'
+          GHCR="$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')"
+          EXPECTED="$(echo ${EXPECT_ARCHS} | tr ' ' '\n' | sort | tr '\n' ' ')"
+
+          for IMG in ${DH} ${GHCR}; do
+            for T in ${TAG} ${EXTRA_TAGS}; do
+              ACTUAL="$(docker buildx imagetools inspect ${IMG}:${T} \
+                --format '{{range .Manifest.Manifests}}{{.Platform.Architecture}} {{end}}' \
+                | tr ' ' '\n' | grep -v '^$' | grep -v unknown | sort -u | tr '\n' ' ')"
+              echo "🔍 ${IMG}:${T} → ${ACTUAL}"
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "❌ 架构不符，期望 [${EXPECTED}] 实际 [${ACTUAL}]"
+                exit 1
+              fi
+            done
+          done
+          echo "✅ 所有标签架构校验通过"
