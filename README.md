@@ -1,7 +1,7 @@
-# dockerCopilot
-<a href="https://www.gnu.org/licenses/agpl-3.0.en.html">
-    <img alt="License: AGPLv3" src="https://shields.io/badge/License-AGPL%20v3-blue.svg">
-  </a>
+<div align="center">
+<img src="frontend-react/src/assets/DockerCopilot-logo.png" alt="DockerCopilot" width="128" style="border-radius: 16px;" />
+<h1 align="center" style="margin-top: 0">DockerCopilot</h1>
+</div>
 
 > **Fork 声明**：本项目 fork 自 [onlyLTY/dockerCopilot](https://github.com/onlyLTY/dockerCopilot)，
 > 在其基础上进行了修改与功能新增（如容器文件管理器、任务中心、镜像图标自适应等）。
