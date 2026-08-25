@@ -179,8 +179,8 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		case "compose":
 			b.listComposeProjects(chatID, messageID, 0)
 		case "mute":
-			// 更新通知设置面板
-			b.sendMuteSettings(chatID, messageID)
+			// 更新通知设置面板（page 来自 menu|mute|<page>，默认 0）
+			b.sendMuteSettings(chatID, page, messageID)
 		case "home":
 			// 返回主菜单：编辑原消息为主菜单
 			b.editMainMenu(chatID, messageID)
@@ -193,9 +193,11 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		}
 		return
 	}
-	// 更新通知屏蔽切换：mute|<容器名>
-	if parts[0] == "mute" && len(parts) == 2 {
-		b.toggleMute(chatID, parts[1], messageID)
+	// 更新通知屏蔽切换（设置面板）：mute|<page>|<容器名>；容器名可能含 | 故用 Join 还原
+	if parts[0] == "mute" && len(parts) >= 3 {
+		page, _ := strconv.Atoi(parts[1])
+		name := strings.Join(parts[2:], "|")
+		b.toggleMute(chatID, name, page, messageID)
 		return
 	}
 	// 单容器操作面板：panel|<id>|<name>[|<hostCode>]
@@ -345,6 +347,14 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	if parts[0] == "updnotify" && len(parts) == 2 {
 		page, _ := strconv.Atoi(parts[1])
 		b.resendUpdateNotification(chatID, page, messageID)
+		return
+	}
+	// 详情页就地切换通知屏蔽：mutehere|<page>|<容器名> —— 切换后不跳转，就地刷新当前页详情
+	// 容器名可能含 |，放在末尾用 Join 还原
+	if parts[0] == "mutehere" && len(parts) >= 3 {
+		page, _ := strconv.Atoi(parts[1])
+		name := strings.Join(parts[2:], "|")
+		b.toggleMuteInPlace(chatID, name, page, messageID)
 		return
 	}
 	// 更新中心操作：updc|<action>
@@ -2052,6 +2062,13 @@ func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []Up
 	pageSize := 10
 	totalPages := (len(containers) + pageSize - 1) / pageSize
 
+	// 当前屏蔽集合：用于在详情页就地显示每个容器的通知开关状态（🔔/🔕），点击就地切换不跳转
+	cfgMute := b.svcCtx.AppConfig.Get()
+	mutedSet := make(map[string]struct{}, len(cfgMute.Telegram.MutedContainers))
+	for _, m := range cfgMute.Telegram.MutedContainers {
+		mutedSet[m] = struct{}{}
+	}
+
 	if page < 0 {
 		page = 0
 	}
@@ -2096,9 +2113,16 @@ func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []Up
 			}
 		}
 
+		// 屏蔽按钮：根据当前是否已屏蔽，就地显示 🔔/🔕 并支持切换（callback: mutehere|<page>|<name>）
+		// 点击后不跳转到设置面板，而是就地编辑本条消息刷新按钮状态
+		_, isMuted := mutedSet[c.Name]
+		muteText := fmt.Sprintf("%d.🔔通知", seq)
+		if isMuted {
+			muteText = fmt.Sprintf("%d.🔕已屏蔽", seq)
+		}
 		row := []telegram.InlineKeyboardButton{
 			{Text: fmt.Sprintf("%d.更新", seq), CallbackData: fmt.Sprintf("act|update|%s|%s", shortID, safeName)},
-			{Text: fmt.Sprintf("%d.屏蔽通知", seq), CallbackData: fmt.Sprintf("mute|%s", c.Name)}, // 屏蔽用完整名称
+			{Text: muteText, CallbackData: fmt.Sprintf("mutehere|%d|%s", page, c.Name)}, // 就地切换，携带当前页码
 		}
 		rows = append(rows, row)
 	}
@@ -2324,12 +2348,8 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 	containers = utiles.CheckImageUpdate(b.svcCtx, containers)
 
 	// 筛选有更新的容器
-	cfg := b.svcCtx.AppConfig.Get()
-	mutedSet := make(map[string]struct{})
-	for _, m := range cfg.Telegram.MutedContainers {
-		mutedSet[m] = struct{}{}
-	}
-
+	// 注意：此处**不再过滤已屏蔽容器**，屏蔽状态改由详情页按钮就地显示（🔔/🔕）并支持切换。
+	// 这样用户屏蔽某容器后仍能在列表看到它、随时取消屏蔽，避免屏蔽即消失导致无法撤销。
 	var updateContainers []UpdateContainer
 	for _, c := range containers {
 		if !c.Update {
@@ -2340,10 +2360,6 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 		if name == "" {
-			continue
-		}
-		// 跳过已屏蔽的容器
-		if _, muted := mutedSet[name]; muted {
 			continue
 		}
 		updateContainers = append(updateContainers, UpdateContainer{
