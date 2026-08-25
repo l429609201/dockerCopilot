@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { Save, Loader2, FolderOpen, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
+import { HostPathImportButton } from './HostPathImportButton.jsx'
 
 // Docker Compose (YAML) 页签：填工作目录(仅本机) + 项目名 + 文件名 + YAML → 校验 → 部署。
 // Compose 由本机 docker compose 执行，故工作目录浏览始终针对本机文件系统。
@@ -9,6 +10,7 @@ export function ComposeDeployTab({ onClose, onCreated }) {
   const [workingDir, setWorkingDir] = useState('')
   const [filename, setFilename] = useState('docker-compose.yml')
   const [content, setContent] = useState('')
+  const contentRef = useRef(null) // YAML 文本域 ref，用于在光标处插入引入的宿主机路径
   const [msg, setMsg] = useState('')
   const [warnings, setWarnings] = useState([])
   const [validating, setValidating] = useState(false)
@@ -60,6 +62,23 @@ export function ComposeDeployTab({ onClose, onCreated }) {
     } finally { setDeploying(false) }
   }
 
+  // 在 YAML 文本域当前光标位置插入宿主机路径（纯路径），无选区时插入到末尾
+  const insertAtCursor = (text) => {
+    const ta = contentRef.current
+    if (!ta) { setContent((c) => c + text); return }
+    const start = ta.selectionStart ?? content.length
+    const end = ta.selectionEnd ?? content.length
+    const next = content.slice(0, start) + text + content.slice(end)
+    setContent(next)
+    setNeedConfirm(false)
+    // 恢复光标到插入内容之后
+    requestAnimationFrame(() => {
+      ta.focus()
+      const pos = start + text.length
+      ta.setSelectionRange(pos, pos)
+    })
+  }
+
   return (
     <div className="space-y-4">
       {/* 工作目录 */}
@@ -89,8 +108,12 @@ export function ComposeDeployTab({ onClose, onCreated }) {
 
       {/* YAML 编辑器 */}
       <div>
-        <label className={label}>Compose 内容 (YAML)</label>
-        <textarea value={content} onChange={(e) => { setContent(e.target.value); setNeedConfirm(false) }} rows={12}
+        <div className="flex items-center justify-between mb-1">
+          <label className={label + ' mb-0'}>Compose 内容 (YAML)</label>
+          {/* 引入宿主机路径：浏览 /compose 映射目录，转成宿主机真实路径插入光标处。Compose 本机执行故 isLocal 恒真 */}
+          <HostPathImportButton isLocal onPick={insertAtCursor} />
+        </div>
+        <textarea ref={contentRef} value={content} onChange={(e) => { setContent(e.target.value); setNeedConfirm(false) }} rows={12}
           placeholder={'services:\n  web:\n    image: nginx:latest\n    ports:\n      - "8080:80"\n    restart: unless-stopped'}
           className={`${inp} font-mono text-xs`} spellCheck={false} />
       </div>

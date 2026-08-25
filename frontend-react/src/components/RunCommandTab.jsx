@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { Save, Loader2, Wand2, Server, FolderOpen } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
+import { HostPathImportButton } from './HostPathImportButton.jsx'
 
 // Docker Run Command 页签：粘贴 docker run 命令 → 解析预览 → 选目标主机 → 创建。
 // 宿主机路径浏览（DirectoryPicker）仅在目标主机为本地 Docker 时提供，用于快速拼 -v 源路径。
@@ -15,8 +16,24 @@ export function RunCommandTab({ hosts, onClose, onCreated }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [showPicker, setShowPicker] = useState(false)
+  const commandRef = useRef(null) // 命令文本域 ref，用于在光标处插入引入的宿主机路径
 
   const isLocal = hostId === 'local'
+
+  // 在命令文本域当前光标位置插入宿主机路径（纯路径），无选区时插入到末尾
+  const insertAtCursor = (text) => {
+    const ta = commandRef.current
+    if (!ta) { setCommand((c) => c + text); return }
+    const start = ta.selectionStart ?? command.length
+    const end = ta.selectionEnd ?? command.length
+    const next = command.slice(0, start) + text + command.slice(end)
+    setCommand(next)
+    requestAnimationFrame(() => {
+      ta.focus()
+      const pos = start + text.length
+      ta.setSelectionRange(pos, pos)
+    })
+  }
 
   // 解析命令为可读 spec
   const parse = async () => {
@@ -76,14 +93,19 @@ export function RunCommandTab({ hosts, onClose, onCreated }) {
       <div>
         <div className="flex items-center justify-between mb-1">
           <label className={label}>Docker Run 命令</label>
-          {isLocal && (
-            <button type="button" onClick={() => setShowPicker(true)}
-              className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              <FolderOpen className="h-3.5 w-3.5" /> 浏览本机目录
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {isLocal && (
+              <button type="button" onClick={() => setShowPicker(true)}
+                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                <FolderOpen className="h-3.5 w-3.5" /> 浏览本机目录
+              </button>
+            )}
+            {/* 引入宿主机路径：浏览 /compose 映射目录转真实路径插入光标处，远程主机自动置灰 */}
+            <HostPathImportButton isLocal={isLocal} onPick={insertAtCursor}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:opacity-40 disabled:cursor-not-allowed" />
+          </div>
         </div>
-        <textarea value={command} onChange={(e) => setCommand(e.target.value)} rows={5}
+        <textarea ref={commandRef} value={command} onChange={(e) => setCommand(e.target.value)} rows={5}
           placeholder={'docker run -d --name nginx \\\n  -p 8080:80 -v /data/html:/usr/share/nginx/html \\\n  --restart unless-stopped nginx:latest'}
           className={`${inp} font-mono text-xs`} spellCheck={false} />
         {!isLocal && (

@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Save, AlertTriangle, FolderSearch } from 'lucide-react
 import { containerAPI, hostPathAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
 import { ContainerPathPicker } from './ContainerPathPicker.jsx'
+import { useHostPathResolve } from '../hooks/useHostPathResolve.jsx'
 
 // Tab 定义：常规 / 网络 / 挂载 / 环境变量 / 资源 / 标签&命令
 const TABS = [
@@ -27,6 +28,9 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   const [mountHint, setMountHint] = useState(null)
   // 容器是否运行中（决定容器内路径浏览是否可用，exec 需容器运行）
   const running = container.status === 'running'
+  // 是否本地 Docker 主机（hostId 空或 'local' 视为本地）。仅本地容器需把 DC 容器内挂载源 resolve 成宿主机真实路径
+  const isLocalHost = !container.hostId || container.hostId === 'local'
+  const { available: resolveAvailable, resolve: resolveHostPath } = useHostPathResolve()
 
   // 宿主机目录选择回调：DirectoryPicker 选出的是 DC 容器内可见路径，
   // 需经后端映射转换为宿主机真实路径后写入 source；转换失败则提示并保留原始选择值。
@@ -121,13 +125,26 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           memoryMB,
           cpus,
         })
+
+        // Bug 修复：本地容器由 DC 管理时，inspect 的挂载源可能是 DC 容器内路径（如 /compose/xxx），
+        // 而非宿主机真实路径（如 /xxx/xxx）。此处对本地容器的 source 逐条 resolve 转成宿主机真实路径再显示。
+        // 远程容器的 source 本就是远程宿主机真实路径，不做转换。
+        if (isLocalHost && resolveAvailable && binds.length > 0) {
+          const resolved = await Promise.all(binds.map(async (b) => {
+            if (!b.source || !b.source.startsWith('/')) return b
+            const { hostPath } = await resolveHostPath(b.source)
+            return hostPath ? { ...b, source: hostPath } : b
+          }))
+          // 仅当确有变化时更新，避免无谓渲染
+          setForm((f) => ({ ...f, binds: resolved }))
+        }
       } catch (e) {
         setError('加载容器配置失败：' + (e.response?.data?.msg || e.message))
       } finally {
         setLoading(false)
       }
     })()
-  }, [container.ID])
+  }, [container.ID, isLocalHost, resolveAvailable, resolveHostPath])
 
   // 提交编辑（转为后端 EditSpec 格式）
   const submit = async () => {
