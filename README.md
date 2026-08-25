@@ -17,45 +17,108 @@
 
 # 介绍
 
-一个主打便捷的 docker 容器管理工具，支持多平台（amd64 / arm64）。
+dockerCopilot 是一个主打便捷的 Docker 可视化管理工具，支持多平台（amd64 / arm64）。
+它把日常运维中最高频的操作——**容器更新、Compose 部署、运维排障、定时维护、远程通知**——
+集中到一个轻量的 Web 面板里，并配套一个功能对等的 **Telegram 机器人**，让你离开电脑也能管容器。
 
-**基础能力**
-1. 一键更新容器 / 指定镜像和 tag 更新
-2. 启动、停止、重启、暂停、恢复、删除、重命名容器
-3. 删除无 TAG 镜像 / 未使用镜像
-4. 更新进度查看（含分层进度）
-5. 备份 / 恢复容器设置
+整个应用（含前端）编译进单个 Go 二进制、打包成一个镜像，只挂载 `docker.sock` 即可运行，无需数据库、无需额外依赖。
 
-**本 Fork 新增能力**
-6. 镜像拉取与更新异步化（统一任务系统：并发、进度、取消）
-7. 定时任务：每条规则独立定时，支持自动更新 / 清理镜像 / 备份
-8. Telegram 机器人：按钮式菜单、单容器面板、交互式终端、周期更新通知
-9. Compose 项目管理：扫描、编辑、校验、部署（up/down/restart/pull）
-10. Portainer 风格运维：交互式终端、文件管理器、6 Tab 参数编辑
-11. 容器文件管理器、镜像图标自适应、任务中心
+## ✨ 功能亮点
 
-## 使用
+**容器全生命周期管理**
+- 一键更新容器 / 指定镜像和 tag 更新，**自动携带 registry 登录凭据拉取私有镜像**（匹配不到才匿名）。
+- 启动、停止、重启、暂停、恢复、强制终止、删除、重命名。
+- 卡片 / 列表两种视图，镜像图标自适应（自定义图标 > favicon 探测 > 内置 logo）。
 
-docker compose 安装
+**🧩 Docker Compose 项目管理**（详见下文）
+- 扫描宿主机 compose 目录，在线查看 / 编辑 YAML、语法校验、高风险配置提示。
+- 一键部署：`up` / `down` / `restart` / `pull` / `start` / `stop`。
 
-```
+**🛠️ Portainer 风格运维**
+- **交互式终端**：WebSocket + xterm.js 直连容器 `exec`（bash / sh / ash / 自定义命令）。
+- **文件管理器**：浏览容器内文件，在线查看 / 编辑 / 上传 / 下载 / 新建 / 删除 / 重命名，兼容 BusyBox 与 GNU。
+- **6 Tab 参数编辑**：常规、网络、挂载、环境变量、资源、标签 & 命令，任务化重建 + 失败自动回滚。
+- 多 Tab 容器详情、实时资源图表、进程列表。
+
+**⏰ 定时任务**
+- 每条规则**独立定时**（cron 或 `daily/hourly/interval` 简化写法）。
+- 支持自动更新容器、定时清理镜像（悬空 / 未使用）、定时备份容器配置。
+
+**🤖 Telegram 机器人**
+- 按钮式菜单，功能与 Web 面板对等：容器管理、更新、镜像、备份、Compose、系统概览。
+- 单容器面板 + 交互式终端；周期检测更新并推送带按钮的通知（逐容器更新 / 屏蔽）。
+
+**⚙️ 统一任务系统**
+- 镜像拉取 / 容器更新全部异步化，支持并发上限、实时进度、失败原因、取消。
+- 任务中心可展开查看镜像每层（layer）的独立下载进度。
+
+**🔐 其他**
+- 备份 / 恢复容器配置；删除无 TAG / 未使用镜像；私有仓库凭据管理（接口与日志全程脱敏）。
+- 启动时镜像检查后台执行，不阻塞面板；配置持久化到 `/data/config/config.json`。
+
+## 🚀 快速开始
+
+面板默认监听 **12712** 端口，首次访问用 `secretKey` 登录。
+
+### 方式一：docker compose（推荐）
+
+新建 `docker-compose.yml`：
+
+```yaml
 services:
   dockercopilot:
     container_name: dockercopilot
+    image: l429609201/dockercopilot:latest
     restart: always
     privileged: true
     network_mode: bridge
     ports:
       - 12712:12712
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock   # 必须：管理 Docker
+      - ./data:/data                                 # 必须：持久化配置/备份
+      # - /宿主机/compose目录:/compose               # 可选：启用 Compose 项目管理
     environment:
       - TZ=Asia/Shanghai
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - secretKey=密码，不少于八位且非纯数字
-    image: ghcr.io/l429609201/dockercopilot:latest
+      - secretKey=改成你的密码，不少于八位且非纯数字
 ```
+
+启动：
+
+```bash
+docker compose up -d
+```
+
+### 方式二：docker run
+
+```bash
+docker run -d \
+  --name dockercopilot \
+  --restart always \
+  --privileged \
+  -p 12712:12712 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(pwd)/data:/data \
+  -e TZ=Asia/Shanghai \
+  -e DOCKER_HOST=unix:///var/run/docker.sock \
+  -e secretKey=改成你的密码，不少于八位且非纯数字 \
+  ghcr.io/l429609201/dockercopilot:latest
+```
+
+> 若要启用 Compose 项目管理，追加挂载：`-v /宿主机/compose目录:/compose`。
+
+### 环境变量说明
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `secretKey` | 是 | 登录密码，**不少于 8 位且非纯数字**，同时作为 JWT 签名密钥 |
+| `DOCKER_HOST` | 建议 | Docker 连接地址，通常为 `unix:///var/run/docker.sock` |
+| `TZ` | 建议 | 时区，影响定时任务与日志时间，如 `Asia/Shanghai` |
+| `DelOldContainer` | 否 | 更新容器后是否删除旧容器，设为 `false` 则保留旧容器便于回滚（默认删除） |
+| `BACKUP_DIR` | 否 | 自定义备份目录（默认在 `/data` 下） |
+
+> **关于 `privileged`**：用于保证对 `docker.sock` 的完整访问权限。若你的环境无需特权模式即可读写 socket，可去掉该项以收窄权限。
 
 ### 镜像来源与架构
 
@@ -71,9 +134,46 @@ services:
 
 > 升级方式：本项目已移除二进制自更新，统一通过"拉取新镜像并重建容器"完成升级。
 
-## 新增功能说明（改造版）
+## 📖 功能详解
 
-以下功能在原版基础上新增，均以当前 Go 后端为主线实现。
+### 🧩 Docker Compose 项目管理
+
+把宿主机上零散的 `docker-compose.yml` 项目统一到面板里可视化管理，无需再登录服务器敲命令。
+
+**启用方式**：将宿主机存放 compose 项目的目录挂载进容器，并在设置里配置扫描目录（前端「Compose」页可视化配置，也可写入 `etc/dockerCopilot.yaml` 的 `Compose.ScanPaths`）：
+
+```yaml
+volumes:
+  - /宿主机/compose目录:/compose   # 例如 /opt/docker、/home/user/apps
+  - ./data:/data
+```
+
+**能做什么**：
+- **项目扫描**：自动递归扫描配置目录（深度可调），列出所有含 `docker-compose.yml` / `compose.yaml` 的项目。
+- **在线编辑**：直接在面板查看 / 编辑 compose 文件，保存前做 YAML 语法校验。
+- **一键部署**：支持 `up`（启动/重建）、`down`（停止并移除）、`restart`、`pull`（拉取最新镜像）、`start`、`stop`。
+- **安全防护**：识别 `privileged` 等高风险配置并给出提示；执行 `down` 等破坏性动作需**二次确认**；默认禁止部署高风险项目（可在配置开启 `AllowHighRisk`）。
+- **任务化执行**：所有部署命令带超时（`CommandTimeoutSec`，默认 300s）并纳入统一任务系统，进度可见、可取消。
+- **路径安全**：所有文件读写做绝对路径校验与目录穿越防护，只允许操作扫描目录内的文件。
+
+> Web 与 Telegram 机器人均可管理 Compose 项目；机器人端项目列表支持分页翻页。
+
+### 🛠️ Portainer 风格容器运维
+
+对标 Portainer CE 的单容器精细化运维能力：
+
+- **生命周期**：启动 / 停止 / 重启 / 暂停 / 恢复 / 强制终止（kill）/ 删除 / 重命名。
+- **交互式终端**：基于 WebSocket + xterm.js 直连容器 `exec`，支持 bash / sh / ash 与自定义命令，可连续执行、保持工作目录，支持窗口尺寸自适应。
+- **文件管理器**：浏览容器内文件系统，在线查看 / 编辑 / 上传 / 下载 / 新建 / 删除 / 重命名，兼容 BusyBox 与 GNU 两种 `ls` 输出格式。
+- **容器详情（多 Tab）**：基本信息、网络（含端口映射解析）、挂载、环境变量、资源限制、进程列表、实时资源图表。
+- **参数编辑（6 Tab）**：
+  - **常规** — 重启策略
+  - **网络** — 网络模式 / 端口映射（增删 TCP·UDP）
+  - **挂载** — 卷绑定（带红色危险提示）
+  - **环境变量** — 键值增删
+  - **资源** — 内存 / 内存交换 / CPU 核数
+  - **标签 & 命令** — Labels / Cmd / Entrypoint
+  - 编辑通过"停旧 → 建新 → 启动 → 校验 → 可选删旧"任务化重建，**失败自动回滚**到原容器。
 
 ### 镜像拉取与更新异步化
 - 启动时镜像检查改为后台执行，不再阻塞服务启动和其他页面。
@@ -95,26 +195,6 @@ services:
 - **列表分页**：镜像、Compose 项目、更新中心等长列表均带内联翻页（上一页 / 下一页）和返回。
 - **周期更新通知**：按可配置周期检测镜像更新，推送带交互式键盘的通知（逐容器更新 / 屏蔽、全部更新 / 全部屏蔽、调整检查间隔）。
 - 定时更新与检测结果均可推送到 Telegram。
-
-### Compose 项目管理
-- 需将宿主机 compose 目录挂载进容器，并在配置中设置 `Compose.ScanPaths`：
-
-```yaml
-volumes:
-  - /宿主机/compose目录:/compose
-  - ./data:/data
-```
-
-- 支持项目扫描、文件查看/编辑、YAML 校验、高风险配置提示和部署操作（up/down/restart/pull）。
-- 部署 `up` 遇高风险配置需二次确认；所有部署命令带超时并进入任务系统。
-
-### Portainer 风格容器运维
-- 容器暂停、恢复、强制终止、删除、重命名、命令执行、日志查看和参数编辑。
-- **交互式终端**：基于 WebSocket + xterm.js 连接容器 `exec`，支持 bash/sh/ash 与自定义命令。
-- **容器详情**：多 Tab 展示基本信息、网络、挂载、环境变量、资源限制等。
-- **参数编辑（6 Tab）**：常规（重启策略）、网络（网络模式 / 端口映射）、挂载（卷绑定）、环境变量、资源（内存 / CPU）、标签 & 命令（Labels / Cmd / Entrypoint）。
-- 编辑通过"停旧→建新→启动→校验→可选删旧"任务化重建，失败自动回滚；挂载等高风险改动带确认提示。
-- **文件管理器**：浏览容器内文件系统，支持在线查看 / 编辑 / 上传 / 下载 / 新建 / 删除 / 重命名，兼容 BusyBox 与 GNU 环境。
 
 ### 前端界面
 - React (Vite + Tailwind) 单页应用，构建产物通过 `//go:embed` 嵌入 Go 二进制，无需单独部署。

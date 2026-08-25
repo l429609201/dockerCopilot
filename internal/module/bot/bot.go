@@ -139,6 +139,22 @@ func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
 // 保证 NotifyUpdateWithKeyboard 的签名与 notify.UpdateNotifier 接口一致。
 type UpdateContainer = notify.UpdateItem
 
+// NotifyRuleResult 推送定时更新完成通知（带交互式键盘）。
+// 实现 notify.RuleResultNotifier 接口：正文只展示统计+已更新列表，
+// 跳过/失败改由内联按钮按需查看，并支持一键重试全部失败。
+func (b *Bot) NotifyRuleResult(res *notify.RuleUpdateResult) {
+	b.mu.Lock()
+	client := b.client
+	cfg := b.cfg
+	b.mu.Unlock()
+	if client == nil || !cfg.Enabled || !cfg.NotifyUpdate || res == nil {
+		return
+	}
+	for _, chatID := range cfg.AllowedChatIDs {
+		b.sendRuleResultSummary(chatID, res, 0)
+	}
+}
+
 // Reload 根据最新配置重建 Bot：停止旧轮询，按需启动新轮询。
 func (b *Bot) Reload() {
 	cfg := b.svcCtx.AppConfig.Get().Telegram

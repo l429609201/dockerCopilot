@@ -26,6 +26,15 @@ type UpdateNotifier interface {
 	NotifyUpdateWithKeyboard(items []UpdateItem)
 }
 
+// RuleResultNotifier 是"带交互式键盘的定时更新完成通知"能力接口。
+// 通知渠道（如 Telegram Bot）实现它后，完成消息正文只展示统计+已更新列表，
+// 跳过/失败改由内联按钮按需查看，并支持一键重试全部失败；
+// 未实现时调用方回退为纯文本通知（正文铺开三段明细）。
+type RuleResultNotifier interface {
+	// NotifyRuleResult 推送某规则的执行结果（明细已存入 result store，通过 ruleID 取用）。
+	NotifyRuleResult(res *RuleUpdateResult)
+}
+
 // MultiNotifier 组合多个 Notifier，按顺序广播。
 type MultiNotifier struct {
 	notifiers []Notifier

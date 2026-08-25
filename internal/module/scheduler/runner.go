@@ -73,8 +73,8 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		targetSet[targetKey(t.HostID, t.Name)] = struct{}{}
 	}
 
-	var updated, skipped, failed int
-	var updatedList, skippedList, failedList []string // 记录详细列表
+	// 结构化明细：携带容器 ID/主机/镜像/原因，供"查看跳过·失败明细"和"重试全部失败"复用。
+	var updatedList, skippedList, failedList []notify.ResultItem
 	timeoutSec := svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 1800
@@ -93,15 +93,18 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 		// 策略：仅在有更新时执行
 		if rule.OnlyWhenUpdate && !c.Update {
-			skipped++
-			skippedList = append(skippedList, fmt.Sprintf("%s (已是最新版本)", dispName))
+			skippedList = append(skippedList, notify.ResultItem{
+				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image, Reason: "已是最新版本",
+			})
 			continue
 		}
 		// 策略：跳过无 tag 或 digest 形式镜像
 		if rule.SkipInvalidTag && !isValidImageRef(c.Image) {
 			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, dispName, c.Image)
-			skipped++
-			skippedList = append(skippedList, fmt.Sprintf("%s (镜像标签无效: %s)", dispName, shortImage(c.Image)))
+			skippedList = append(skippedList, notify.ResultItem{
+				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image,
+				Reason: "镜像标签无效: " + shortImage(c.Image),
+			})
 			continue
 		}
 		// 自适应模式：按当前容器镜像匹配凭据；否则用预编码的复用凭据
@@ -109,50 +112,65 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if autoAuth {
 			auth = utiles.MatchRegistryAuthByImage(svcCtx.AppConfig, c.Image)
 		}
+		item := notify.ResultItem{HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image}
 		if runOne(svcCtx, hostID, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
-			updated++
-			updatedList = append(updatedList, fmt.Sprintf("%s (镜像: %s)", dispName, shortImage(c.Image)))
+			item.Reason = "镜像: " + shortImage(c.Image)
+			updatedList = append(updatedList, item)
 		} else {
-			failed++
-			failedList = append(failedList, fmt.Sprintf("%s (镜像: %s)", dispName, shortImage(c.Image)))
+			item.Reason = "更新失败: " + shortImage(c.Image)
+			failedList = append(failedList, item)
 		}
 	}
+	updated, skipped, failed := len(updatedList), len(skippedList), len(failedList)
 
 	summary := fmt.Sprintf("更新 %d，跳过 %d，失败 %d", updated, skipped, failed)
 	recordResult(svcCtx, rule.ID, summary)
 	logx.Infof("定时更新规则[%s]执行完成：%s", rule.Name, summary)
-	if notifier != nil && rule.NotifyOnDone {
-		// 构建详细消息
-		var msg strings.Builder
-		msg.WriteString(fmt.Sprintf("规则「%s」执行完成\n\n", rule.Name))
-		msg.WriteString(fmt.Sprintf("📊 统计：更新 %d 个，跳过 %d 个，失败 %d 个\n", updated, skipped, failed))
 
-		// 更新成功列表
-		if len(updatedList) > 0 {
-			msg.WriteString("\n✅ 已更新：\n")
-			for _, item := range updatedList {
-				msg.WriteString(fmt.Sprintf("  • %s\n", item))
-			}
-		}
-
-		// 跳过列表（含原因）
-		if len(skippedList) > 0 {
-			msg.WriteString("\n⏭️ 已跳过：\n")
-			for _, item := range skippedList {
-				msg.WriteString(fmt.Sprintf("  • %s\n", item))
-			}
-		}
-
-		// 失败列表
-		if len(failedList) > 0 {
-			msg.WriteString("\n❌ 更新失败：\n")
-			for _, item := range failedList {
-				msg.WriteString(fmt.Sprintf("  • %s\n", item))
-			}
-		}
-
-		notifier.Notify("定时更新完成", msg.String())
+	// 保存本次执行明细到公共 result store：供 Bot 端「查看跳过/失败明细」和「重试全部失败」取用。
+	result := &notify.RuleUpdateResult{
+		RuleID:   rule.ID,
+		RuleName: rule.Name,
+		KeepOld:  rule.KeepOldContainer,
+		Updated:  updatedList,
+		Skipped:  skippedList,
+		Failed:   failedList,
 	}
+	notify.SaveRuleUpdateResult(result)
+
+	if notifier == nil || !rule.NotifyOnDone {
+		return
+	}
+
+	// 优先：带交互式键盘的完成通知（正文只留统计+已更新列表，跳过/失败改按钮按需查看）。
+	if kbNotifier, ok := notifier.(notify.RuleResultNotifier); ok {
+		kbNotifier.NotifyRuleResult(result)
+		return
+	}
+
+	// 回退：纯文本通知，正文铺开三段明细（渠道未实现键盘能力时）。
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("规则「%s」执行完成\n\n", rule.Name))
+	msg.WriteString(fmt.Sprintf("📊 统计：更新 %d 个，跳过 %d 个，失败 %d 个\n", updated, skipped, failed))
+	if len(updatedList) > 0 {
+		msg.WriteString("\n✅ 已更新：\n")
+		for _, item := range updatedList {
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+		}
+	}
+	if len(skippedList) > 0 {
+		msg.WriteString("\n⏭️ 已跳过：\n")
+		for _, item := range skippedList {
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+		}
+	}
+	if len(failedList) > 0 {
+		msg.WriteString("\n❌ 更新失败：\n")
+		for _, item := range failedList {
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+		}
+	}
+	notifier.Notify("定时更新完成", msg.String())
 }
 
 // runOne 提交单个容器的更新任务并等待其结束，返回是否成功。

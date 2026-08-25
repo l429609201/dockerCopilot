@@ -13,6 +13,7 @@ import (
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/module/compose"
 	"github.com/l429609201/dockerCopilot/internal/module/containerops"
+	"github.com/l429609201/dockerCopilot/internal/module/notify"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
 	MyType "github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
@@ -347,6 +348,33 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	if parts[0] == "updnotify" && len(parts) == 2 {
 		page, _ := strconv.Atoi(parts[1])
 		b.resendUpdateNotification(chatID, page, messageID)
+		return
+	}
+	// 定时更新完成结果交互：rres|<action>|<ruleID>[|...]
+	if parts[0] == "rres" && len(parts) >= 3 {
+		ruleID := parts[2]
+		switch parts[1] {
+		case "sum": // 返回完成摘要
+			if res := notify.GetRuleUpdateResult(ruleID); res != nil {
+				b.sendRuleResultSummary(chatID, res, messageID)
+			} else {
+				b.editMessage(chatID, messageID, "⚠️ 该执行结果已过期（服务可能已重启）。")
+			}
+		case "skip", "fail": // 查看跳过/失败明细（parts[3]=页码）
+			page := 0
+			if len(parts) >= 4 {
+				page = parsePageArg(parts[3])
+			}
+			b.sendRuleResultDetail(chatID, ruleID, parts[1], page, messageID)
+		case "upd": // 明细页更新单容器：rres|upd|<ruleID>|<kind>|<idx>
+			if len(parts) >= 5 {
+				b.updateResultItem(chatID, ruleID, parts[3], parsePageArg(parts[4]), messageID)
+			}
+		case "retry": // 重试全部失败（二次确认）
+			b.confirmRetryFailed(chatID, ruleID, messageID)
+		case "retrun": // 确认后执行批量重试
+			b.executeRetryFailed(chatID, ruleID, messageID)
+		}
 		return
 	}
 	// 详情页就地切换通知屏蔽：mutehere|<page>|<容器名> —— 切换后不跳转，就地刷新当前页详情
@@ -2339,8 +2367,9 @@ func (b *Bot) setUpdateInterval(chatID int64, interval string, messageID int64) 
 
 // resendUpdateNotification 重新获取更新列表并发送通知（用于翻页）。
 func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) {
-	// 获取所有有更新的容器
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 获取所有主机的有更新容器：与周期检测摘要（scheduler 的 pending）保持同一数据源，
+	// 避免"摘要用 GetAllContainers（含远程主机）、详情用 GetContainerList（仅本地）"导致两者内容对不上。
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return
