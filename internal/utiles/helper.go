@@ -52,8 +52,8 @@ func RunHelper() {
 // doHelperUpdate 执行实际的停旧→删旧→建新→启动流程（Misaka 方式）。
 // 优点：先删除释放名称，再用原名创建，无需重命名，避免重命名失败。
 func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetName, newImage string, delOld bool) error {
-	// 生成固定的时间戳，用于备份名和回滚
-	timestamp := time.Now().Format("20060102-150405")
+	// 生成固定的时间戳，用于备份名和回滚（统一 {name}-old-{时间戳} 格式，供 CleanupOldBackups 识别）
+	timestamp := time.Now().Format("20060102150405")
 	backupName := targetName + "-old-" + timestamp
 
 	// 先 inspect 拿到旧容器完整配置（要在停止/删除前取，配置不受停止影响）
@@ -119,5 +119,13 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 	}
 
 	logx.Infof("[helper] ✅ DC 自我更新成功！新容器 %s 已启动", targetName)
+
+	// 更新成功后清理历史 -old- 备份，避免无限累积：
+	// delOld=true 本次未留备份 → 清空全部历史；delOld=false 本次留了 1 个 → 只保留最新 1 个。
+	keep := 0
+	if !delOld {
+		keep = 1
+	}
+	CleanupOldBackups(cli, targetName, keep)
 	return nil
 }

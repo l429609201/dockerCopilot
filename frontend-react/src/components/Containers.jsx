@@ -1851,9 +1851,11 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-        {/* 弹窗头部 */}
-        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+      {/* max-h-[90vh]+flex-col：限制弹窗高度不超视口，内部头部/Tab/底部固定、内容区滚动，
+          解决移动端环境变量或挂载过多时内容撑爆视口且无法滚动的问题 */}
+      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+        {/* 弹窗头部（固定） */}
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex-shrink-0">
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">容器详情</h3>
@@ -1889,9 +1891,9 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           </div>
         </div>
 
-        {/* Tab 导航 */}
-        <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="flex px-6 -mb-px space-x-4">
+        {/* Tab 导航（固定，不随内容滚动） */}
+        <div className="border-b border-gray-200 dark:border-gray-700 flex-shrink-0 overflow-x-auto">
+          <nav className="flex px-6 -mb-px space-x-4 whitespace-nowrap">
             {[
               { id: 'basic', label: '基本信息' },
               { id: 'network', label: '网络' },
@@ -1940,8 +1942,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           />
         )}
 
-        {/* 弹窗内容 */}
-        <div className="px-6 py-4 space-y-4">
+        {/* 弹窗内容（可滚动区：内容超高时纵向滚动，不再撑爆弹窗） */}
+        <div className="px-6 py-4 space-y-4 flex-1 overflow-y-auto">
           {/* Tab: 基本信息（现有全部内容） */}
           {activeTab === 'basic' && (
             <>
@@ -2140,8 +2142,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
         </div>
 
-        {/* 弹窗底部操作按钮 */}
-        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30">
+        {/* 弹窗底部操作按钮（固定，不随内容滚动） */}
+        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-700/30 flex-shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
 
             {/* 操作按钮区：4列×2行 Grid 布局 */}

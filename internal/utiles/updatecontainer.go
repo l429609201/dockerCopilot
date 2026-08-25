@@ -192,9 +192,9 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 			return err
 		}
 	} else {
-		// 保留旧容器：重命名为带时间戳的备份名
-		currentDate := time.Now().Format("2006-01-02-15-04-05")
-		backupName = name + "-" + currentDate
+		// 保留旧容器：重命名为带时间戳的备份名（统一 {name}-old-{时间戳} 格式，供 CleanupOldBackups 识别）
+		currentDate := time.Now().Format("20060102150405")
+		backupName = name + "-old-" + currentDate
 		err = cli.ContainerRename(context.Background(), id, backupName)
 		if err != nil {
 			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "重命名旧容器失败", err)
@@ -272,6 +272,14 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.Percentage = 100
 	oldTaskProgress.IsDone = true
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
+
+	// 更新成功后清理历史 -old- 备份，避免无限累积：
+	// delOld=true 本次未留备份 → 清空全部历史；delOld=false 本次留了 1 个 → 只保留最新 1 个。
+	keep := 0
+	if !delOldContainer {
+		keep = 1
+	}
+	CleanupOldBackups(cli, name, keep)
 	return nil
 }
 
