@@ -119,17 +119,20 @@ func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
 	if timeoutSec <= 0 {
 		timeoutSec = 1800
 	}
+	// 按目标镜像所属 registry 自动匹配已保存的登录凭据，避免 Bot 手动更新时走匿名拉取
+	// （匹配不到或凭据无用户名时返回空串，等价于匿名拉取）。与定时/HTTP 更新路径保持一致。
+	registryAuth := utiles.MatchRegistryAuthByImage(s.svcCtx.AppConfig, imageNameAndTag)
 	startErr := s.svcCtx.TaskManager.TryStart(taskID, id, svc.TaskTypeContainerUpdate, func(taskCtx context.Context) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
 		// 目标是本程序自身时，走辅助容器方案，避免"自己停自己"卡死。
 		if utiles.IsSelfContainer(s.svcCtx, id) {
-			if e := utiles.SelfUpdate(ctxWithTimeout, s.svcCtx, id, name, imageNameAndTag, delOldContainer, taskID, ""); e != nil {
+			if e := utiles.SelfUpdate(ctxWithTimeout, s.svcCtx, id, name, imageNameAndTag, delOldContainer, taskID, registryAuth); e != nil {
 				logx.Errorf("Bot 自更新失败: %v", e)
 			}
 			return
 		}
-		if e := utiles.UpdateContainerOnHost(ctxWithTimeout, s.svcCtx, s.hostID, id, name, imageNameAndTag, delOldContainer, taskID, ""); e != nil {
+		if e := utiles.UpdateContainerOnHost(ctxWithTimeout, s.svcCtx, s.hostID, id, name, imageNameAndTag, delOldContainer, taskID, registryAuth); e != nil {
 			logx.Errorf("Bot 更新容器失败: %v", e)
 		}
 	})
