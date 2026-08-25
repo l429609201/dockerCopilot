@@ -32,7 +32,7 @@ COPY --from=frontend /web/dist/ ./front/
 RUN test -f front/index.html
 # 用 swag 从 handler 注解自动生成 API 文档（swagger.json），放入 swagger-ui/ 供 embed 嵌入
 RUN go install github.com/swaggo/swag/cmd/swag@latest \
-    && swag init --parseDependency --parseInternal -o docs \
+    && swag init -g dockercopilot.go --parseDependency --parseInternal -o docs \
     && cp docs/swagger.json swagger-ui/swagger.json \
     && rm -rf docs
 # 编译（按目标架构）
