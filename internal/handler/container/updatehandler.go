@@ -9,6 +9,17 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// UpdateHandler 更新容器
+// @Summary 更新容器
+// @Tags 容器
+// @Accept multipart/form-data
+// @Produce json
+// @Param id path string true "容器ID"
+// @Param containerName formData string true "容器名"
+// @Param imageNameAndTag formData string true "镜像名:标签"
+// @Success 200 {object} types.Resp "返回 data.taskID"
+// @Security BearerAuth
+// @Router /container/{id}/update [post]
 func UpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ContainerUpdateReq

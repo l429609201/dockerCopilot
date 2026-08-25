@@ -9,6 +9,15 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// RestoreHandler 恢复容器
+// @Summary 恢复容器
+// @Tags 备份
+// @Accept json
+// @Produce json
+// @Param body body types.ContainerRestoreReq true "备份文件名"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /container/backups/restore [post]
 func RestoreHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ContainerRestoreReq

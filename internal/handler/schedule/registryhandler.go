@@ -10,6 +10,13 @@ import (
 )
 
 // RegistryListHandler 返回脱敏后的 Registry 凭据列表。
+// RegistryListHandler 获取 Registry 凭据列表
+// @Summary 获取凭据列表
+// @Tags Registry 凭据
+// @Produce json
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /registries [get]
 func RegistryListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := schedule.NewRegistryLogic(r.Context(), svcCtx)
@@ -19,6 +26,15 @@ func RegistryListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // RegistrySaveHandler 新建或更新 Registry 凭据。
+// RegistrySaveHandler 创建/更新 Registry 凭据
+// @Summary 创建或更新凭据
+// @Tags Registry 凭据
+// @Accept json
+// @Produce json
+// @Param body body types.RegistryReq true "凭据信息"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /registries [post]
 func RegistrySaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.RegistryReq
@@ -33,6 +49,14 @@ func RegistrySaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // RegistryDeleteHandler 删除 Registry 凭据。
+// RegistryDeleteHandler 删除 Registry 凭据
+// @Summary 删除凭据
+// @Tags Registry 凭据
+// @Produce json
+// @Param id path string true "凭据ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /registries/{id} [delete]
 func RegistryDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.RegistryIDReq
@@ -47,6 +71,14 @@ func RegistryDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // RegistryRateLimitHandler 查询指定凭据在 Docker Hub 的剩余拉取次数。
+// RegistryRateLimitHandler 查询 Docker Hub 拉取次数配额
+// @Summary 查询拉取次数配额
+// @Tags Registry 凭据
+// @Produce json
+// @Param id path string true "凭据ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /registries/{id}/ratelimit [get]
 func RegistryRateLimitHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.RegistryIDReq

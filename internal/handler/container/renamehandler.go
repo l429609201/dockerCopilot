@@ -8,6 +8,15 @@ import (
 	"net/http"
 )
 
+// RenameHandler 重命名容器
+// @Summary 重命名容器
+// @Tags 容器
+// @Produce json
+// @Param id path string true "容器ID"
+// @Param newName query string true "新名称"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /container/{id}/rename [post]
 func RenameHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ContainerRenameReq

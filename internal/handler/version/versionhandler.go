@@ -9,6 +9,14 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// VersionHandler 获取版本信息
+// @Summary 获取版本
+// @Tags 版本
+// @Produce json
+// @Param type query string false "local 或 remote"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /version [get]
 func VersionHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.VersionReq

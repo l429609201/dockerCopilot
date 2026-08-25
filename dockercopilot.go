@@ -28,6 +28,9 @@ import (
 //go:embed front/*
 var embeddedFront embed.FS
 
+//go:embed swagger-ui/*
+var embeddedSwagger embed.FS
+
 var configFile = flag.String("f", "etc/dockerCopilot.yaml", "the config file")
 
 type UnauthorizedResponse struct {
@@ -36,6 +39,15 @@ type UnauthorizedResponse struct {
 	Data map[string]interface{} `json:"data"`
 }
 
+// @title        dockerCopilot API
+// @version      1.0.0
+// @description  Docker 可视化管理工具 API
+// @license.name AGPLv3
+// @BasePath     /api
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Bearer JWT 令牌（登录后获取）
 func main() {
 	logDir := "./logs"
 	ErrSetupLog := SetupLog(logDir)
@@ -199,6 +211,34 @@ func RegisterHandlers(engine *rest.Server) {
 			},
 		},
 	)
+
+	// Swagger-UI 静态文件服务：嵌入 swagger-ui/ 目录，通过 /api/docs/ 访问（静态资源无需 JWT）。
+	// swagger-ui/swagger-initializer.js 指向 ./swagger.json（由 swag init 在镜像构建阶段生成到 swagger-ui/ 目录）。
+	swaggerFS, swaggerErr := fs.Sub(embeddedSwagger, "swagger-ui")
+	if swaggerErr != nil {
+		logx.Errorf("嵌入 swagger-ui 失败: %v", swaggerErr)
+	} else {
+		swaggerHandler := http.StripPrefix("/api/docs/", http.FileServer(http.FS(swaggerFS)))
+		engine.AddRoutes(
+			[]rest.Route{
+				{
+					Method: http.MethodGet,
+					Path:   "/docs/",
+					Handler: func(w http.ResponseWriter, r *http.Request) {
+						swaggerHandler.ServeHTTP(w, r)
+					},
+				},
+				{
+					Method: http.MethodGet,
+					Path:   "/docs/:file",
+					Handler: func(w http.ResponseWriter, r *http.Request) {
+						swaggerHandler.ServeHTTP(w, r)
+					},
+				},
+			},
+			rest.WithPrefix("/api"),
+		)
+	}
 
 	engine.AddRoutes(
 		[]rest.Route{

@@ -15,6 +15,11 @@
 感谢原项目 [onlyLTY/dockerCopilot](https://github.com/onlyLTY/dockerCopilot) 及其所有贡献者，
 没有原项目就没有本 Fork。本项目在其基础上持续改进，欢迎提交 Issue 与建议。
 
+同时感谢以下开源项目：
+
+- [swaggo/swag](https://github.com/swaggo/swag) —— 由代码注解自动生成 OpenAPI 文档。
+- [Swagger UI](https://github.com/swagger-api/swagger-ui) —— 内置交互式 API 文档页面（`/api/docs`）。
+
 # 介绍
 
 dockerCopilot 是一个主打便捷的 Docker 可视化管理工具，支持多平台（amd64 / arm64）。
@@ -55,6 +60,7 @@ dockerCopilot 是一个主打便捷的 Docker 可视化管理工具，支持多�
 **🔐 其他**
 - 备份 / 恢复容器配置；删除无 TAG / 未使用镜像；私有仓库凭据管理（接口与日志全程脱敏）。
 - 启动时镜像检查后台执行，不阻塞面板；配置持久化到 `/data/config/config.json`。
+- **内置 API 文档**：`/api/docs` 提供 Swagger UI，覆盖原版全部接口 + 定时任务 / 凭据管理接口，可在线调试。
 
 ## 🚀 快速开始
 
@@ -200,6 +206,12 @@ volumes:
 - React (Vite + Tailwind) 单页应用，构建产物通过 `//go:embed` 嵌入 Go 二进制，无需单独部署。
 - 容器支持卡片 / 列表两种视图，镜像图标自适应（自定义图标 > favicon 探测 > 内置 logo）。
 - 任务中心实时展示更新进度，镜像拉取任务可展开查看每层（layer）独立进度。
+
+### 内置 API 文档（Swagger UI）
+- 访问路径：`/api/docs`（也可从「关于」页点击「API 文档」按钮进入）。
+- 覆盖范围：**原版对外开放的全部接口** + 本 Fork 新增的**定时任务规则**与 **Registry 凭据**管理接口，方便第三方客户端（如依赖原版 API 的工具）对接与自测。
+- 文档由 [swaggo/swag](https://github.com/swaggo/swag) 在**镜像构建阶段**从代码注解自动生成 `swagger.json`，与 [Swagger UI](https://github.com/swagger-api/swagger-ui) 一并 `//go:embed` 进二进制——代码即文档，无需单独维护。
+- 鉴权：除 `POST /api/auth` 外均需 JWT。在 Swagger UI 右上角「Authorize」填入 `/api/auth` 返回的 `jwt` 后即可在线调试。
 
 ## 开发环境
 

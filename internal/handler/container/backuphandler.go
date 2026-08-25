@@ -8,6 +8,13 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// BackupHandler 创建容器备份
+// @Summary 创建容器备份
+// @Tags 备份
+// @Produce json
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /container/backup [get]
 func BackupHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := container.NewBackupLogic(r.Context(), svcCtx)

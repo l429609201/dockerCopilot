@@ -9,6 +9,14 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// StartHandler 启动容器
+// @Summary 启动容器
+// @Tags 容器
+// @Produce json
+// @Param id path string true "容器ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /container/{id}/start [post]
 func StartHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.IdReq

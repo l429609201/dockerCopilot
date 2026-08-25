@@ -9,6 +9,14 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// GetProgressHandler 查询任务进度
+// @Summary 查询任务进度
+// @Tags 进度查询
+// @Produce json
+// @Param taskid path string true "任务ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /progress/{taskid} [get]
 func GetProgressHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.GetProgressReq
