@@ -13,7 +13,7 @@ export function ContainerProcessModal({ container, onClose }) {
     setLoading(true)
     setError('')
     try {
-      const r = await containerAPI.topContainer(container.ID)
+      const r = await containerAPI.topContainer(container.ID, container.hostId || container.HostID)
       const d = r.data?.data || {}
       setTitles(d.titles || [])
       setProcesses(d.processes || [])

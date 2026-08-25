@@ -9,6 +9,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/golang-jwt/jwt"
 	"github.com/gorilla/websocket"
 	"github.com/l429609201/dockerCopilot/internal/svc"
@@ -50,6 +51,8 @@ func ExecWSHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			cmd = "/bin/sh"
 		}
 		user := r.URL.Query().Get("user")
+		// 容器所属 Docker 主机（多 Docker 管理），空表示本地
+		hostID := r.URL.Query().Get("hostId")
 
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -57,6 +60,13 @@ func ExecWSHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 		defer conn.Close()
+
+		// 按 hostId 取对应主机的 docker client，未找到回退本地
+		cli, ok := svcCtx.DockerManager.GetClient(hostID)
+		if !ok || cli == nil {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte("目标 Docker 主机无可用连接"))
+			return
+		}
 
 		ctx := context.Background()
 		execCfg := container.ExecOptions{
@@ -67,25 +77,25 @@ func ExecWSHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			AttachStderr: true,
 			Cmd:          strings.Fields(cmd),
 		}
-		created, err := svcCtx.DockerClient.ContainerExecCreate(ctx, id, execCfg)
+		created, err := cli.ContainerExecCreate(ctx, id, execCfg)
 		if err != nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("创建 exec 失败: "+err.Error()))
 			return
 		}
-		hijack, err := svcCtx.DockerClient.ContainerExecAttach(ctx, created.ID, container.ExecStartOptions{Tty: true})
+		hijack, err := cli.ContainerExecAttach(ctx, created.ID, container.ExecStartOptions{Tty: true})
 		if err != nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("附加 exec 失败: "+err.Error()))
 			return
 		}
 		defer hijack.Close()
 
-		pumpExec(conn, hijack, svcCtx, created.ID)
+		pumpExec(conn, hijack, cli, created.ID)
 	}
 }
 
 // pumpExec 在 WebSocket 与容器 exec 之间双向转发数据，并处理 resize 控制消息。
-// hijack.Reader 读容器输出，hijack.Conn 写容器输入。
-func pumpExec(conn *websocket.Conn, hijack dockertypes.HijackedResponse, svcCtx *svc.ServiceContext, execID string) {
+// hijack.Reader 读容器输出，hijack.Conn 写容器输入。cli 为目标主机的 docker client。
+func pumpExec(conn *websocket.Conn, hijack dockertypes.HijackedResponse, cli *dockerclient.Client, execID string) {
 	done := make(chan struct{})
 
 	// 容器输出 -> 浏览器
@@ -122,7 +132,7 @@ func pumpExec(conn *websocket.Conn, hijack dockertypes.HijackedResponse, svcCtx 
 		if mt == websocket.TextMessage {
 			var rm resizeMsg
 			if json.Unmarshal(data, &rm) == nil && rm.Type == "resize" {
-				_ = svcCtx.DockerClient.ContainerExecResize(context.Background(), execID,
+				_ = cli.ContainerExecResize(context.Background(), execID,
 					container.ResizeOptions{Height: rm.Rows, Width: rm.Cols})
 				continue
 			}

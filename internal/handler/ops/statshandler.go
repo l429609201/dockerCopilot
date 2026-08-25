@@ -18,6 +18,7 @@ import (
 // ContainerStat 单个容器的资源采样结果，字段均为前端直接可用的最终值。
 type ContainerStat struct {
 	ID          string  `json:"id"`          // 容器ID（短ID，12位）
+	HostID      string  `json:"hostId,omitempty"` // 所属 Docker 主机（多 Docker 管理），空表示本地
 	CPUPercent  float64 `json:"cpuPercent"`  // CPU 使用率百分比
 	MemUsed     uint64  `json:"memUsed"`     // 内存使用字节数
 	MemLimit    uint64  `json:"memLimit"`    // 内存上限字节数
@@ -119,11 +120,9 @@ func StatsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		w.Header().Set("X-Accel-Buffering", "no")
 
 		ctx := r.Context()
-		cli := svcCtx.DockerClient
-		cli.NegotiateAPIVersion(ctx)
 
 		push := func() {
-			stats := sampleRunningContainers(ctx, cli)
+			stats := sampleAllHostsRunningContainers(ctx, svcCtx)
 			data, err := json.Marshal(stats)
 			if err != nil {
 				return
@@ -146,11 +145,31 @@ func StatsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// sampleRunningContainers 并发采样所有运行中容器，返回结果切片。
-func sampleRunningContainers(ctx context.Context, cli *client.Client) []*ContainerStat {
+// sampleAllHostsRunningContainers 遍历所有已启用 Docker 主机，聚合采样运行中容器的资源。
+// 单个主机不可达仅记录日志并跳过，不影响其它主机。每个采样结果标记来源 hostId。
+func sampleAllHostsRunningContainers(ctx context.Context, svcCtx *svc.ServiceContext) []*ContainerStat {
+	svcCtx.AppConfig.EnsureLocalHost()
+	hosts := svcCtx.AppConfig.ListDockerHosts()
+	var all []*ContainerStat
+	for _, h := range hosts {
+		if !h.Enabled {
+			continue
+		}
+		cli, ok := svcCtx.DockerManager.GetClient(h.ID)
+		if !ok || cli == nil {
+			continue
+		}
+		stats := sampleRunningContainers(ctx, cli, h.ID)
+		all = append(all, stats...)
+	}
+	return all
+}
+
+// sampleRunningContainers 并发采样指定主机上所有运行中容器，标记 hostID。
+func sampleRunningContainers(ctx context.Context, cli *client.Client, hostID string) []*ContainerStat {
 	list, err := cli.ContainerList(ctx, container.ListOptions{All: false})
 	if err != nil {
-		logx.Errorf("stats 列出容器失败: %v", err)
+		logx.Errorf("stats 列出容器失败(host=%s): %v", hostID, err)
 		return nil
 	}
 	var (
@@ -168,6 +187,7 @@ func sampleRunningContainers(ctx context.Context, cli *client.Client) []*Contain
 			if err != nil {
 				return
 			}
+			st.HostID = hostID
 			mu.Lock()
 			results = append(results, st)
 			mu.Unlock()

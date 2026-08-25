@@ -9,6 +9,14 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// DelRestoreHandler 删除备份文件
+// @Summary 删除备份文件
+// @Tags 备份
+// @Produce json
+// @Param filename query string true "备份文件名"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /container/backups [delete]
 func DelRestoreHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.DelContainerBackupReq

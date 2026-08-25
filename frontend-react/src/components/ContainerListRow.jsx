@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity } from 'lucide-react'
+import { Play, Square, RotateCcw, Upload, RefreshCw, FileText, TerminalSquare, FolderOpen, MoreVertical, Edit3, Activity, Network, Info, Trash2 } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { formatRunningTime } from '../utils/format.js'
 import { ContainerStats } from './ContainerStats.jsx'
@@ -8,7 +8,7 @@ import { ContainerStats } from './ContainerStats.jsx'
 // 所有交互通过 props 回调，保持与卡片视图一致的行为。
 export function ContainerListRow({
   container, iconUrl, selected, batchMode, actionState, stat,
-  onOpen, onToggleSelect, onAction, onUpdate, onOps, onFiles, onEdit, onProcess,
+  onOpen, onToggleSelect, onAction, onUpdate, onOps, onFiles, onEdit, onProcess, onDelete,
 }) {
   const running = container.status === 'running'
   const loading = actionState?.loading
@@ -57,9 +57,32 @@ export function ContainerListRow({
 
       {/* 名称 + 镜像 */}
       <div className="min-w-0 flex-1">
-        <div className="font-medium text-gray-900 dark:text-white truncate">{container.name}</div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="font-medium text-gray-900 dark:text-white truncate">{container.name}</div>
+          {/* 来源主机标识：非本地容器才展示 */}
+          {container.hostName && container.hostId && container.hostId !== 'local' && (
+            <span className="flex-shrink-0 inline-flex items-center gap-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-medium">
+              <Network className="h-2.5 w-2.5" />
+              {container.hostName}
+            </span>
+          )}
+        </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{container.usingImage}</div>
       </div>
+
+      {/* 端口映射（中大屏显示）：最多 2 条，多余折叠为 +N */}
+      {Array.isArray(container.portMappings) && container.portMappings.length > 0 && (
+        <div className="hidden md:flex items-center gap-1 flex-shrink-0 max-w-[200px]" title={container.portMappings.join('\n')}>
+          {container.portMappings.slice(0, 2).map((m) => (
+            <span key={m} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap">
+              {m}
+            </span>
+          ))}
+          {container.portMappings.length > 2 && (
+            <span className="text-[10px] text-gray-400">+{container.portMappings.length - 2}</span>
+          )}
+        </div>
+      )}
 
       {/* 资源监控：CPU%+内存%（大屏），流量（超大屏），仅运行中显示 */}
       {running && (
@@ -78,11 +101,13 @@ export function ContainerListRow({
         <div className="flex items-center gap-1 flex-shrink-0 relative" onClick={(e) => e.stopPropagation()}>
           {/* 大屏(md+)：显示所有按钮 */}
           <div className="hidden md:flex items-center gap-1">
+            {/* 详情：打开容器详情弹窗 */}
+            <IconBtn onClick={() => onOpen(container)} icon={Info} title="详情" color="gray" />
             {/* 日志 / 控制台 / 文件管理 快捷入口 - 添加颜色区分 */}
             {onOps && (
               <>
                 <IconBtn onClick={() => onOps('logs')} icon={FileText} title="查看日志" color="blue" />
-                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="控制台" color="purple" />
+                <IconBtn onClick={() => onOps('exec')} icon={TerminalSquare} title="终端" color="purple" />
                 {onFiles && <IconBtn onClick={onFiles} icon={FolderOpen} title="文件管理" color="yellow" />}
                 {onEdit && <IconBtn onClick={() => onEdit({ ...container, ID: container.id })} icon={Edit3} title="编辑容器" color="orange" />}
                 {onProcess && <IconBtn onClick={() => onProcess({ ...container, ID: container.id })} icon={Activity} title="查看进程" color="green" />}
@@ -109,6 +134,7 @@ export function ContainerListRow({
                 )}
                 <IconBtn onClick={() => onUpdate(container.id)} icon={Upload} title="更新"
                   color={container.haveUpdate ? "yellow" : "purple"} />
+                {onDelete && <IconBtn onClick={onDelete} icon={Trash2} title="删除容器" color="red" />}
               </>
             )}
           </div>
@@ -133,6 +159,8 @@ export function ContainerListRow({
                     <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
                     {/* 下拉菜单 */}
                     <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[140px]">
+                      <MenuItem onClick={() => { onOpen(container); setMenuOpen(false) }} icon={Info} text="详情" />
+                      <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
                       {running ? (
                         <>
                           <MenuItem onClick={() => { onAction(container.id, 'stop'); setMenuOpen(false) }} icon={Square} text="停止" />
@@ -146,8 +174,14 @@ export function ContainerListRow({
                         <>
                           <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
                           <MenuItem onClick={() => { onOps('logs'); setMenuOpen(false) }} icon={FileText} text="日志" />
-                          <MenuItem onClick={() => { onOps('exec'); setMenuOpen(false) }} icon={TerminalSquare} text="控制台" />
+                          <MenuItem onClick={() => { onOps('exec'); setMenuOpen(false) }} icon={TerminalSquare} text="终端" />
                           {onFiles && <MenuItem onClick={() => { onFiles(); setMenuOpen(false) }} icon={FolderOpen} text="文件管理" />}
+                        </>
+                      )}
+                      {onDelete && (
+                        <>
+                          <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
+                          <MenuItem onClick={() => { onDelete(); setMenuOpen(false) }} icon={Trash2} text="删除容器" danger />
                         </>
                       )}
                     </div>
@@ -179,12 +213,17 @@ function IconBtn({ onClick, icon: Icon, title, color }) {
   )
 }
 
-// 下拉菜单项组件
-function MenuItem({ onClick, icon: Icon, text }) {
+// 下拉菜单项组件；danger 为 true 时用红色（危险操作，如删除）
+function MenuItem({ onClick, icon: Icon, text, danger }) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+      className={cn(
+        "w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors",
+        danger
+          ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+          : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+      )}>
       <Icon className="h-4 w-4 flex-shrink-0" />
       <span>{text}</span>
     </button>

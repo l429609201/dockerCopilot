@@ -18,10 +18,27 @@ type ContainerUpdateReq struct {
 	ContainerName   string `form:"containerName"`
 }
 
+// CreateContainerReq 从零创建新容器的请求（Portainer 风格）。
+// HostID 定位目标 Docker 主机（多 Docker 管理），空表示本地。
 type CreateContainerReq struct {
-	OldName         string `json:"old_name"`
-	NewName         string `json:"new_name"`
-	ImageNameAndTag string `json:"image_name_and_tag"`
+	Name          string            `json:"name"`                    // 容器名（必填）
+	Image         string            `json:"image"`                   // 镜像 name:tag（必填）
+	Env           []string          `json:"env,optional"`            // 环境变量 KEY=VALUE
+	PortBindings  []string          `json:"portBindings,optional"`   // 端口映射 "8080:80/tcp"
+	Binds         []string          `json:"binds,optional"`          // 卷/绑定挂载 "/host:/container:ro"
+	RestartPolicy string            `json:"restartPolicy,optional"`  // no/always/unless-stopped/on-failure
+	NetworkMode   string            `json:"networkMode,optional"`    // bridge/host/none/自定义网络名
+	Labels        map[string]string `json:"labels,optional"`         // 标签
+	Cmd           []string          `json:"cmd,optional"`            // 启动命令
+	Entrypoint    []string          `json:"entrypoint,optional"`     // 入口点
+	AutoPull      bool              `json:"autoPull,optional"`       // 本地无镜像时自动拉取
+	AutoStart     bool              `json:"autoStart,optional"`      // 创建后立即启动
+	HostID        string            `json:"hostId,optional"`         // 目标 Docker 主机
+}
+
+// ParseRunCommandReq 解析一条 docker run 命令为容器创建参数（仅解析预览，不创建）。
+type ParseRunCommandReq struct {
+	Command string `json:"command"` // 完整的 docker run 命令
 }
 
 type DelContainerBackupReq struct {
@@ -38,6 +55,8 @@ type GetProgressReq struct {
 
 type IdReq struct {
 	Id string `path:"id"`
+	// HostID 容器所属 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `form:"hostId,optional"`
 }
 
 type LoginReq struct {
@@ -62,6 +81,8 @@ type RemoveImageReq struct {
 type PruneImagesReq struct {
 	Ids   []string `json:"ids"`
 	Force bool     `json:"force,default=false"`
+	// HostID 目标 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `json:"hostId,optional"`
 }
 
 type RenameContainerReq struct {
@@ -98,4 +119,40 @@ type VersionReq struct {
 
 type GetNewImageReq struct {
 	ImageNameAndTag string `json:"image_name_and_tag"`
+}
+
+// HostPathResolveReq 解析容器路径到宿主机路径请求。
+type HostPathResolveReq struct {
+	ContainerPath string `json:"containerPath"`
+}
+
+// HostPathConfigReq 保存宿主机路径映射配置请求。
+type HostPathConfigReq struct {
+	Enabled  bool                  `json:"enabled"`
+	Mode     string                `json:"mode"` // auto | custom
+	Mappings []HostPathMappingItem `json:"mappings"`
+}
+
+// HostPathMappingItem 自定义模式下的单条映射。
+type HostPathMappingItem struct {
+	ContainerPath string `json:"containerPath"`
+	HostPath      string `json:"hostPath"`
+}
+
+// DockerHostReq 多 Docker 主机的创建/更新请求。
+// ID 为空表示新建；非空表示更新。本地主机（id=local）仅允许改名，地址/类型固定。
+type DockerHostReq struct {
+	ID      string `json:"id,optional"`
+	Name    string `json:"name"`
+	Address string `json:"address,optional"` // 远程形如 tcp://ip:2375；本地忽略此字段
+	Enabled bool   `json:"enabled,optional"`
+	Note    string `json:"note,optional"`
+	// Headers 远程连接附加的自定义请求头。key 为头名，value 为头值。
+	// 值为空字符串的项表示「保持原值不变」（配合脱敏回显，避免把脱敏串写回）。
+	Headers map[string]string `json:"headers,optional"`
+}
+
+// DockerHostIDReq 按 ID 操作 Docker 主机（删除、连通性测试）。
+type DockerHostIDReq struct {
+	ID string `path:"id"`
 }

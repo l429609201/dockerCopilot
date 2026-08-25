@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { cn } from '../utils/cn.js'
 
 // 交互式终端：用 xterm.js + WebSocket 连接容器 exec，实现类似 Portainer 的控制台。
-export function Terminal({ containerId, cmd, user, fullscreen = false }) {
+export function Terminal({ containerId, cmd, user, fullscreen = false, hostId }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const wsRef = useRef(null)
@@ -32,6 +32,8 @@ export function Terminal({ containerId, cmd, user, fullscreen = false }) {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const base = `${proto}://${window.location.host}`
     const params = new URLSearchParams({ cmd: cmd || '/bin/sh', user: user || '', token })
+    // 多 Docker 管理：带上容器所属主机，后端据此选择对应 client
+    if (hostId) params.set('hostId', hostId)
     const ws = new WebSocket(`${base}/api/container/${containerId}/exec/ws?${params.toString()}`)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
@@ -79,7 +81,7 @@ export function Terminal({ containerId, cmd, user, fullscreen = false }) {
       try { ws.close() } catch { /* ignore */ }
       term.dispose()
     }
-  }, [containerId, cmd, user])
+  }, [containerId, cmd, user, hostId])
 
   // 全屏状态切换后，等布局稳定再 fit 一次，确保终端填满新区域
   useEffect(() => {

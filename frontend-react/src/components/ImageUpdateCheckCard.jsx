@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { BellOff, Save, Loader2, X, Plus, ChevronDown } from 'lucide-react'
+import { BellOff, Save, Loader2, X, Plus, ChevronDown, Search } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 
 // 镜像更新检查卡片：第一行=更新检查周期(分钟)，第二行=屏蔽黑名单(标签式增删+从容器列表勾选)。
@@ -9,6 +9,7 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
   const [msg, setMsg] = useState(null) // { ok, text }
   const [names, setNames] = useState([]) // 现有容器名列表，供勾选
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [searchText, setSearchText] = useState('') // 下拉菜单内的搜索关键词
 
   // 拉取现有容器名，供黑名单勾选
   const loadNames = useCallback(async () => {
@@ -32,8 +33,10 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
   }
   const removeMuted = (name) => onChangeMuted(muted.filter((m) => m !== name))
 
-  // 未被屏蔽的候选容器
-  const candidates = names.filter((n) => !muted.includes(n))
+  // 未被屏蔽的候选容器，根据搜索关键词过滤
+  const candidates = names
+    .filter((n) => !muted.includes(n))
+    .filter((n) => searchText.trim() === '' || n.toLowerCase().includes(searchText.toLowerCase()))
 
   const save = async () => {
     setSaving(true); setMsg(null)
@@ -86,28 +89,52 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
           ))}
         </div>
 
-        {/* 从容器列表勾选（下拉） */}
-        <div className="relative inline-block">
-          <button type="button" onClick={() => setPickerOpen((v) => !v)}
-            className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
-            <Plus className="h-4 w-4" /> 从容器列表添加 <ChevronDown className="h-3 w-3" />
-          </button>
+        {/* 从容器列表勾选（输入框样式的下拉选择器） */}
+        <div className="relative">
+          <div
+            onClick={() => setPickerOpen((v) => !v)}
+            className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:border-primary-500 dark:hover:border-primary-400 bg-white dark:bg-gray-800 transition-colors"
+          >
+            <Plus className="h-4 w-4 text-gray-400" />
+            <span className="flex-1 text-gray-500 dark:text-gray-400">从容器列表添加...</span>
+            <ChevronDown className="h-4 w-4 text-gray-400" />
+          </div>
           {pickerOpen && (
             <>
               {/* 点击外部关闭 */}
               <div className="fixed inset-0 z-10" onClick={() => setPickerOpen(false)} />
-              <div className="absolute z-20 mt-1 w-64 max-h-60 overflow-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
-                {candidates.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-gray-400">没有可添加的容器</div>
-                ) : (
-                  candidates.map((name) => (
-                    <button key={name} type="button"
-                      onClick={() => { addMuted(name); setPickerOpen(false) }}
-                      className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 truncate">
-                      {name}
-                    </button>
-                  ))
-                )}
+              <div className="absolute z-20 mt-1 w-64 max-h-60 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg">
+                {/* 搜索框 */}
+                <div className="sticky top-0 p-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      placeholder="搜索容器名称..."
+                      className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </div>
+                {/* 容器列表 */}
+                <div className="max-h-48 overflow-auto">
+                  {candidates.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-gray-400">
+                      {searchText.trim() ? '没有匹配的容器' : '没有可添加的容器'}
+                    </div>
+                  ) : (
+                    candidates.map((name) => (
+                      <button key={name} type="button"
+                        onClick={() => addMuted(name)}
+                        className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <Plus className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                        <span className="truncate">{name}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
             </>
           )}

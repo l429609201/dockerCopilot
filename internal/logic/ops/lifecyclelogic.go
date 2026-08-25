@@ -15,7 +15,6 @@ type LifecycleLogic struct {
 	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
-	ops    *containerops.Service
 }
 
 func NewLifecycleLogic(ctx context.Context, svcCtx *svc.ServiceContext) *LifecycleLogic {
@@ -23,8 +22,12 @@ func NewLifecycleLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Lifecyc
 		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
-		ops:    containerops.New(svcCtx),
 	}
+}
+
+// opsFor 按目标主机构建容器操作服务，hostID 为空即本地。
+func (l *LifecycleLogic) opsFor(hostID string) *containerops.Service {
+	return containerops.NewForHost(l.svcCtx, hostID)
 }
 
 // ok/fail 构造统一响应。
@@ -44,7 +47,7 @@ func fail(resp *types.Resp, msg string) *types.Resp {
 // Pause 暂停容器。
 func (l *LifecycleLogic) Pause(req *types.ContainerActionReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.Pause(req.Id); err != nil {
+	if err := l.opsFor(req.HostID).Pause(req.Id); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	return ok(resp), nil
@@ -53,7 +56,7 @@ func (l *LifecycleLogic) Pause(req *types.ContainerActionReq) (*types.Resp, erro
 // Unpause 恢复容器。
 func (l *LifecycleLogic) Unpause(req *types.ContainerActionReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.Unpause(req.Id); err != nil {
+	if err := l.opsFor(req.HostID).Unpause(req.Id); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	return ok(resp), nil
@@ -62,7 +65,7 @@ func (l *LifecycleLogic) Unpause(req *types.ContainerActionReq) (*types.Resp, er
 // Kill 强制终止容器（高风险，前端需二次确认）。
 func (l *LifecycleLogic) Kill(req *types.ContainerActionReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.Kill(req.Id); err != nil {
+	if err := l.opsFor(req.HostID).Kill(req.Id); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 被强制终止", req.Id)
@@ -72,7 +75,7 @@ func (l *LifecycleLogic) Kill(req *types.ContainerActionReq) (*types.Resp, error
 // Remove 删除容器（高风险，前端需二次确认）。
 func (l *LifecycleLogic) Remove(req *types.ContainerRemoveReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.Remove(req.Id, req.Force, req.RemoveVolumes); err != nil {
+	if err := l.opsFor(req.HostID).Remove(req.Id, req.Force, req.RemoveVolumes); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 被删除(force=%v,volumes=%v)", req.Id, req.Force, req.RemoveVolumes)
@@ -86,7 +89,7 @@ func (l *LifecycleLogic) Rename(req *types.ContainerRenameReq2) (*types.Resp, er
 	if name == "" {
 		return fail(resp, "新名称不能为空"), nil
 	}
-	if err := l.ops.Rename(req.Id, name); err != nil {
+	if err := l.opsFor(req.HostID).Rename(req.Id, name); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	return ok(resp), nil

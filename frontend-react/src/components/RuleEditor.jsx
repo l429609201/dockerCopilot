@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Search, Check, Clock } from 'lucide-react'
+import { Search, Check, Clock, Server } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
+import { useToast } from '../hooks/useToast.jsx'
+
+// 按主机ID查主机名，找不到回退 ID
+function hostNameOf(hostList, hostId) {
+  const h = hostList.find((x) => x.id === hostId)
+  return h ? h.name : hostId
+}
 
 // 任务类型选项：自动更新 / 自动清理镜像 / 自动备份
 const TASK_TYPES = [
@@ -30,6 +37,7 @@ function parseCronToVisual(cron) {
 
 // 定时规则编辑弹窗
 export function RuleEditor({ rule, registries, onCancel, onSave }) {
+  const toast = useToast() // 卡片式消息提示，替代原生 alert
   // 由规则已有 cron 反解析出可视化初值
   const initVisual = parseCronToVisual(rule.cron)
   const [form, setForm] = useState({
@@ -38,8 +46,14 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     type: rule.type || 'update',
     // 镜像清理范围，默认 dangling
     pruneMode: rule.pruneMode || 'dangling',
-    // 已选容器名集合（数组），从规则初始化
+    // 已选容器名集合（数组），从规则初始化（历史字段，仍用于兼容展示）
     containerNames: rule.containerNames || [],
+    // 精确到「主机+容器名」的更新目标；历史规则无此字段时由 containerNames 兜底转换（视为本地）
+    containerTargets: (rule.containerTargets && rule.containerTargets.length > 0)
+      ? rule.containerTargets
+      : (rule.containerNames || []).map((n) => ({ hostId: 'local', name: n })),
+    // prune/backup 的目标主机列表；为空默认本地
+    hostIds: rule.hostIds || [],
     // 该规则独立的 cron 定时（默认每天 04:30）
     cron: rule.cron || '30 4 * * *',
   })
@@ -56,17 +70,17 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }))
 
-  // 拉取容器列表供勾选
+  // 拉取容器列表供勾选（保留主机信息，用于按主机分组）
   useEffect(() => {
     (async () => {
       try {
         const resp = await containerAPI.getContainers()
         const code = resp.data?.code
         if (code === 200 || code === 0) {
-          const names = (resp.data?.data || [])
-            .map((c) => c.name)
-            .filter(Boolean)
-          setAllContainers(Array.from(new Set(names)).sort())
+          const items = (resp.data?.data || [])
+            .filter((c) => c.name)
+            .map((c) => ({ name: c.name, hostId: c.hostId || 'local', hostName: c.hostName || '本地 Docker' }))
+          setAllContainers(items)
         } else {
           setLoadErr(resp.data?.msg || '获取容器列表失败')
         }
@@ -76,12 +90,26 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     })()
   }, [])
 
-  // 按关键词过滤可选容器
-  const filtered = useMemo(() => {
+  // 按关键词过滤并按主机分组：返回 [{hostId, hostName, items:[{name,...}]}]
+  const groupedContainers = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
-    if (!kw) return allContainers
-    return allContainers.filter((n) => n.toLowerCase().includes(kw))
+    const list = kw ? allContainers.filter((c) => c.name.toLowerCase().includes(kw)) : allContainers
+    const groups = new Map()
+    for (const c of list) {
+      if (!groups.has(c.hostId)) groups.set(c.hostId, { hostId: c.hostId, hostName: c.hostName, items: [] })
+      groups.get(c.hostId).items.push(c)
+    }
+    // 每组内按容器名排序
+    for (const g of groups.values()) g.items.sort((a, b) => a.name.localeCompare(b.name))
+    return Array.from(groups.values())
   }, [allContainers, keyword])
+
+  // 可选主机列表（供 prune/backup 主机多选）
+  const hostList = useMemo(() => {
+    const m = new Map()
+    for (const c of allContainers) if (!m.has(c.hostId)) m.set(c.hostId, c.hostName)
+    return Array.from(m, ([id, name]) => ({ id, name }))
+  }, [allContainers])
 
   // 由可视化控件推导出最终 cron 表达式
   const buildCron = () => {
@@ -95,40 +123,54 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     setForm((f) => ({ ...f, cron: cronPreview }))
   }, [cronPreview])
 
-  // 切换某个容器的选中状态
-  const toggle = (name) => {
+  // 判断某主机的某容器是否已选中
+  const isTargetChecked = (hostId, name) =>
+    form.containerTargets.some((t) => t.hostId === hostId && t.name === name)
+
+  // 切换某个容器（主机+名）的选中状态
+  const toggle = (hostId, name) => {
     setForm((f) => {
-      const has = f.containerNames.includes(name)
+      const has = f.containerTargets.some((t) => t.hostId === hostId && t.name === name)
       return {
         ...f,
-        containerNames: has
-          ? f.containerNames.filter((n) => n !== name)
-          : [...f.containerNames, name],
+        containerTargets: has
+          ? f.containerTargets.filter((t) => !(t.hostId === hostId && t.name === name))
+          : [...f.containerTargets, { hostId, name }],
       }
     })
   }
 
   // 移除已选项
-  const removeSelected = (name) =>
-    setForm((f) => ({ ...f, containerNames: f.containerNames.filter((n) => n !== name) }))
+  const removeSelected = (hostId, name) =>
+    setForm((f) => ({ ...f, containerTargets: f.containerTargets.filter((t) => !(t.hostId === hostId && t.name === name)) }))
+
+  // 切换 prune/backup 的目标主机
+  const toggleHost = (hostId) => {
+    setForm((f) => {
+      const has = f.hostIds.includes(hostId)
+      return { ...f, hostIds: has ? f.hostIds.filter((h) => h !== hostId) : [...f.hostIds, hostId] }
+    })
+  }
 
   const submit = () => {
     if (!form.name) {
-      alert('规则名称必填')
+      toast.warning('规则名称必填')
       return
     }
     // 仅"自动更新"类型需要选择容器；清理/备份无需选容器
-    if (form.type === 'update' && form.containerNames.length === 0) {
-      alert('请至少选择一个容器')
+    if (form.type === 'update' && form.containerTargets.length === 0) {
+      toast.warning('请至少选择一个容器')
       return
     }
     // 校验定时表达式非空（高级模式手输可能清空）
     const finalCron = buildCron()
     if (!finalCron) {
-      alert('请设置该规则的执行时间（cron 不能为空）')
+      toast.warning('请设置该规则的执行时间（cron 不能为空）')
       return
     }
-    onSave({ ...form, cron: finalCron })
+    // 同步 containerNames（取所选目标的容器名去重）以兼容后端历史字段
+    const names = Array.from(new Set(form.containerTargets.map((t) => t.name)))
+    onSave({ ...form, cron: finalCron, containerNames: names })
   }
 
   return (
@@ -218,24 +260,47 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
           </Field>
         )}
 
+        {/* prune/backup 的目标主机多选（多 Docker 管理） */}
+        {(form.type === 'prune' || form.type === 'backup') && hostList.length > 1 && (
+          <Field label={`目标主机（已选 ${form.hostIds.length || 1} 个，不选默认仅本地）`}>
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
+              {hostList.map((h) => {
+                const checked = form.hostIds.includes(h.id)
+                return (
+                  <button type="button" key={h.id} onClick={() => toggleHost(h.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <span className={`flex items-center justify-center h-4 w-4 rounded border flex-shrink-0 ${
+                      checked ? 'bg-primary-600 border-primary-600 text-white' : 'border-gray-300 dark:border-gray-600'}`}>
+                      {checked && <Check className="h-3 w-3" />}
+                    </span>
+                    <Server className="h-3.5 w-3.5 text-gray-400" />
+                    <span className="text-gray-800 dark:text-gray-200 truncate">{h.name}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">勾选要执行的 Docker 主机；不勾选则默认仅本地主机。</p>
+          </Field>
+        )}
+
         {/* 自动备份：说明 */}
         {form.type === 'backup' && (
           <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-sm text-blue-700 dark:text-blue-300">
-            💾 备份将导出<b>所有容器</b>的配置为 JSON 文件，保存到备份目录，无需选择容器。
+            💾 备份将导出所选主机<b>所有容器</b>的配置为 JSON 文件，保存到备份目录，无需选择容器。
           </div>
         )}
 
         {/* 自动更新：容器选择 + 拉取凭据 */}
         {form.type === 'update' && (
         <>
-        <Field label={`选择容器（已选 ${form.containerNames.length} 个）`}>
-          {/* 已选标签 */}
-          {form.containerNames.length > 0 && (
+        <Field label={`选择容器（已选 ${form.containerTargets.length} 个）`}>
+          {/* 已选标签：非本地带主机名后缀 */}
+          {form.containerTargets.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
-              {form.containerNames.map((n) => (
-                <span key={n} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-full bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
-                  {n}
-                  <button type="button" onClick={() => removeSelected(n)}
+              {form.containerTargets.map((t) => (
+                <span key={`${t.hostId}|${t.name}`} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-full bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                  {t.name}{t.hostId && t.hostId !== 'local' ? `@${hostNameOf(hostList, t.hostId)}` : ''}
+                  <button type="button" onClick={() => removeSelected(t.hostId, t.name)}
                     className="hover:text-red-500 leading-none text-sm">×</button>
                 </span>
               ))}
@@ -251,28 +316,39 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
 
           {loadErr && <div className="text-xs text-red-500 mb-2">{loadErr}</div>}
 
-          {/* 可勾选列表 */}
-          <div className="max-h-44 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
-            {filtered.length === 0 && (
+          {/* 可勾选列表：按主机分组 */}
+          <div className="max-h-52 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+            {groupedContainers.length === 0 && (
               <div className="px-3 py-4 text-center text-xs text-gray-400">
                 {allContainers.length === 0 ? '暂无容器或加载中...' : '无匹配容器'}
               </div>
             )}
-            {filtered.map((n) => {
-              const checked = form.containerNames.includes(n)
-              return (
-                <button type="button" key={n} onClick={() => toggle(n)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                  <span className={`flex items-center justify-center h-4 w-4 rounded border flex-shrink-0 ${
-                    checked ? 'bg-primary-600 border-primary-600 text-white' : 'border-gray-300 dark:border-gray-600'}`}>
-                    {checked && <Check className="h-3 w-3" />}
-                  </span>
-                  <span className="text-gray-800 dark:text-gray-200 truncate">{n}</span>
-                </button>
-              )
-            })}
+            {groupedContainers.map((g) => (
+              <div key={g.hostId}>
+                {/* 主机分组标题 */}
+                <div className="sticky top-0 px-3 py-1.5 bg-gray-100 dark:bg-gray-700/60 text-xs font-medium text-gray-600 dark:text-gray-300 flex items-center gap-1.5">
+                  <Server className="h-3.5 w-3.5" /> {g.hostName}
+                  <span className="text-gray-400">（{g.items.length}）</span>
+                </div>
+                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {g.items.map((c) => {
+                    const checked = isTargetChecked(g.hostId, c.name)
+                    return (
+                      <button type="button" key={`${g.hostId}|${c.name}`} onClick={() => toggle(g.hostId, c.name)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                        <span className={`flex items-center justify-center h-4 w-4 rounded border flex-shrink-0 ${
+                          checked ? 'bg-primary-600 border-primary-600 text-white' : 'border-gray-300 dark:border-gray-600'}`}>
+                          {checked && <Check className="h-3 w-3" />}
+                        </span>
+                        <span className="text-gray-800 dark:text-gray-200 truncate">{c.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-          <p className="text-xs text-gray-400 mt-1.5">仅可选择当前存在的容器；已删除的容器会在下次定时执行时自动从规则中移除。</p>
+          <p className="text-xs text-gray-400 mt-1.5">容器按所属 Docker 主机分组，勾选精确到某主机的某容器。</p>
         </Field>
 
         <Field label="拉取凭据">

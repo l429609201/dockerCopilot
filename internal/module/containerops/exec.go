@@ -40,11 +40,11 @@ func (s *Service) Exec(ctx context.Context, id string, cmd []string, workDir, us
 		AttachStdout: true,
 		AttachStderr: true,
 	}
-	created, err := s.svcCtx.DockerClient.ContainerExecCreate(execCtx, id, execConfig)
+	created, err := s.cli().ContainerExecCreate(execCtx, id, execConfig)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("创建 exec 失败: %w", err)
 	}
-	attach, err := s.svcCtx.DockerClient.ContainerExecAttach(execCtx, created.ID, container.ExecStartOptions{})
+	attach, err := s.cli().ContainerExecAttach(execCtx, created.ID, container.ExecStartOptions{})
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("附加 exec 失败: %w", err)
 	}
@@ -58,7 +58,7 @@ func (s *Service) Exec(ctx context.Context, id string, cmd []string, workDir, us
 		_ = err
 	}
 
-	inspect, err := s.svcCtx.DockerClient.ContainerExecInspect(execCtx, created.ID)
+	inspect, err := s.cli().ContainerExecInspect(execCtx, created.ID)
 	exitCode := -1
 	if err == nil {
 		exitCode = inspect.ExitCode

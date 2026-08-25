@@ -16,6 +16,33 @@ type AppConfig struct {
 	Telegram TelegramConfig `json:"telegram"`
 	// Compose 项目管理配置（前端可配置，优先级高于静态 yaml）。
 	Compose ComposeConfig `json:"compose"`
+	// HostPathMapper 宿主机路径映射配置，用于文件选择器。
+	HostPathMapper HostPathMapperConfig `json:"hostPathMapper"`
+	// DockerHosts 多 Docker 主机列表。第一个恒为本地（local），不可删除。
+	DockerHosts []DockerHost `json:"dockerHosts,omitempty"`
+}
+
+// Docker 主机连接类型常量。
+const (
+	DockerHostTypeLocal  = "local"  // 本地，固定走 unix socket
+	DockerHostTypeRemote = "remote" // 远程，走 tcp:// HTTP 地址
+)
+
+// DockerHostLocalID 本地主机固定 ID，保证唯一且不可变。
+const DockerHostLocalID = "local"
+
+// DockerHost 单个 Docker 主机配置。
+// 本地主机 Type=local、Address 固定 unix socket 不可编辑；远程主机 Type=remote、Address 形如 tcp://ip:2375。
+type DockerHost struct {
+	ID      string `json:"id"`             // 唯一标识，本地恒为 "local"
+	Name    string `json:"name"`           // 展示名称（可编辑）
+	Type    string `json:"type"`           // local / remote
+	Address string `json:"address"`        // 连接地址：本地 unix:///var/run/docker.sock；远程 tcp://ip:2375
+	Enabled bool   `json:"enabled"`        // 是否启用（禁用则不纳入聚合与操作）
+	Note    string `json:"note,omitempty"` // 备注
+	// Headers 远程连接附加的自定义 HTTP 请求头（如经反向代理/网关鉴权时的 Authorization、X-Api-Key）。
+	// 仅远程主机生效；值可能含敏感凭据，对外回显时需脱敏。
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // ComposeConfig 是 Compose 项目管理的动态配置（持久化到 config.json，前端可编辑）。
@@ -81,8 +108,13 @@ type ScheduledUpdateRule struct {
 	Cron string `json:"cron"`
 	// PruneMode 镜像清理范围（仅 prune 类型使用）：dangling(无tag) / unused(未使用)。
 	PruneMode string `json:"pruneMode,omitempty"`
-	// ContainerNames 需要纳入本规则的容器名列表。
+	// ContainerNames 需要纳入本规则的容器名列表（历史字段，视为本地主机的容器，用于向后兼容）。
 	ContainerNames []string `json:"containerNames"`
+	// ContainerTargets 精确到「主机+容器名」的更新目标（多 Docker 管理）。
+	// 优先使用本字段；为空时回退按 ContainerNames 处理（视为本地容器）。
+	ContainerTargets []ContainerTarget `json:"containerTargets,omitempty"`
+	// HostIDs 目标 Docker 主机列表，用于 prune/backup 这类整机级任务（为空视为仅本地）。
+	HostIDs []string `json:"hostIds,omitempty"`
 	// OnlyWhenUpdate 仅在检测到有新版本时才执行更新。
 	OnlyWhenUpdate bool `json:"onlyWhenUpdate"`
 	// SkipInvalidTag 跳过无 tag 或 digest 形式（sha256:）的镜像，避免误更新。
@@ -99,6 +131,44 @@ type ScheduledUpdateRule struct {
 	LastRunAt  int64  `json:"lastRunAt,omitempty"`
 	LastResult string `json:"lastResult,omitempty"`
 }
+
+// ContainerTarget 精确定位某个 Docker 主机上的某个容器（按名称匹配）。
+type ContainerTarget struct {
+	HostID string `json:"hostId"` // 目标主机ID，空表示本地
+	Name   string `json:"name"`   // 容器名
+}
+
+// HostPathMapperConfig 宿主机路径映射配置。
+type HostPathMapperConfig struct {
+	// Enabled 是否启用宿主机路径映射功能。
+	Enabled bool `json:"enabled"`
+	// Mode 映射来源模式：auto=从 DC 自身容器 Mounts 自动推导（默认）；custom=使用下方 Mappings。
+	// 为空时按 auto 处理，保持向后兼容。
+	Mode string `json:"mode"`
+	// Mappings 路径映射规则列表，仅 custom 模式生效。
+	Mappings []PathMapping `json:"mappings"`
+}
+
+// HostPathMapperMode 映射来源模式常量。
+const (
+	HostPathModeAuto   = "auto"
+	HostPathModeCustom = "custom"
+)
+
+// PathMapping 单个路径映射规则。
+type PathMapping struct {
+	// ID 唯一标识。
+	ID string `json:"id"`
+	// ContainerPath 容器内路径（dockerCopilot 容器内的挂载点）。
+	ContainerPath string `json:"containerPath"`
+	// HostPath 宿主机真实路径。
+	HostPath string `json:"hostPath"`
+	// Description 说明/备注。
+	Description string `json:"description,omitempty"`
+	// ReadOnly 是否为只读映射。
+	ReadOnly bool `json:"readOnly"`
+}
+
 
 // TelegramConfig 机器人配置，Token 为敏感字段。
 type TelegramConfig struct {

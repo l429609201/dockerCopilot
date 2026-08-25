@@ -1,5 +1,5 @@
 import React from 'react'
-import { Github, Heart, MessageSquare } from 'lucide-react'
+import { Github, Heart, MessageSquare, FileCode } from 'lucide-react'
 import logoImg from '../assets/DockerCopilot-logo.png'
 
 export function About() {
@@ -42,6 +42,16 @@ export function About() {
               <Github className="h-4 w-4" />
               <span>原项目 (onlyLTY)</span>
             </a>
+            {/* API 文档：跳转内置 Swagger-UI（同源，携带当前登录态由用户在文档页填 JWT） */}
+            <a
+              href="/api/docs/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
+            >
+              <FileCode className="h-4 w-4" />
+              <span>API 文档</span>
+            </a>
           </div>
         </div>
 
@@ -54,6 +64,9 @@ export function About() {
             </div>
             <p className="text-gray-600 dark:text-gray-400 leading-relaxed flex-1">
               本项目 fork 自 <span className="font-medium">onlyLTY/dockerCopilot</span>，衷心感谢原作者 onlyLTY 及所有社区贡献者的付出——没有原项目就没有本 Fork。本 Fork 在其基础上新增了容器文件管理器、任务中心、镜像图标自适应等功能，并继续以 AGPLv3 开源。
+            </p>
+            <p className="text-gray-500 dark:text-gray-500 text-sm leading-relaxed mt-3">
+              API 文档由 <a href="https://github.com/swagger-api/swagger-ui" target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">Swagger UI</a> 提供支持，特此致谢。
             </p>
           </div>
 

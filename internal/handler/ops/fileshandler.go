@@ -103,7 +103,7 @@ func FileDownloadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.ErrorCtx(r.Context(), w, err)
 			return
 		}
-		name, data, err := containerops.New(svcCtx).DownloadFile(r.Context(), req.Id, req.Path)
+		name, data, err := containerops.NewForHost(svcCtx, req.HostID).DownloadFile(r.Context(), req.Id, req.Path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -137,7 +137,7 @@ func FileUploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 		defer file.Close()
-		if err := containerops.New(svcCtx).UploadFile(r.Context(), req.Id, dir, header.Filename, file, 0); err != nil {
+		if err := containerops.NewForHost(svcCtx, req.HostID).UploadFile(r.Context(), req.Id, dir, header.Filename, file, 0); err != nil {
 			httpx.WriteJson(w, http.StatusOK, errResp(err.Error()))
 			return
 		}

@@ -281,6 +281,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: compose.ValidateHandler(serverCtx),
 			},
 			{
+				// 从内容创建并部署一个新的 Compose 项目（写入工作目录后 up）
+				Method:  http.MethodPost,
+				Path:    "/compose/create",
+				Handler: compose.CreateHandler(serverCtx),
+			},
+			{
 				Method:  http.MethodGet,
 				Path:    "/compose/projects/:id/files/:filename",
 				Handler: compose.ReadFileHandler(serverCtx),
@@ -294,6 +300,64 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodPost,
 				Path:    "/compose/projects/:id/action",
 				Handler: compose.ActionHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// 宿主机路径映射
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				// 获取宿主机路径映射配置（含自动推导预览）
+				Method:  http.MethodGet,
+				Path:    "/hostpath/config",
+				Handler: ops.HostPathConfigGetHandler(serverCtx),
+			},
+			{
+				// 保存宿主机路径映射配置
+				Method:  http.MethodPost,
+				Path:    "/hostpath/config",
+				Handler: ops.HostPathConfigSaveHandler(serverCtx),
+			},
+			{
+				// 解析容器路径到宿主机路径并校验可访问性
+				Method:  http.MethodPost,
+				Path:    "/hostpath/resolve",
+				Handler: ops.HostPathResolveHandler(serverCtx),
+			},
+		},
+		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithPrefix("/api"),
+	)
+
+	// 多 Docker 主机管理
+	server.AddRoutes(
+		[]rest.Route{
+			{
+				// 列出全部 Docker 主机及在线状态
+				Method:  http.MethodGet,
+				Path:    "/docker/hosts",
+				Handler: ops.DockerHostListHandler(serverCtx),
+			},
+			{
+				// 新建或更新 Docker 主机
+				Method:  http.MethodPost,
+				Path:    "/docker/hosts",
+				Handler: ops.DockerHostSaveHandler(serverCtx),
+			},
+			{
+				// 删除远程 Docker 主机
+				Method:  http.MethodDelete,
+				Path:    "/docker/hosts/:id",
+				Handler: ops.DockerHostDeleteHandler(serverCtx),
+			},
+			{
+				// 测试指定 Docker 主机连通性
+				Method:  http.MethodPost,
+				Path:    "/docker/hosts/:id/ping",
+				Handler: ops.DockerHostPingHandler(serverCtx),
 			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
@@ -326,6 +390,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 	// 阶段7：Portainer 风格容器运维（生命周期、日志、命令、详情）
 	server.AddRoutes(
 		[]rest.Route{
+			{
+				// 从零创建新容器（镜像/端口/环境变量/卷/网络/重启策略），支持多 Docker 主机
+				Method:  http.MethodPost,
+				Path:    "/container/create",
+				Handler: ops.CreateContainerHandler(serverCtx),
+			},
+			{
+				// 解析 docker run 命令为创建参数（仅解析预览，不创建）
+				Method:  http.MethodPost,
+				Path:    "/container/parseRunCommand",
+				Handler: ops.ParseRunCommandHandler(serverCtx),
+			},
 			{
 				Method:  http.MethodPost,
 				Path:    "/container/:id/pause",

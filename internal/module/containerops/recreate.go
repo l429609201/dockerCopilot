@@ -46,7 +46,8 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 			progress(pct, msg)
 		}
 	}
-	cli := s.svcCtx.DockerClient
+	// 按 Service 绑定的主机取 client，保证远程主机的容器也能正确重建
+	cli := s.cli()
 
 	report(10, "读取原容器配置")
 	inspected, err := cli.ContainerInspect(ctx, id)

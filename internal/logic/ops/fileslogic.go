@@ -29,7 +29,6 @@ type FilesLogic struct {
 	logx.Logger
 	ctx    context.Context
 	svcCtx *svc.ServiceContext
-	ops    *containerops.Service
 }
 
 func NewFilesLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FilesLogic {
@@ -37,14 +36,18 @@ func NewFilesLogic(ctx context.Context, svcCtx *svc.ServiceContext) *FilesLogic 
 		Logger: logx.WithContext(ctx),
 		ctx:    ctx,
 		svcCtx: svcCtx,
-		ops:    containerops.New(svcCtx),
 	}
+}
+
+// opsFor 按目标主机构建容器操作服务，hostID 为空即本地。
+func (l *FilesLogic) opsFor(hostID string) *containerops.Service {
+	return containerops.NewForHost(l.svcCtx, hostID)
 }
 
 // List 列出目录内容。
 func (l *FilesLogic) List(req *types.FileListReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	entries, err := l.ops.ListFiles(l.ctx, req.Id, req.Path)
+	entries, err := l.opsFor(req.HostID).ListFiles(l.ctx, req.Id, req.Path)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}
@@ -57,7 +60,7 @@ func (l *FilesLogic) List(req *types.FileListReq) (*types.Resp, error) {
 // Read 读取文本文件用于预览/编辑。
 func (l *FilesLogic) Read(req *types.FileReadReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	fc, err := l.ops.ReadTextFile(l.ctx, req.Id, req.Path)
+	fc, err := l.opsFor(req.HostID).ReadTextFile(l.ctx, req.Id, req.Path)
 	if err != nil {
 		return fail(resp, err.Error()), nil
 	}
@@ -71,7 +74,7 @@ func (l *FilesLogic) Read(req *types.FileReadReq) (*types.Resp, error) {
 func (l *FilesLogic) Write(req *types.FileWriteReq) (*types.Resp, error) {
 	resp := &types.Resp{}
 	dir, name := splitPath(req.Path)
-	if err := l.ops.UploadFile(l.ctx, req.Id, dir, name, stringReader(req.Content), 0); err != nil {
+	if err := l.opsFor(req.HostID).UploadFile(l.ctx, req.Id, dir, name, stringReader(req.Content), 0); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 写入文件 %s（%d 字节）", req.Id, req.Path, len(req.Content))
@@ -83,7 +86,7 @@ func (l *FilesLogic) Write(req *types.FileWriteReq) (*types.Resp, error) {
 // Mkdir 新建目录。
 func (l *FilesLogic) Mkdir(req *types.FileMkdirReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.Mkdir(l.ctx, req.Id, req.Path, req.Name); err != nil {
+	if err := l.opsFor(req.HostID).Mkdir(l.ctx, req.Id, req.Path, req.Name); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 在 %s 下创建目录 %s", req.Id, req.Path, req.Name)
@@ -95,7 +98,7 @@ func (l *FilesLogic) Mkdir(req *types.FileMkdirReq) (*types.Resp, error) {
 // Delete 删除文件/目录。
 func (l *FilesLogic) Delete(req *types.FileDeleteReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.RemovePath(l.ctx, req.Id, req.Path); err != nil {
+	if err := l.opsFor(req.HostID).RemovePath(l.ctx, req.Id, req.Path); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 删除路径 %s", req.Id, req.Path)
@@ -107,7 +110,7 @@ func (l *FilesLogic) Delete(req *types.FileDeleteReq) (*types.Resp, error) {
 // Rename 重命名/移动文件。
 func (l *FilesLogic) Rename(req *types.FileRenameReq) (*types.Resp, error) {
 	resp := &types.Resp{}
-	if err := l.ops.RenameFile(l.ctx, req.Id, req.Src, req.Dst); err != nil {
+	if err := l.opsFor(req.HostID).RenameFile(l.ctx, req.Id, req.Src, req.Dst); err != nil {
 		return fail(resp, err.Error()), nil
 	}
 	logx.Infof("审计：容器 %s 重命名 %s -> %s", req.Id, req.Src, req.Dst)

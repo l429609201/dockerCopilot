@@ -17,7 +17,12 @@ import {
   FileText,
   TerminalSquare,
   FolderOpen,
-  Pencil
+  Pencil,
+  Network,
+  Plus,
+  Trash2,
+  Search,
+  Server
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -34,6 +39,7 @@ import { ContainerProcessModal } from './ContainerProcessModal.jsx'
 import { ContainerStats } from './ContainerStats.jsx'
 import { StatsChart } from './StatsChart.jsx'
 import { FileManager } from './FileManager.jsx'
+import { CreateContainerModal } from './CreateContainerModal.jsx'
 import { IconEditor } from './IconEditor.jsx'
 import { ContainerLogs, ContainerConsole } from './ContainerOps.jsx'
 
@@ -46,6 +52,8 @@ export function Containers() {
   const [consoleTarget, setConsoleTarget] = useState(null)
   // 文件管理弹窗目标容器
   const [fileTarget, setFileTarget] = useState(null)
+  // 创建容器弹窗显示状态
+  const [showCreate, setShowCreate] = useState(false)
   // 添加批量操作相关的状态
   const [selectedContainers, setSelectedContainers] = useState([])
   const [isBatchMode, setIsBatchMode] = useState(false)
@@ -54,6 +62,9 @@ export function Containers() {
   const [updateTasks, setUpdateTasks] = useState({}) // 跟踪更新任务
   // 添加筛选状态
   const [filterStatus, setFilterStatus] = useState(null) // null 表示显示全部
+  // 主机过滤（'all' 全部主机 / 具体 hostId）与关键词搜索（按容器名/镜像）
+  const [hostFilter, setHostFilter] = useState('all')
+  const [searchKeyword, setSearchKeyword] = useState('')
   // 视图模式：card 卡片 / list 列表，持久化到 localStorage
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('dc_container_view') || 'card')
   const changeViewMode = (mode) => {
@@ -138,8 +149,21 @@ export function Containers() {
   // 阶段8：批量解析容器站点 favicon（运行中且有暴露端口的容器），按容器id取图标
   const faviconMap = useFaviconMap(containers)
 
+  // 从容器列表提取去重后的主机列表，供主机下拉筛选使用（含本地）
+  const hostOptions = React.useMemo(() => {
+    const map = new Map()
+    for (const c of containers) {
+      const id = c.hostId || 'local'
+      const name = c.hostName || (id === 'local' ? '本地 Docker' : id)
+      if (!map.has(id)) map.set(id, name)
+    }
+    return Array.from(map, ([id, name]) => ({ id, name }))
+  }, [containers])
+
   const handleContainerAction = async (containerId, action) => {
     try {
+      // 从列表中定位容器，取得其所属 Docker 主机（多 Docker 管理）
+      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
       // 设置操作状态为加载中
       setContainerActions(prev => ({
         ...prev,
@@ -148,13 +172,13 @@ export function Containers() {
 
       switch (action) {
         case 'start':
-          await containerAPI.startContainer(containerId)
+          await containerAPI.startContainer(containerId, hostId)
           break
         case 'stop':
-          await containerAPI.stopContainer(containerId)
+          await containerAPI.stopContainer(containerId, hostId)
           break
         case 'restart':
-          await containerAPI.restartContainer(containerId)
+          await containerAPI.restartContainer(containerId, hostId)
           break
         default:
           break
@@ -259,16 +283,17 @@ export function Containers() {
       for (const containerId of selectedContainers) {
         try {
           const container = containers.find(c => c.id === containerId)
+          const hostId = container?.hostId
 
           switch (action) {
             case 'start':
-              await containerAPI.startContainer(containerId)
+              await containerAPI.startContainer(containerId, hostId)
               break
             case 'stop':
-              await containerAPI.stopContainer(containerId)
+              await containerAPI.stopContainer(containerId, hostId)
               break
             case 'restart':
-              await containerAPI.restartContainer(containerId)
+              await containerAPI.restartContainer(containerId, hostId)
               break
             case 'update':
               if (container) {
@@ -276,7 +301,8 @@ export function Containers() {
                   containerId,
                   container.name,
                   container.usingImage,
-                  true
+                  true,
+                  hostId
                 )
 
                 if (response.data.code === 200 || response.data.code === 0) {
@@ -341,9 +367,49 @@ export function Containers() {
     }
   }
 
+  // 删除容器：二次确认后调用后端删除接口（支持远程主机 hostId），成功后刷新列表
+  const handleDeleteContainer = (containerId) => {
+    const target = containers.find(c => c.id === containerId) || {}
+    const hostId = target.hostId
+    const isRunning = target.status && target.status.toLowerCase() === 'running'
+    setConfirmModal({
+      isOpen: true,
+      title: '删除容器',
+      message: `确定要删除容器「${target.name || containerId.slice(0, 12)}」吗？此操作不可恢复。${isRunning ? '\n该容器正在运行，将被强制删除。' : ''}`,
+      type: 'danger',
+      onCancel: () => setConfirmModal({ isOpen: false }),
+      onConfirm: async () => {
+        setConfirmModal({ isOpen: false })
+        // 标记操作中，复用卡片 loading 展示
+        setContainerActions(prev => ({ ...prev, [containerId]: { action: 'delete', loading: true } }))
+        try {
+          // 运行中的容器需 force 才能删除
+          await containerAPI.removeContainer(containerId, isRunning, false, hostId)
+          await refetch()
+        } catch (error) {
+          setConfirmModal({
+            isOpen: true,
+            title: '删除失败',
+            message: '删除容器失败: ' + (error.response?.data?.msg || error.message || '未知错误'),
+            type: 'danger',
+            onConfirm: () => setConfirmModal({ isOpen: false }),
+            onCancel: null,
+          })
+        } finally {
+          setContainerActions(prev => {
+            const n = { ...prev }
+            delete n[containerId]
+            return n
+          })
+        }
+      },
+    })
+  }
+
   const handleRenameContainer = async (containerId, newName) => {
     try {
-      const response = await containerAPI.renameContainer(containerId, newName)
+      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
+      const response = await containerAPI.renameContainer(containerId, newName, hostId)
       if (response.data.code === 200 || response.data.code === 0) {
         await refetch()
         console.log('重命名成功')
@@ -379,12 +445,13 @@ export function Containers() {
         return
       }
 
-      // 注意参数顺序: id, containerName, imageNameAndTag, delOldContainer
+      // 注意参数顺序: id, containerName, imageNameAndTag, delOldContainer, hostId
       const response = await containerAPI.updateContainer(
         containerId,
         container.name,
         container.usingImage,
-        true
+        true,
+        container.hostId
       )
 
       console.log('更新容器响应:', response.data)
@@ -553,16 +620,21 @@ export function Containers() {
         }
 
         // 更新容器操作状态，显示进度
-        setContainerActions(prev => ({
-          ...prev,
-          [containerId]: {
-            action: 'update',
-            loading: true,
-            progress: progressMsg,
-            detailMsg: detailMsg,
-            percentage: percentage
+        // 单调保护：轮询/推送可能乱序到达，未完成前进度只增不减，避免视觉回跳
+        setContainerActions(prev => {
+          const prevPct = prev[containerId]?.percentage || 0
+          const shownPct = percentage < prevPct ? prevPct : percentage
+          return {
+            ...prev,
+            [containerId]: {
+              action: 'update',
+              loading: true,
+              progress: progressMsg,
+              detailMsg: detailMsg,
+              percentage: shownPct
+            }
           }
-        }))
+        })
 
         // 继续轮询
         if (attempts < maxAttempts) {
@@ -722,6 +794,14 @@ export function Containers() {
         {!isBatchMode ? (
           <div className="flex items-center space-x-3">
             <button
+              className="btn-primary"
+              onClick={() => setShowCreate(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              创建容器
+            </button>
+
+            <button
               className="btn-secondary"
               onClick={() => setIsBatchMode(true)}
             >
@@ -729,7 +809,7 @@ export function Containers() {
             </button>
 
             <button
-              className="btn-primary"
+              className="btn-secondary"
               onClick={() => refetch()}
             >
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -942,9 +1022,46 @@ export function Containers() {
           </div>
         )}
 
-        {/* 视图切换工具栏：卡片 / 列表 */}
+        {/* 工具栏：左侧主机筛选+搜索，右侧视图切换 */}
         {containers.length > 0 && (
-          <div className="flex justify-end mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            {/* 左侧：主机下拉 + 搜索框 */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 主机下拉：仅当存在多个主机时显示，否则无意义 */}
+              {hostOptions.length > 1 && (
+                <div className="relative">
+                  <Server className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <select
+                    value={hostFilter}
+                    onChange={(e) => setHostFilter(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="all">全部主机</option>
+                    {hostOptions.map((h) => (
+                      <option key={h.id} value={h.id}>{h.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* 搜索框：按容器名或镜像过滤 */}
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  placeholder="搜索容器名 / 镜像"
+                  className="pl-8 pr-8 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 w-48"
+                />
+                {searchKeyword && (
+                  <button onClick={() => setSearchKeyword('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* 右侧：卡片 / 列表切换 */}
             <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
               <button
                 onClick={() => changeViewMode('card')}
@@ -980,6 +1097,15 @@ export function Containers() {
                 if (filterStatus === 'update') return container.haveUpdate
                 return true
               })
+              // 主机过滤：'all' 不限；否则按容器所属主机（本地容器 hostId 可能为空，视为 'local'）
+              .filter((container) => hostFilter === 'all' || (container.hostId || 'local') === hostFilter)
+              // 关键词过滤：匹配容器名或镜像（大小写不敏感）
+              .filter((container) => {
+                const kw = searchKeyword.trim().toLowerCase()
+                if (!kw) return true
+                return (container.name || '').toLowerCase().includes(kw) ||
+                       (container.usingImage || '').toLowerCase().includes(kw)
+              })
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
                 // 列表模式：渲染横向一条的列表行
@@ -1004,12 +1130,13 @@ export function Containers() {
                       onFiles={() => setFileTarget(container)}
                       onEdit={(c) => setEditTarget(c)}
                       onProcess={(c) => setProcessTarget(c)}
+                      onDelete={() => handleDeleteContainer(container.id)}
                     />
                   )
                 }
                 return (
-                  <div key={container.id} className="group">
-                    {/* 容器卡片 - 简化设计，点击调起详情 */}
+                  <div key={container.id} className="group h-full">
+                    {/* 容器卡片 - 简化设计，点击调起详情。h-full+flex-col 让同排卡片等高、操作栏贴底对齐 */}
                     <div
                       onClick={(e) => {
                         // 如果启用批量模式，点击选择；否则打开详情
@@ -1021,7 +1148,7 @@ export function Containers() {
                         }
                       }}
                       className={cn(
-                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-5 cursor-pointer active:scale-98",
+                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-5 cursor-pointer active:scale-98 h-full flex flex-col",
                         isSelected
                           ? "border-primary-500 bg-primary-50 dark:bg-primary-900/20 shadow-md"
                           : "border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-600"
@@ -1107,10 +1234,17 @@ export function Containers() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center">
+                              <div className="flex items-center gap-1.5">
                                 <h3 className="font-semibold text-gray-900 dark:text-white truncate text-base group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
                                   {container.name}
                                 </h3>
+                                {/* 来源主机标识：非本地容器才展示，避免本地冗余 */}
+                                {container.hostName && container.hostId && container.hostId !== 'local' && (
+                                  <span className="flex-shrink-0 inline-flex items-center gap-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-medium">
+                                    <Network className="h-2.5 w-2.5" />
+                                    {container.hostName}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
                                 {container.usingImage}
@@ -1145,6 +1279,31 @@ export function Containers() {
                               </div>
                             )}
                           </div>
+
+                          {/* 端口映射标签行：始终渲染以保证卡片等高。
+                              有映射时展示端口标签（最多 3 条，多余折叠）；
+                              无映射（host 网络或未映射端口）时用等高的占位提示，避免卡片高度参差。 */}
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5 min-h-[1.25rem]">
+                            {Array.isArray(container.portMappings) && container.portMappings.length > 0 ? (
+                              <>
+                                {container.portMappings.slice(0, 3).map((m) => (
+                                  <span key={m} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 text-[10px] font-mono">
+                                    {m}
+                                  </span>
+                                ))}
+                                {container.portMappings.length > 3 && (
+                                  <span className="text-[10px] text-gray-400" title={container.portMappings.join('\n')}>
+                                    +{container.portMappings.length - 3}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              // 占位：host 网络模式显示提示，其它无映射情况显示占位符，保持与端口标签同等高度
+                              <span className="inline-flex items-center rounded bg-gray-100 dark:bg-gray-700/40 text-gray-400 dark:text-gray-500 px-1.5 py-0.5 text-[10px] font-mono">
+                                {String(container.networkMode).toLowerCase() === 'host' ? 'host 网络' : '无端口映射'}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -1155,17 +1314,19 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部 4 列网格排列（运行中共 8 个按钮，2 行） */}
+                      {/* 操作按钮栏 - 底部 5 列网格排列（运行中共 10 个按钮，2 行）。
+                          mt-auto 把按钮栏推到卡片底部，配合外层 h-full+flex-col 实现同排卡片操作栏贴底对齐 */}
                       {!isBatchMode && (
-                        <div className="grid grid-cols-4 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="grid grid-cols-5 gap-1.5 mt-auto pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
-                            <div className="col-span-4 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
+                            <div className="col-span-5 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
                                 <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
                                 <span className="text-xs font-medium text-primary-600 dark:text-primary-400">
                                   {containerActions[container.id].action === 'start' && '启动中'}
                                   {containerActions[container.id].action === 'stop' && '停止中'}
                                   {containerActions[container.id].action === 'restart' && '重启中'}
+                                  {containerActions[container.id].action === 'delete' && '删除中'}
                                   {containerActions[container.id].action === 'update' && `更新中${containerActions[container.id].percentage ? ` ${Math.round(containerActions[container.id].percentage)}%` : ''}`}
                                 </span>
                               </div>
@@ -1178,9 +1339,18 @@ export function Containers() {
                             </div>
                           ) : (
                             <>
+                              {/* 详情：始终位于第一格，点击打开详情弹窗 */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedContainer(container) }}
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                title="详情"
+                              >
+                                <Info className="h-4 w-4" />
+                                <span>详情</span>
+                              </button>
                               {container.status === 'running' ? (
                                 <>
-                                  {/* 第一行：停止 / 编辑 / 重启 / 更新 */}
+                                  {/* 第一行：详情 / 停止 / 编辑 / 重启 / 更新 */}
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'stop') }}
                                     className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
@@ -1252,10 +1422,10 @@ export function Containers() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); setConsoleTarget(container) }}
                                 className="flex items-center justify-center gap-1 px-1 py-1.5 text-teal-600 dark:text-teal-400 bg-white dark:bg-gray-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 border border-gray-200 dark:border-gray-700 hover:border-teal-200 dark:hover:border-teal-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
-                                title="控制台"
+                                title="终端"
                               >
                                 <TerminalSquare className="h-4 w-4" />
-                                <span>控制台</span>
+                                <span>终端</span>
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setFileTarget(container) }}
@@ -1264,6 +1434,15 @@ export function Containers() {
                               >
                                 <FolderOpen className="h-4 w-4" />
                                 <span>文件</span>
+                              </button>
+                              {/* 删除：二次确认后删除容器（支持远程主机） */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteContainer(container.id) }}
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                title="删除容器"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                <span>删除</span>
                               </button>
                             </>
                           )}
@@ -1304,6 +1483,17 @@ export function Containers() {
         <FileManager
           container={fileTarget}
           onClose={() => setFileTarget(null)}
+        />
+      )}
+
+      {/* 创建容器弹窗：创建成功后刷新列表 */}
+      {showCreate && (
+        <CreateContainerModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            // 创建任务已提交，稍后刷新列表查看新容器
+            setTimeout(() => refetch(), 1500)
+          }}
         />
       )}
 
@@ -1378,7 +1568,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     ;(async () => {
       setInspectLoading(true)
       try {
-        const r = await containerAPI.inspectContainer(container.id)
+        const r = await containerAPI.inspectContainer(container.id, container.hostId)
         const d = r.data?.data || r.data || null
         if (!cancelled) setInspectData(d)
       } catch (e) {
@@ -1524,7 +1714,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           container.id,
           container.name,
           imageNameAndTag,
-          true // 删除旧容器
+          true, // 删除旧容器
+          container.hostId
         )
 
         console.log('更新容器响应:', response.data)
@@ -1850,6 +2041,49 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               {inspectData?.NetworkSettings?.Networks && Object.entries(inspectData.NetworkSettings.Networks).map(([netName, net]) => (
                 <InfoRow key={netName} label={`网络 ${netName}`} value={net?.IPAddress || '—'} />
               ))}
+
+              {/* 端口映射：优先取 NetworkSettings.Ports（实际生效值），回退 HostConfig.PortBindings（配置值）。
+                  端口映射本质属于网络信息，故内聚在网络页展示，不单开分页。 */}
+              <div className="pt-2 border-t border-gray-100 dark:border-gray-700/50">
+                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">端口映射</div>
+                {(() => {
+                  // 归一化为 [{host, container, proto, hostIp}] 列表
+                  const ports = []
+                  const nsPorts = inspectData?.NetworkSettings?.Ports
+                  const pbPorts = inspectData?.HostConfig?.PortBindings
+                  if (nsPorts && Object.keys(nsPorts).length > 0) {
+                    for (const [cPort, bindings] of Object.entries(nsPorts)) {
+                      const [port, proto] = cPort.split('/')
+                      if (Array.isArray(bindings) && bindings.length > 0) {
+                        // 已映射：可能一个容器端口绑定多个宿主端口
+                        bindings.forEach((b) => ports.push({ host: b.HostPort || '', container: port, proto: proto || 'tcp', hostIp: b.HostIp || '' }))
+                      } else {
+                        // 仅暴露未映射（EXPOSE 但无 -p）
+                        ports.push({ host: '', container: port, proto: proto || 'tcp', hostIp: '' })
+                      }
+                    }
+                  } else if (pbPorts && Object.keys(pbPorts).length > 0) {
+                    for (const [cPort, bindings] of Object.entries(pbPorts)) {
+                      const [port, proto] = cPort.split('/')
+                      ;(bindings || []).forEach((b) => ports.push({ host: b.HostPort || '', container: port, proto: proto || 'tcp', hostIp: b.HostIp || '' }))
+                    }
+                  }
+                  if (ports.length === 0) {
+                    const isHost = String(inspectData?.HostConfig?.NetworkMode).toLowerCase() === 'host'
+                    return <p className="text-gray-500 text-sm">{isHost ? 'host 网络（与宿主共享端口）' : '无端口映射'}</p>
+                  }
+                  return (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ports.map((p, i) => (
+                        <span key={i} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-1 text-xs font-mono"
+                          title={p.hostIp ? `${p.hostIp}:${p.host} → ${p.container}/${p.proto}` : undefined}>
+                          {p.host ? `${p.host} → ${p.container}/${p.proto}` : `${p.container}/${p.proto}（未映射）`}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
           )}
 
@@ -1936,7 +2170,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 <>
                   <ActionBtn onClick={() => setShowLogs(true)} icon={FileText} label="日志" color="sky" />
                   <ActionBtn onClick={() => onProcess({ ...currentContainer, ID: currentContainer.id })} icon={Activity} label="进程" color="emerald" />
-                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="控制台" color="teal" />
+                  <ActionBtn onClick={() => setShowConsole(true)} icon={TerminalSquare} label="终端" color="teal" />
                   <ActionBtn onClick={() => setShowFileMgr(true)} icon={FolderOpen} label="文件" color="amber" />
                 </>
               )}
@@ -1951,22 +2185,24 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
 // ActionBtn 辅助组件（用于详情弹窗底部按钮）
 function ActionBtn({ onClick, disabled, loading, icon: Icon, label, color, fullWidth }) {
+  // 与外部容器卡片按钮统一：浅色模式浅白底 + 灰边框，仅用字体/图标颜色区分。
+  // 每个颜色包含：文字色 + hover 浅背景 + hover 边框色。
   const colorMap = {
-    red: 'bg-red-600 hover:bg-red-700 dark:bg-red-500',
-    orange: 'bg-orange-600 hover:bg-orange-700 dark:bg-orange-500',
-    yellow: 'bg-yellow-500 hover:bg-yellow-600 dark:bg-yellow-500',
-    green: 'bg-green-600 hover:bg-green-700 dark:bg-green-500',
-    blue: 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500',
-    purple: 'bg-purple-600 hover:bg-purple-700 dark:bg-purple-500',
-    sky: 'bg-sky-600 hover:bg-sky-700 dark:bg-sky-500',
-    teal: 'bg-teal-600 hover:bg-teal-700 dark:bg-teal-500',
-    emerald: 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500',
-    amber: 'bg-amber-500 hover:bg-amber-600 dark:bg-amber-500',
+    red: 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-200 dark:hover:border-red-800',
+    orange: 'text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 hover:border-orange-200 dark:hover:border-orange-800',
+    yellow: 'text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 hover:border-yellow-200 dark:hover:border-yellow-800',
+    green: 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-200 dark:hover:border-green-800',
+    blue: 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800',
+    purple: 'text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800',
+    sky: 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 hover:border-sky-200 dark:hover:border-sky-800',
+    teal: 'text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/20 hover:border-teal-200 dark:hover:border-teal-800',
+    emerald: 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-200 dark:hover:border-emerald-800',
+    amber: 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:border-amber-200 dark:hover:border-amber-800',
   }
   return (
     <button onClick={onClick} disabled={disabled || loading}
-      className={`${fullWidth ? 'w-full' : ''} px-3 py-2 text-sm rounded-lg text-white transition-colors flex items-center justify-center gap-1.5 ${
-        disabled || loading ? 'bg-gray-300 dark:bg-gray-700 cursor-not-allowed' : colorMap[color]
+      className={`${fullWidth ? 'w-full' : ''} px-3 py-2 text-sm rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow active:scale-95 transition-all duration-200 flex items-center justify-center gap-1.5 font-medium ${
+        disabled || loading ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed' : colorMap[color]
       }`}>
       {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
       <span>{loading ? '处理中' : label}</span>

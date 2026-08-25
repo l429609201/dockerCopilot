@@ -1,4 +1,4 @@
-package utiles
+﻿package utiles
 
 import (
 	"context"
@@ -20,21 +20,31 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// UpdateContainer 兼容旧签名的入口，内部使用后台 context 调用带 context 版本。
+// UpdateContainer 兼容旧签名的入口（本地主机），内部使用后台 context 调用带 context 版本。
 func UpdateContainer(serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string) error {
 	return UpdateContainerWithContext(context.Background(), serviceContext, id, name, imageNameAndTag, delOldContainer, taskID)
 }
 
-// UpdateContainerWithContext 支持取消与超时的容器更新流程（匿名拉取）。
+// UpdateContainerWithContext 支持取消与超时的容器更新流程（匿名拉取，本地主机，兼容旧签名）。
 func UpdateContainerWithContext(ctx context.Context, serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string) error {
-	return UpdateContainerWithAuth(ctx, serviceContext, id, name, imageNameAndTag, delOldContainer, taskID, "")
+	return UpdateContainerOnHost(ctx, serviceContext, "", id, name, imageNameAndTag, delOldContainer, taskID, "")
 }
 
-// UpdateContainerWithAuth 支持取消、超时与 Registry 认证的容器更新流程。
+// UpdateContainerWithAuth 支持取消、超时与 Registry 认证的容器更新流程（本地主机，兼容旧签名）。
+func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string, registryAuth string) error {
+	return UpdateContainerOnHost(ctx, serviceContext, "", id, name, imageNameAndTag, delOldContainer, taskID, registryAuth)
+}
+
+// UpdateContainerOnHost 在指定 Docker 主机上执行容器更新流程。hostID 为空表示本地。
 // registryAuth 为 base64(JSON) 编码的认证信息，空串表示匿名拉取。
 // 在关键步骤前检查 ctx 是否已取消，取消时立即中止并标记任务失败，
 // 从而支持前端/机器人主动取消长时间运行的更新任务。
-func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string, registryAuth string) error {
+func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceContext, hostID string, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string, registryAuth string) error {
+	// 按目标主机取 client，未找到回退本地；后续流程统一用此 cli
+	cli, ok := serviceContext.DockerManager.GetClient(hostID)
+	if !ok || cli == nil {
+		cli = serviceContext.DockerClient
+	}
 	serviceContext.UpdateProgress(taskID, svc.TaskProgress{
 		TaskID:     taskID,
 		Percentage: 0,
@@ -69,9 +79,9 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	oldTaskProgress.Percentage = 10
 	oldTaskProgress.DetailMsg = "正在拉取新镜像"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
-	serviceContext.DockerClient.NegotiateAPIVersion(ctx)
+	cli.NegotiateAPIVersion(ctx)
 	// 携带凭据拉取私有镜像；registryAuth 为空时等价于匿名拉取
-	reader, err := serviceContext.DockerClient.ImagePull(ctx, imageNameAndTag, image.PullOptions{RegistryAuth: registryAuth})
+	reader, err := cli.ImagePull(ctx, imageNameAndTag, image.PullOptions{RegistryAuth: registryAuth})
 	if err != nil {
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "拉取镜像失败", err)
 		logx.Errorf("Failed to pull image: %s", err)
@@ -112,7 +122,7 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 获取旧容器配置
-	inspectedContainer, err := serviceContext.DockerClient.ContainerInspect(context.Background(), id)
+	inspectedContainer, err := cli.ContainerInspect(context.Background(), id)
 	if err != nil {
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "获取容器信息失败", err)
 		logx.Error("获取容器信息失败" + err.Error())
@@ -120,7 +130,7 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	}
 
 	// 【增强】收集旧镜像信息（SHA256、大小）
-	oldImageInfo, _, err := serviceContext.DockerClient.ImageInspectWithRaw(context.Background(), inspectedContainer.Image)
+	oldImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), inspectedContainer.Image)
 	if err != nil {
 		logx.Errorf("获取旧镜像信息失败: %v，继续更新流程", err)
 	} else {
@@ -161,7 +171,7 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 		Signal:  signal,
 		Timeout: &timeout,
 	}
-	err = serviceContext.DockerClient.ContainerStop(context.Background(), id, stopOptions)
+	err = cli.ContainerStop(context.Background(), id, stopOptions)
 	if err != nil {
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "停止旧容器失败", err)
 		return err
@@ -173,8 +183,10 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 删除旧容器（释放容器名，如果配置要求保留则重命名）
+	// backupName 用于失败回滚时恢复（仅 !delOldContainer 时有值）
+	var backupName string
 	if delOldContainer {
-		err = serviceContext.DockerClient.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
+		err = cli.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
 		if err != nil {
 			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "删除旧容器失败", err)
 			return err
@@ -182,8 +194,8 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	} else {
 		// 保留旧容器：重命名为带时间戳的备份名
 		currentDate := time.Now().Format("2006-01-02-15-04-05")
-		backupName := name + "-" + currentDate
-		err = serviceContext.DockerClient.ContainerRename(context.Background(), id, backupName)
+		backupName = name + "-" + currentDate
+		err = cli.ContainerRename(context.Background(), id, backupName)
 		if err != nil {
 			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "重命名旧容器失败", err)
 			return err
@@ -197,9 +209,22 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 用原名创建新容器（旧容器已删除或重命名，名称可用）
-	newContainerResp, err := serviceContext.DockerClient.ContainerCreate(context.Background(), config, hostConfig, networkingConfig, nil, name)
+	newContainerResp, err := cli.ContainerCreate(context.Background(), config, hostConfig, networkingConfig, nil, name)
 	if err != nil {
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败", err)
+		// 【修复】创建失败时尝试回滚旧容器（避免用户容器永久丢失）
+		logx.Errorf("创建新容器失败，尝试回滚旧容器: %v", err)
+		if !delOldContainer && backupName != "" {
+			// 旧容器被重命名为备份，尝试改回原名并重启
+			logx.Infof("尝试将备份容器 %s 恢复为原名 %s", backupName, name)
+			if renameErr := cli.ContainerRename(context.Background(), backupName, name); renameErr != nil {
+				logx.Errorf("恢复容器名失败: %v，用户需手动重命名 %s", renameErr, backupName)
+			} else if startErr := cli.ContainerStart(context.Background(), id, container.StartOptions{}); startErr != nil {
+				logx.Errorf("重启旧容器失败: %v", startErr)
+			} else {
+				logx.Info("✅ 已成功回滚并重启旧容器")
+			}
+		}
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "创建新容器失败（已尝试回滚旧容器）", err)
 		return err
 	}
 	newContainerID := newContainerResp.ID
@@ -210,14 +235,28 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 启动新容器
-	err = serviceContext.DockerClient.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
+	err = cli.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
 	if err != nil {
-		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败", err)
+		// 【修复】启动失败时回滚：删除失败的新容器 + 恢复旧容器
+		logx.Errorf("启动新容器失败，尝试回滚: %v", err)
+		_ = cli.ContainerRemove(context.Background(), newContainerID, container.RemoveOptions{Force: true})
+		if !delOldContainer && backupName != "" {
+			// 旧容器被重命名为备份，尝试改回原名并重启
+			logx.Infof("尝试将备份容器 %s 恢复为原名 %s", backupName, name)
+			if renameErr := cli.ContainerRename(context.Background(), backupName, name); renameErr != nil {
+				logx.Errorf("恢复容器名失败: %v，用户需手动重命名 %s", renameErr, backupName)
+			} else if startErr := cli.ContainerStart(context.Background(), id, container.StartOptions{}); startErr != nil {
+				logx.Errorf("重启旧容器失败: %v", startErr)
+			} else {
+				logx.Info("✅ 已成功回滚并重启旧容器")
+			}
+		}
+		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败（已尝试回滚旧容器）", err)
 		return err
 	}
 
 	// 【增强】收集新镜像信息（SHA256、大小）
-	newImageInfo, _, err := serviceContext.DockerClient.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+	newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
 	if err != nil {
 		logx.Errorf("获取新镜像信息失败: %v，但容器已成功启动", err)
 	} else {
@@ -258,6 +297,68 @@ type layerState struct {
 	status  string
 	current int64
 	total   int64
+}
+
+// pullFraction 计算所有已知层的整体下载占比（0.0~1.0）。
+// 以字节为权重：已完成层按其 total 计满，未知 total 的已完成层用已见的平均层大小估算，
+// 避免因层的 total 尚未上报而导致占比抖动。总权重为 0 时返回 0。
+func pullFraction(m map[string]*layerState) float64 {
+	var totalBytes int64
+	var knownTotalCount int64
+	// 先求已知 total 的层的平均大小，供 total 未知的层估算权重
+	for _, st := range m {
+		if st.total > 0 {
+			totalBytes += st.total
+			knownTotalCount++
+		}
+	}
+	avg := int64(0)
+	if knownTotalCount > 0 {
+		avg = totalBytes / knownTotalCount
+	}
+	var weightSum, progressSum float64
+	for _, st := range m {
+		w := st.total
+		if w <= 0 {
+			w = avg // total 未知时用平均层大小兜底
+		}
+		if w <= 0 {
+			w = 1 // 仍未知（首个层尚无任何字节信息）时给最小权重
+		}
+		weightSum += float64(w)
+		if isLayerDone(st.status) {
+			progressSum += float64(w)
+		} else if st.total > 0 && st.current > 0 {
+			frac := float64(st.current) / float64(st.total)
+			if frac > 1 {
+				frac = 1
+			}
+			progressSum += float64(w) * frac
+		}
+	}
+	if weightSum <= 0 {
+		return 0
+	}
+	f := progressSum / weightSum
+	if f > 1 {
+		f = 1
+	}
+	return f
+}
+
+// clampMonotonic 将候选百分比钳制到 [lo, hi] 区间，并保证不低于当前值（单调不回退）。
+// 用于消除拉取阶段因层数/字节上报次序造成的进度回跳。
+func clampMonotonic(current, candidate, lo, hi int) int {
+	if candidate < lo {
+		candidate = lo
+	}
+	if candidate > hi {
+		candidate = hi
+	}
+	if candidate < current {
+		return current // 只增不减
+	}
+	return candidate
 }
 
 // isLayerDone 判断层状态是否已完成（用于主进度按完成层数换算）。
@@ -375,14 +476,13 @@ func decodePullResp(taskCtx context.Context, reader io.Reader, svcCtx *svc.Servi
 					st.current = msg.Progress.Current
 					st.total = msg.Progress.Total
 				}
-				layers, doneCount, totalLayers := buildLayers(layerMap)
+				layers, _, _ := buildLayers(layerMap)
 				oldTaskProgress.Layers = layers
-				// 主进度：拉取阶段映射到 10~30% 区间，按完成层数/总层数驱动
-				if totalLayers > 0 {
-					oldTaskProgress.Percentage = 10 + doneCount*20/totalLayers
-				} else {
-					oldTaskProgress.Percentage = 10
-				}
+				// 主进度：拉取阶段映射到 10~30% 区间。
+				// 用「已下载字节/总字节」的整体占比驱动，而非「完成层数/总层数」——
+				// 后者因 Docker 逐层上报、总层数动态增大而导致分母突变、百分比回跳。
+				pulled := pullFraction(layerMap)
+				oldTaskProgress.Percentage = clampMonotonic(oldTaskProgress.Percentage, 10+int(pulled*20), 10, 30)
 			}
 			svcCtx.UpdateProgress(taskID, oldTaskProgress)
 			logx.Infof("拉取镜像进度\t %s: %s\n", msg.Status, msg.Progress)

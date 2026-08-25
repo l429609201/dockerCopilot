@@ -9,6 +9,15 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
+// RemoveHandler 删除镜像
+// @Summary 删除镜像
+// @Tags 镜像
+// @Produce json
+// @Param id path string true "镜像ID"
+// @Param force query boolean false "强制删除"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /image/{id} [delete]
 func RemoveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.RemoveImageReq

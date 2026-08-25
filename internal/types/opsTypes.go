@@ -3,8 +3,10 @@ package types
 // 阶段7：Portainer 风格容器运维相关请求类型。
 
 // ContainerActionReq 简单容器操作（pause/unpause/kill/start/stop/restart）。
+// HostID 标记容器所属 Docker 主机（多 Docker 管理），空表示本地。
 type ContainerActionReq struct {
-	Id string `path:"id"`
+	Id     string `path:"id"`
+	HostID string `form:"hostId,optional"`
 }
 
 // ContainerRemoveReq 删除容器请求。
@@ -12,12 +14,14 @@ type ContainerRemoveReq struct {
 	Id            string `path:"id"`
 	Force         bool   `form:"force,default=false"`
 	RemoveVolumes bool   `form:"removeVolumes,default=false"`
+	HostID        string `form:"hostId,optional"`
 }
 
 // ContainerRenameReq2 重命名容器（避免与已有 goctl 生成类型冲突）。
 type ContainerRenameReq2 struct {
 	Id      string `path:"id"`
 	NewName string `json:"newName"`
+	HostID  string `json:"hostId,optional"`
 }
 
 // ContainerLogsReq 查看容器日志请求。
@@ -26,6 +30,7 @@ type ContainerLogsReq struct {
 	Tail       int    `form:"tail,default=200"`
 	Timestamps bool   `form:"timestamps,default=false"`
 	Since      string `form:"since,optional"`
+	HostID     string `form:"hostId,optional"`
 }
 
 // ContainerExecReq 容器内命令执行请求。
@@ -34,11 +39,13 @@ type ContainerExecReq struct {
 	Cmd     []string `json:"cmd"`
 	WorkDir string   `json:"workDir,optional"`
 	User    string   `json:"user,optional"`
+	HostID  string   `json:"hostId,optional"`
 }
 
 // ContainerInspectReq 查看容器完整配置。
 type ContainerInspectReq struct {
-	Id string `path:"id"`
+	Id     string `path:"id"`
+	HostID string `form:"hostId,optional"`
 }
 
 // ContainerEditReq 容器参数编辑请求。
@@ -73,6 +80,8 @@ type ContainerEditReq struct {
 	NanoCPUs *int64 `json:"nanoCpus,optional"`
 	// ConfirmWarnings 是否已确认高风险变更（如挂载改动）。
 	ConfirmWarnings bool `json:"confirmWarnings,optional"`
+	// HostID 容器所属 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `json:"hostId,optional"`
 }
 
 
@@ -80,20 +89,23 @@ type ContainerEditReq struct {
 
 // FileListReq 列出容器内目录。
 type FileListReq struct {
-	Id   string `path:"id"`
-	Path string `form:"path,default=/"`
+	Id     string `path:"id"`
+	Path   string `form:"path,default=/"`
+	HostID string `form:"hostId,optional"`
 }
 
 // FileReadReq 读取文本文件（在线预览/编辑）。
 type FileReadReq struct {
-	Id   string `path:"id"`
-	Path string `form:"path"`
+	Id     string `path:"id"`
+	Path   string `form:"path"`
+	HostID string `form:"hostId,optional"`
 }
 
 // FileDownloadReq 下载文件。
 type FileDownloadReq struct {
-	Id   string `path:"id"`
-	Path string `form:"path"`
+	Id     string `path:"id"`
+	Path   string `form:"path"`
+	HostID string `form:"hostId,optional"`
 }
 
 // FileWriteReq 写入/保存文本文件内容。
@@ -101,24 +113,28 @@ type FileWriteReq struct {
 	Id      string `path:"id"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
+	HostID  string `json:"hostId,optional"`
 }
 
 // FileMkdirReq 新建目录。
 type FileMkdirReq struct {
-	Id   string `path:"id"`
-	Path string `json:"path"`
-	Name string `json:"name"`
+	Id     string `path:"id"`
+	Path   string `json:"path"`
+	Name   string `json:"name"`
+	HostID string `json:"hostId,optional"`
 }
 
 // FileDeleteReq 删除文件/目录。
 type FileDeleteReq struct {
-	Id   string `path:"id"`
-	Path string `json:"path"`
+	Id     string `path:"id"`
+	Path   string `json:"path"`
+	HostID string `json:"hostId,optional"`
 }
 
 // FileRenameReq 重命名/移动。
 type FileRenameReq struct {
-	Id  string `path:"id"`
-	Src string `json:"src"`
-	Dst string `json:"dst"`
+	Id     string `path:"id"`
+	Src    string `json:"src"`
+	Dst    string `json:"dst"`
+	HostID string `json:"hostId,optional"`
 }

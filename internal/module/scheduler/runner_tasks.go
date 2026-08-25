@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,66 +22,72 @@ func runPrune(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconf
 		notifier.Notify("定时清理开始", fmt.Sprintf("规则「%s」开始清理镜像（范围：%s）", rule.Name, pruneModeLabel(rule.PruneMode)))
 	}
 
-	images, err := utiles.GetImagesList(svcCtx)
-	if err != nil {
-		logx.Errorf("定时清理规则[%s]获取镜像列表失败: %v", rule.Name, err)
-		if notifier != nil && rule.NotifyOnError {
-			notifier.Notify("定时清理失败", fmt.Sprintf("规则「%s」获取镜像列表失败：%s", rule.Name, err.Error()))
-		}
-		recordResult(svcCtx, rule.ID, "获取镜像列表失败："+err.Error())
-		return
-	}
-
-	// 按范围筛选待清理镜像 ID
 	mode := rule.PruneMode
 	if mode == "" {
 		mode = appconfig.PruneModeDangling
 	}
-	var ids []string
-	for _, img := range images {
-		switch mode {
-		case appconfig.PruneModeUnused:
-			if !img.InUsed {
-				ids = append(ids, img.ID)
+
+	// 目标主机：规则指定则用指定，否则仅本地
+	hosts := effectiveHostIDs(rule)
+	var totalPruned int
+	var perHostSummary []string
+	var anyErr bool
+
+	for _, hostID := range hosts {
+		hostName := hostDisplayName(svcCtx, hostID)
+		// 拉取该主机镜像列表
+		images, err := utiles.GetImagesListFromHost(svcCtx, hostID)
+		if err != nil {
+			anyErr = true
+			logx.Errorf("定时清理规则[%s]获取主机[%s]镜像列表失败: %v", rule.Name, hostName, err)
+			perHostSummary = append(perHostSummary, fmt.Sprintf("%s：获取镜像失败(%s)", hostName, err.Error()))
+			continue
+		}
+		// 按范围筛选待清理镜像 ID
+		var ids []string
+		for _, img := range images {
+			switch mode {
+			case appconfig.PruneModeUnused:
+				if !img.InUsed {
+					ids = append(ids, img.ID)
+				}
+			default: // dangling
+				if img.ImageName == "None" || img.ImageTag == "None" {
+					ids = append(ids, img.ID)
+				}
 			}
-		default: // dangling
-			if img.ImageName == "None" || img.ImageTag == "None" {
-				ids = append(ids, img.ID)
-			}
 		}
+		if len(ids) == 0 {
+			perHostSummary = append(perHostSummary, fmt.Sprintf("%s：无需清理", hostName))
+			continue
+		}
+		// 在该主机提交批量清理任务并等待完成
+		taskID := uuid.New().String()
+		done := make(chan struct{}, 1)
+		startErr := svcCtx.TaskManager.TryStart(taskID, "prune-"+rule.ID+"-"+hostID, svc.TaskTypeImagePrune, func(taskCtx context.Context) {
+			utiles.PruneImagesOnHost(taskCtx, svcCtx, hostID, taskID, ids, false)
+			done <- struct{}{}
+		})
+		if startErr != nil {
+			anyErr = true
+			logx.Errorf("定时清理规则[%s]主机[%s]提交任务失败: %v", rule.Name, hostName, startErr)
+			perHostSummary = append(perHostSummary, fmt.Sprintf("%s：提交失败(%s)", hostName, startErr.Error()))
+			continue
+		}
+		<-done
+		totalPruned += len(ids)
+		perHostSummary = append(perHostSummary, fmt.Sprintf("%s：清理 %d 个", hostName, len(ids)))
 	}
 
-	if len(ids) == 0 {
-		summary := "没有需要清理的镜像"
-		recordResult(svcCtx, rule.ID, summary)
-		if notifier != nil && rule.NotifyOnDone {
-			notifier.Notify("定时清理完成", fmt.Sprintf("规则「%s」执行完成：%s", rule.Name, summary))
-		}
-		return
-	}
-
-	// 提交批量清理任务并等待完成
-	taskID := uuid.New().String()
-	done := make(chan struct{}, 1)
-	startErr := svcCtx.TaskManager.TryStart(taskID, "prune-"+rule.ID, svc.TaskTypeImagePrune, func(taskCtx context.Context) {
-		utiles.PruneImages(taskCtx, svcCtx, taskID, ids, false)
-		done <- struct{}{}
-	})
-	if startErr != nil {
-		logx.Errorf("定时清理规则[%s]提交任务失败: %v", rule.Name, startErr)
-		recordResult(svcCtx, rule.ID, "提交清理任务失败："+startErr.Error())
-		if notifier != nil && rule.NotifyOnError {
-			notifier.Notify("定时清理失败", fmt.Sprintf("规则「%s」提交清理任务失败：%s", rule.Name, startErr.Error()))
-		}
-		return
-	}
-	<-done
-
-	summary := fmt.Sprintf("已提交清理 %d 个镜像（范围：%s）", len(ids), pruneModeLabel(mode))
+	summary := fmt.Sprintf("共清理 %d 个镜像（范围：%s）", totalPruned, pruneModeLabel(mode))
 	recordResult(svcCtx, rule.ID, summary)
 	logx.Infof("定时清理规则[%s]执行完成：%s", rule.Name, summary)
-	if notifier != nil && rule.NotifyOnDone {
-		notifier.Notify("定时清理完成", fmt.Sprintf("规则「%s」执行完成\n\n🧹 %s", rule.Name, summary))
+	if notifier != nil {
+		if anyErr && rule.NotifyOnError {
+			notifier.Notify("定时清理部分失败", fmt.Sprintf("规则「%s」执行完成（含失败）\n\n%s", rule.Name, strings.Join(perHostSummary, "\n")))
+		} else if rule.NotifyOnDone {
+			notifier.Notify("定时清理完成", fmt.Sprintf("规则「%s」执行完成\n\n🧹 %s\n%s", rule.Name, summary, strings.Join(perHostSummary, "\n")))
+		}
 	}
 }
 
@@ -91,22 +98,56 @@ func runBackup(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appcon
 		notifier.Notify("定时备份开始", fmt.Sprintf("规则「%s」开始备份容器配置", rule.Name))
 	}
 
-	err := utiles.BackupContainer(svcCtx)
-	if err != nil {
-		logx.Errorf("定时备份规则[%s]执行失败: %v", rule.Name, err)
-		recordResult(svcCtx, rule.ID, "备份失败："+err.Error())
-		if notifier != nil && rule.NotifyOnError {
-			notifier.Notify("定时备份失败", fmt.Sprintf("规则「%s」备份失败：%s", rule.Name, err.Error()))
+	// 目标主机：规则指定则用指定，否则仅本地。逐主机备份为独立文件。
+	hosts := effectiveHostIDs(rule)
+	var okCount int
+	var perHostSummary []string
+	var anyErr bool
+	for _, hostID := range hosts {
+		hostName := hostDisplayName(svcCtx, hostID)
+		if err := utiles.BackupContainerOnHost(svcCtx, hostID); err != nil {
+			anyErr = true
+			logx.Errorf("定时备份规则[%s]主机[%s]失败: %v", rule.Name, hostName, err)
+			perHostSummary = append(perHostSummary, fmt.Sprintf("%s：失败(%s)", hostName, err.Error()))
+			continue
 		}
-		return
+		okCount++
+		perHostSummary = append(perHostSummary, fmt.Sprintf("%s：成功", hostName))
 	}
 
-	summary := fmt.Sprintf("备份成功（%s）", time.Now().Format("2006-01-02 15:04:05"))
+	summary := fmt.Sprintf("备份完成 %d/%d 个主机（%s）", okCount, len(hosts), time.Now().Format("2006-01-02 15:04:05"))
 	recordResult(svcCtx, rule.ID, summary)
 	logx.Infof("定时备份规则[%s]执行完成：%s", rule.Name, summary)
-	if notifier != nil && rule.NotifyOnDone {
-		notifier.Notify("定时备份完成", fmt.Sprintf("规则「%s」执行完成\n\n💾 %s", rule.Name, summary))
+	if notifier != nil {
+		if anyErr && rule.NotifyOnError {
+			notifier.Notify("定时备份部分失败", fmt.Sprintf("规则「%s」执行完成（含失败）\n\n%s", rule.Name, strings.Join(perHostSummary, "\n")))
+		} else if rule.NotifyOnDone {
+			notifier.Notify("定时备份完成", fmt.Sprintf("规则「%s」执行完成\n\n💾 %s\n%s", rule.Name, summary, strings.Join(perHostSummary, "\n")))
+		}
 	}
+}
+
+// effectiveHostIDs 解析规则的目标主机列表：为空时返回仅本地。
+func effectiveHostIDs(rule appconfig.ScheduledUpdateRule) []string {
+	if len(rule.HostIDs) == 0 {
+		return []string{appconfig.DockerHostLocalID}
+	}
+	out := make([]string, 0, len(rule.HostIDs))
+	for _, h := range rule.HostIDs {
+		if h == "" {
+			h = appconfig.DockerHostLocalID
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+// hostDisplayName 返回主机展示名，找不到时回退主机ID。
+func hostDisplayName(svcCtx *svc.ServiceContext, hostID string) string {
+	if host, ok := svcCtx.AppConfig.FindDockerHost(hostID); ok && host.Name != "" {
+		return host.Name
+	}
+	return hostID
 }
 
 // pruneModeLabel 返回清理范围的中文标签。

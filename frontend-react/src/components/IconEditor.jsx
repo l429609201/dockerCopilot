@@ -1,7 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { X, Upload, Link as LinkIcon, Download, Loader2, Package, Image as ImageIcon } from 'lucide-react'
-import { imageAPI } from '../api/client.js'
+import { imageAPI, dockerHostAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
+
+// 从 Docker 主机连接地址（tcp://ip:port 或 ip:port）解析出主机 IP/域名。
+const parseHostIP = (address) => {
+  if (!address) return ''
+  let a = address.replace(/^tcp:\/\//i, '').replace(/^https?:\/\//i, '')
+  a = a.split('/')[0]           // 去掉可能的路径
+  const idx = a.lastIndexOf(':') // 去掉端口（兼容无端口）
+  return idx > 0 ? a.slice(0, idx) : a
+}
 
 // 容器图标编辑面板：效果预览 + 三种方式（本地上传 / 在线URL / 自动获取并持久化）。
 // imageName 为绑定的镜像名 key；container 提供端口用于自动获取地址；
@@ -14,8 +23,23 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
   const [msg, setMsg] = useState('')
   const fileRef = React.useRef(null)
 
-  // 候选访问地址：宿主机 host + 映射端口/暴露端口
-  const host = window.location.hostname || 'localhost'
+  // 候选访问地址的 host：
+  // - 本地容器：用当前浏览器访问的 hostname
+  // - 远程容器：用其所属远程 Docker 主机的 IP（从主机连接地址 tcp://ip:port 解析）
+  const [remoteHost, setRemoteHost] = useState('')
+  const isRemote = container?.hostId && container.hostId !== 'local'
+  useEffect(() => {
+    if (!isRemote) return
+    dockerHostAPI.list().then((r) => {
+      const hosts = r.data?.data
+      if (r.data?.code === 200 && Array.isArray(hosts)) {
+        const h = hosts.find((x) => x.id === container.hostId)
+        if (h) setRemoteHost(parseHostIP(h.address))
+      }
+    }).catch(() => {})
+  }, [isRemote, container?.hostId])
+
+  const host = (isRemote ? remoteHost : (window.location.hostname || 'localhost')) || 'localhost'
   const ports = (container?.ports?.length ? container.ports
     : (container?.networkMode === 'host' ? container?.exposedPorts : [])) || []
 

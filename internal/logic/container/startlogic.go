@@ -25,7 +25,7 @@ func NewStartLogic(ctx context.Context, svcCtx *svc.ServiceContext) *StartLogic 
 
 func (l *StartLogic) Start(req *types.IdReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	err = utiles.StartContainer(l.svcCtx, req.Id)
+	err = utiles.StartContainerOnHost(l.svcCtx, req.HostID, req.Id)
 	if err != nil {
 		resp.Code = 400
 		resp.Msg = err.Error()

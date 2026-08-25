@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle } from 'lucide-react'
+import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle, Server } from 'lucide-react'
 import { imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
@@ -32,6 +32,7 @@ export function Images() {
   const [success, setSuccess] = useState(null)
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, image: null })
   const [filterStatus, setFilterStatus] = useState(null) // null 表示显示全部
+  const [hostFilter, setHostFilter] = useState('') // '' 表示全部主机
   const [pruneModal, setPruneModal] = useState({ isOpen: false, type: null, images: [] })
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: '' })
 
@@ -85,12 +86,29 @@ export function Images() {
   // 兼容原有调用点：刷新即重新查询
   const fetchImages = () => refetch()
 
-  const handleDeleteImage = async (imageId, force = false) => {
+  // 从镜像列表派生可选主机（多 Docker 管理）：[{id, name}]
+  const hostList = useMemo(() => {
+    const m = new Map()
+    for (const img of images) {
+      const hid = img.hostId || 'local'
+      if (!m.has(hid)) m.set(hid, img.hostName || (hid === 'local' ? '本地 Docker' : hid))
+    }
+    return Array.from(m, ([id, name]) => ({ id, name }))
+  }, [images])
+
+  // 按主机ID查展示名，找不到回退ID
+  const hostNameById = (hid) => {
+    const h = hostList.find(x => x.id === hid)
+    return h ? h.name : (hid === 'local' ? '本地 Docker' : hid)
+  }
+
+  const handleDeleteImage = async (imageId, force = false, hostId = '') => {
     try {
       setActionLoading(true)
       setDeleteModal({ isOpen: false, image: null })
 
-      await imageAPI.deleteImage(imageId, force)
+      // 按 hostId 路由到对应主机删除（空表示本地）
+      await imageAPI.deleteImage(imageId, force, hostId)
 
       setSuccessModal({ isOpen: true, message: '镜像删除成功' })
       await refetch()
@@ -103,7 +121,7 @@ export function Images() {
     }
   }
 
-  // 异步批量清理：提交任务拿 taskID，注册到全局任务浮层，前端不再同步阻塞等待
+  // 异步批量清理：按主机分组分别提交任务（选中镜像可能跨多个主机），各自注册到全局任务浮层
   const handlePrune = async (type) => {
     try {
       setError(null)
@@ -113,25 +131,43 @@ export function Images() {
       } else if (type === 'unused') {
         imagesToDelete = images.filter(img => !img.inUsed)
       }
+      // 若当前有主机筛选，仅清理该主机的镜像
+      if (hostFilter) {
+        imagesToDelete = imagesToDelete.filter(img => (img.hostId || 'local') === hostFilter)
+      }
       if (imagesToDelete.length === 0) {
         setError('没有找到需要清理的镜像')
         return
       }
 
-      const ids = imagesToDelete.map(img => img.id)
-      const resp = await imageAPI.pruneImages(ids, false)
-      const taskID = resp.data?.data?.taskID
-      if (!taskID) {
-        setError(resp.data?.msg || '提交清理任务失败')
+      // 按主机分组：{ hostId: [id, ...] }
+      const byHost = new Map()
+      for (const img of imagesToDelete) {
+        const hid = img.hostId || 'local'
+        if (!byHost.has(hid)) byHost.set(hid, [])
+        byHost.get(hid).push(img.id)
+      }
+
+      let totalCount = 0
+      let submitted = 0
+      for (const [hid, ids] of byHost) {
+        const resp = await imageAPI.pruneImages(ids, false, hid === 'local' ? '' : hid)
+        const taskID = resp.data?.data?.taskID
+        if (!taskID) continue
+        submitted++
+        totalCount += ids.length
+        const hostLabel = hostNameById(hid)
+        addTask({
+          id: taskID,
+          title: `${type === 'dangling' ? '清理无Tag镜像' : '清理未使用镜像'}（${hostLabel}）`,
+          onDone: () => refetch(),
+        })
+      }
+      if (submitted === 0) {
+        setError('提交清理任务失败')
         return
       }
-      // 注册到全局任务浮层，任意页面可见进度；完成后自动刷新列表
-      addTask({
-        id: taskID,
-        title: type === 'dangling' ? '清理无Tag镜像' : '清理未使用镜像',
-        onDone: () => refetch(),
-      })
-      setSuccessModal({ isOpen: true, message: `已提交清理任务（${ids.length} 个镜像），可在右下角查看进度` })
+      setSuccessModal({ isOpen: true, message: `已提交 ${submitted} 个清理任务（共 ${totalCount} 个镜像），可在右下角查看进度` })
       setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
     } catch (error) {
       const errorMsg = error.response?.data?.msg || error.message || '清理镜像失败'
@@ -178,6 +214,23 @@ export function Images() {
             <p className="text-gray-600 dark:text-gray-400 mt-1">查看和管理Docker镜像</p>
           </div>
           <div className="flex items-center gap-2">
+            {/* 主机筛选下拉：仅多主机时显示（多 Docker 管理） */}
+            {hostList.length > 1 && (
+              <div className="relative flex items-center">
+                <Server className="absolute left-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
+                <select
+                  value={hostFilter}
+                  onChange={(e) => setHostFilter(e.target.value)}
+                  className="pl-8 pr-8 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 appearance-none"
+                  title="按 Docker 主机筛选"
+                >
+                  <option value="">全部主机</option>
+                  {hostList.map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <button
               onClick={() => {
                 const imagesToDelete = images.filter(img => img.tag === 'None' || img.tag === '<none>')
@@ -390,6 +443,8 @@ export function Images() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {images
               .filter((image) => {
+                // 主机筛选：'' 表示全部
+                if (hostFilter && (image.hostId || 'local') !== hostFilter) return false
                 if (!filterStatus) return true
                 if (filterStatus === 'used') return image.inUsed
                 if (filterStatus === 'unused') return !image.inUsed
@@ -397,7 +452,8 @@ export function Images() {
                 return true
               })
               .map((image) => (
-                <div key={image.id} className="group card p-4 rounded-2xl hover:shadow-lg transition-all">
+                // key 带上 hostId：同一镜像在多主机会各列一条，避免 key 冲突
+                <div key={`${image.hostId || 'local'}|${image.id}`} className="group card p-4 rounded-2xl hover:shadow-lg transition-all flex flex-col">
                   {/* 头部：图标、名字、状态指示器和大小 */}
                   <div className="flex items-start gap-3 mb-4">
                     <div className="h-10 w-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -445,7 +501,7 @@ export function Images() {
                     </div>
                   </div>
 
-                  {/* 镜像信息 */}
+                  {/* 镜像信息：ID + 来源主机（始终渲染主机行以保证卡片等高） */}
                   <div className="space-y-2 text-xs mb-4">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">ID:</span>
@@ -453,10 +509,17 @@ export function Images() {
                         {image.id}
                       </span>
                     </div>
+                    <div className="flex items-center gap-2 min-h-[1.25rem]">
+                      <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">主机:</span>
+                      <span className="inline-flex items-center gap-1 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 px-1.5 py-0.5 text-[10px] font-medium truncate">
+                        <Server className="h-2.5 w-2.5 flex-shrink-0" />
+                        {image.hostName || (String(image.hostId || 'local') === 'local' ? '本地 Docker' : image.hostId)}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* 操作按钮 */}
-                  <div className="flex gap-2 pt-4 border-t border-gray-100 dark:border-gray-700">
+                  {/* 操作按钮：mt-auto 贴底，配合卡片 flex-col 使所有卡片按钮行对齐 */}
+                  <div className="flex gap-2 pt-4 mt-auto border-t border-gray-100 dark:border-gray-700">
                     <button
                       onClick={() => setDeleteModal({ isOpen: true, image, force: false })}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors active:scale-95"
@@ -613,7 +676,7 @@ export function Images() {
                   取消
                 </button>
                 <button
-                  onClick={() => deleteModal.image && handleDeleteImage(deleteModal.image.id, deleteModal.force)}
+                  onClick={() => deleteModal.image && handleDeleteImage(deleteModal.image.id, deleteModal.force, deleteModal.image.hostId || '')}
                   disabled={isLoading}
                   className="flex-1 px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white rounded-xl transition-all duration-300 transform hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
                 >

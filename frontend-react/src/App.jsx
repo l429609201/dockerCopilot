@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Auth } from './components/Auth.jsx'
 import { Sidebar, MobileBottomNav } from './components/Header.jsx'
 import { Containers } from './components/Containers.jsx'
+import { DockerHosts } from './components/DockerHosts.jsx'
 import { Images } from './components/Images.jsx'
 import { Backups } from './components/Backups.jsx'
 import { Icons } from './components/Icons.jsx'
@@ -10,6 +11,7 @@ import { Schedules } from './components/Schedules.jsx'
 import { Compose } from './components/Compose.jsx'
 import { Settings } from './components/Settings.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
+import { ToastProvider } from './hooks/useToast.jsx'
 import { TaskProvider } from './hooks/useTasks.jsx'
 import { TaskPanel } from './components/TaskPanel.jsx'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -138,6 +140,8 @@ function AppContent() {
     switch (activeTab) {
       case '#containers':
         return <Containers />
+      case '#docker-hosts':
+        return <DockerHosts />
       case '#images':
         return <Images />
       case '#icons':
@@ -202,9 +206,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <TaskProvider>
-          <AppContent />
-        </TaskProvider>
+        <ToastProvider>
+          <TaskProvider>
+            <AppContent />
+          </TaskProvider>
+        </ToastProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

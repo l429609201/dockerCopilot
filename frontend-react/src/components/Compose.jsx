@@ -3,6 +3,7 @@ import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw } from 'l
 import { composeAPI } from '../api/client.js'
 import { ComposeEditor } from './ComposeEditor.jsx'
 import { ComposeConfigCard } from './ComposeConfigCard.jsx'
+import { HostPathMapperCard } from './HostPathMapperCard.jsx'
 
 // Compose 项目管理页面
 export function Compose() {
@@ -63,8 +64,14 @@ export function Compose() {
 
       {/* 内容区域 */}
       <div className="px-2 sm:px-6 space-y-4">
-        {/* 扫描配置卡片：保存后自动刷新项目列表 */}
-        <ComposeConfigCard onSaved={load} />
+        {/* 两张配置卡片：大屏(lg)并排两列，小屏堆叠；items-stretch 让两卡片等高 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+          {/* 扫描配置卡片：保存后自动刷新项目列表 */}
+          <ComposeConfigCard onSaved={load} />
+
+          {/* 宿主机路径映射配置：供挂载路径转换使用 */}
+          <HostPathMapperCard />
+        </div>
 
         {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
         {loading && <div className="text-gray-500 text-sm">加载中...</div>}

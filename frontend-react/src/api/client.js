@@ -99,20 +99,30 @@ export const versionAPI = {
   updateProgram: () => apiClient.put('/api/program'),
 }
 
-// 容器相关API
+// 多 Docker 管理：把 hostId 拼到 query（空则省略，保持对本地的向后兼容）
+function hostQ(hostId, prefix = '?') {
+  return hostId ? `${prefix}hostId=${encodeURIComponent(hostId)}` : ''
+}
+
+// 容器相关API（操作方法均支持可选 hostId，用于定位容器所属 Docker 主机）
 export const containerAPI = {
   getContainers: () => apiClient.get('/api/containers'),
-  startContainer: (id) => apiClient.post(`/api/container/${id}/start`),
-  stopContainer: (id) => apiClient.post(`/api/container/${id}/stop`),
-  restartContainer: (id) => apiClient.post(`/api/container/${id}/restart`),
-  renameContainer: (id, newName) => {
-    return apiClient.post(`/api/container/${id}/rename?newName=${encodeURIComponent(newName)}`)
+  // 从零创建新容器（任务化，返回 taskID 供轮询进度）。spec 见后端 CreateContainerReq。
+  createContainer: (spec) => apiClient.post('/api/container/create', spec),
+  // 解析 docker run 命令为创建参数（仅解析预览，不创建）
+  parseRunCommand: (command) => apiClient.post('/api/container/parseRunCommand', { command }),
+  startContainer: (id, hostId) => apiClient.post(`/api/container/${id}/start${hostQ(hostId)}`),
+  stopContainer: (id, hostId) => apiClient.post(`/api/container/${id}/stop${hostQ(hostId)}`),
+  restartContainer: (id, hostId) => apiClient.post(`/api/container/${id}/restart${hostQ(hostId)}`),
+  renameContainer: (id, newName, hostId) => {
+    return apiClient.post(`/api/container/${id}/rename?newName=${encodeURIComponent(newName)}${hostQ(hostId, '&')}`)
   },
-  updateContainer: (id, containerName, imageNameAndTag, delOldContainer) => {
+  updateContainer: (id, containerName, imageNameAndTag, delOldContainer, hostId) => {
     const formData = new FormData()
     formData.append('containerName', containerName)
     formData.append('imageNameAndTag', imageNameAndTag)
     formData.append('delOldContainer', delOldContainer ? 'true' : 'false')
+    if (hostId) formData.append('hostId', hostId)
     return apiClient.post(`/api/container/${id}/update`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
@@ -125,51 +135,52 @@ export const containerAPI = {
   deleteBackup: (filename) => apiClient.delete(`/api/container/backups?filename=${encodeURIComponent(filename)}`),
   backupToCompose: () => apiClient.get('/api/container/backup2compose'),
   // 阶段7：Portainer 风格容器运维
-  pauseContainer: (id) => apiClient.post(`/api/container/${id}/pause`),
-  unpauseContainer: (id) => apiClient.post(`/api/container/${id}/unpause`),
-  killContainer: (id) => apiClient.post(`/api/container/${id}/kill`),
-  removeContainer: (id, force = false, removeVolumes = false) =>
-    apiClient.delete(`/api/container/${id}?force=${force}&removeVolumes=${removeVolumes}`),
-  inspectContainer: (id) => apiClient.get(`/api/container/${id}/inspect`),
-  getContainerLogs: (id, { tail = 200, timestamps = false, since = '' } = {}) =>
-    apiClient.get(`/api/container/${id}/logs?tail=${tail}&timestamps=${timestamps}&since=${encodeURIComponent(since)}`),
-  execContainer: (id, cmd, workDir = '', user = '') =>
-    apiClient.post(`/api/container/${id}/exec`, { cmd, workDir, user }),
-  topContainer: (id) => apiClient.get(`/api/container/${id}/top`),
-  editContainer: (id, spec) => apiClient.put(`/api/container/${id}/edit`, spec),
+  pauseContainer: (id, hostId) => apiClient.post(`/api/container/${id}/pause${hostQ(hostId)}`),
+  unpauseContainer: (id, hostId) => apiClient.post(`/api/container/${id}/unpause${hostQ(hostId)}`),
+  killContainer: (id, hostId) => apiClient.post(`/api/container/${id}/kill${hostQ(hostId)}`),
+  removeContainer: (id, force = false, removeVolumes = false, hostId) =>
+    apiClient.delete(`/api/container/${id}?force=${force}&removeVolumes=${removeVolumes}${hostQ(hostId, '&')}`),
+  inspectContainer: (id, hostId) => apiClient.get(`/api/container/${id}/inspect${hostQ(hostId)}`),
+  getContainerLogs: (id, { tail = 200, timestamps = false, since = '' } = {}, hostId) =>
+    apiClient.get(`/api/container/${id}/logs?tail=${tail}&timestamps=${timestamps}&since=${encodeURIComponent(since)}${hostQ(hostId, '&')}`),
+  execContainer: (id, cmd, workDir = '', user = '', hostId) =>
+    apiClient.post(`/api/container/${id}/exec`, { cmd, workDir, user, hostId }),
+  topContainer: (id, hostId) => apiClient.get(`/api/container/${id}/top${hostQ(hostId)}`),
+  editContainer: (id, spec, hostId) => apiClient.put(`/api/container/${id}/edit`, { ...spec, hostId }),
 }
 
 // 容器文件管理 API（后端已统一做防路径穿越校验）
 export const filesAPI = {
   // 列目录
-  list: (id, path = '/') =>
-    apiClient.get(`/api/container/${id}/files?path=${encodeURIComponent(path)}`),
+  list: (id, path = '/', hostId) =>
+    apiClient.get(`/api/container/${id}/files?path=${encodeURIComponent(path)}${hostQ(hostId, '&')}`),
   // 读取文本内容（预览/编辑）
-  read: (id, path) =>
-    apiClient.get(`/api/container/${id}/files/read?path=${encodeURIComponent(path)}`),
+  read: (id, path, hostId) =>
+    apiClient.get(`/api/container/${id}/files/read?path=${encodeURIComponent(path)}${hostQ(hostId, '&')}`),
   // 保存文本内容
-  write: (id, path, content) =>
-    apiClient.post(`/api/container/${id}/files/write`, { path, content }),
+  write: (id, path, content, hostId) =>
+    apiClient.post(`/api/container/${id}/files/write`, { path, content, hostId }),
   // 新建目录
-  mkdir: (id, path, name) =>
-    apiClient.post(`/api/container/${id}/files/mkdir`, { path, name }),
+  mkdir: (id, path, name, hostId) =>
+    apiClient.post(`/api/container/${id}/files/mkdir`, { path, name, hostId }),
   // 删除文件/目录
-  remove: (id, path) =>
-    apiClient.post(`/api/container/${id}/files/delete`, { path }),
+  remove: (id, path, hostId) =>
+    apiClient.post(`/api/container/${id}/files/delete`, { path, hostId }),
   // 重命名/移动
-  rename: (id, src, dst) =>
-    apiClient.post(`/api/container/${id}/files/rename`, { src, dst }),
+  rename: (id, src, dst, hostId) =>
+    apiClient.post(`/api/container/${id}/files/rename`, { src, dst, hostId }),
   // 下载文件（返回 blob）
-  download: (id, path) =>
-    apiClient.get(`/api/container/${id}/files/download?path=${encodeURIComponent(path)}`, {
+  download: (id, path, hostId) =>
+    apiClient.get(`/api/container/${id}/files/download?path=${encodeURIComponent(path)}${hostQ(hostId, '&')}`, {
       responseType: 'blob',
     }),
   // 上传文件到目录
-  upload: (id, dir, file, onUploadProgress) => {
+  upload: (id, dir, file, onUploadProgress, hostId) => {
     const fd = new FormData()
     fd.append('path', dir)
     fd.append('file', file)
-    return apiClient.post(`/api/container/${id}/files/upload`, fd, {
+    if (hostId) fd.append('hostId', hostId)
+    return apiClient.post(`/api/container/${id}/files/upload${hostQ(hostId)}`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000, // 上传大文件放宽超时
       onUploadProgress,
@@ -181,9 +192,11 @@ export const filesAPI = {
 export const imageAPI = {
   getImages: () => apiClient.get('/api/images'),
   getIcons: () => apiClient.get('/api/icons'),
-  deleteImage: (id, force = false) => apiClient.delete(`/api/image/${id}?force=${force}`),
-  // 异步批量清理镜像：提交 ids 列表，返回 taskID
-  pruneImages: (ids, force = false) => apiClient.post('/api/images/prune', { ids, force }),
+  // 删除镜像：按 hostId 路由到对应主机（空表示本地）
+  deleteImage: (id, force = false, hostId = '') =>
+    apiClient.delete(`/api/image/${id}?force=${force}${hostId ? `&hostId=${encodeURIComponent(hostId)}` : ''}`),
+  // 异步批量清理镜像：提交 ids 列表，返回 taskID；hostId 指定目标主机
+  pruneImages: (ids, force = false, hostId = '') => apiClient.post('/api/images/prune', { ids, force, hostId }),
   // 通过 URL 绑定图标到镜像名（无需上传图片）
   setIconUrl: (imageName, url) => apiClient.post('/api/icons/url', { imageName, url }),
   // 自动抓取站点 favicon 并下载持久化到 /data/images，url 为容器访问地址
@@ -240,6 +253,8 @@ export const composeAPI = {
   saveFile: (id, filename, content) =>
     apiClient.put(`/api/compose/projects/${id}/files/${encodeURIComponent(filename)}`, { content }),
   validate: (content) => apiClient.post('/api/compose/validate', { content }),
+  // 从内容创建并部署一个新 Compose 项目（写入工作目录后 up），返回 taskID
+  create: (payload) => apiClient.post('/api/compose/create', payload),
   action: (id, action, confirmWarnings = false) =>
     apiClient.post(`/api/compose/projects/${id}/action`, { action, confirmWarnings }),
   // 读取/保存 Compose 扫描配置（扫描目录、深度等）
@@ -252,6 +267,28 @@ export const composeAPI = {
 // 阶段8：favicon 抓取API（按容器暴露端口解析站点图标）
 export const faviconAPI = {
   resolve: (url) => apiClient.get(`/api/favicon/resolve?url=${encodeURIComponent(url)}`),
+}
+
+// 宿主机路径映射API（仅配置管理 + 路径解析，与后端 /api/hostpath 接口对齐）
+export const hostPathAPI = {
+  // 获取映射配置（含自动推导预览）
+  getConfig: () => apiClient.get('/api/hostpath/config'),
+  // 保存映射配置（enabled / mode / mappings）
+  saveConfig: (config) => apiClient.post('/api/hostpath/config', config),
+  // 将容器内路径解析为宿主机路径并校验可访问性
+  resolve: (containerPath) => apiClient.post('/api/hostpath/resolve', { containerPath }),
+}
+
+// 多 Docker 主机管理 API（本地主机 id 恒为 "local"，不可删除、地址不可改）
+export const dockerHostAPI = {
+  // 列出全部主机及在线状态
+  list: () => apiClient.get('/api/docker/hosts'),
+  // 新建或更新主机（本地仅可改名）
+  save: (host) => apiClient.post('/api/docker/hosts', host),
+  // 删除远程主机
+  remove: (id) => apiClient.delete(`/api/docker/hosts/${id}`),
+  // 测试指定主机连通性
+  ping: (id) => apiClient.post(`/api/docker/hosts/${id}/ping`),
 }
 
 // GitHub API - 用于检查前端更新

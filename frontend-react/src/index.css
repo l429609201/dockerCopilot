@@ -116,4 +116,21 @@
         rgba(255, 255, 255, 0.6),
         transparent);
   }
+
+  /* Toast 卡片入场动画：从顶部轻微下滑并淡入 */
+  @keyframes toast-in {
+    0% {
+      opacity: 0;
+      transform: translateY(-12px) scale(0.98);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-toast-in {
+    animation: toast-in 0.22s ease-out;
+  }
 }

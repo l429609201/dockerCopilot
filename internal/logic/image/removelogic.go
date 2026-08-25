@@ -31,7 +31,8 @@ func (l *RemoveLogic) Remove(req *types.RemoveImageReq) (resp *types.Resp, err e
 	if strings.HasPrefix(imageId, "sha256:") {
 		imageId = strings.TrimPrefix(imageId, "sha256:")
 	}
-	err = utiles.RemoveImage(l.svcCtx, req.Id, req.Force)
+	// 按 hostId 路由到对应主机删除镜像（空表示本地）
+	err = utiles.RemoveImageOnHost(l.svcCtx, req.HostID, req.Id, req.Force)
 	if err != nil {
 		resp.Code = 409
 		resp.Msg = err.Error()

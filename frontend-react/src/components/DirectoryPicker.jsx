@@ -11,24 +11,35 @@ export function DirectoryPicker({ initialPath = '', onSelect, onClose }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // 加载指定目录的子目录列表
-  const load = useCallback(async (path) => {
+  // 加载指定目录的子目录列表。
+  // 若指定路径不可访问（如宿主机真实路径在 DC 容器内不存在），自动回退到根目录。
+  const load = useCallback(async (path, allowFallback = false) => {
     setLoading(true)
     setError('')
     try {
       const r = await composeAPI.browse(path || '')
       const d = r.data?.data || {}
+      // 后端 Browse 返回 code != 200 时表示路径不可访问
+      if (r.data?.code !== 200 && allowFallback && path) {
+        // 首次加载 initialPath 不可访问时，回退到根目录浏览
+        return load('', false)
+      }
       setCurrent(d.path || '')
       setParent(d.parent || '')
       setDirs(Array.isArray(d.dirs) ? d.dirs : [])
     } catch (e) {
+      if (allowFallback && path) {
+        // 网络/解析异常也回退到根目录
+        return load('', false)
+      }
       setError('读取目录失败：' + (e.response?.data?.msg || e.message))
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { load(initialPath) }, [load, initialPath])
+  // 首次加载使用 allowFallback=true：initialPath 不可访问时自动回退根目录
+  useEffect(() => { load(initialPath, true) }, [load, initialPath])
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">

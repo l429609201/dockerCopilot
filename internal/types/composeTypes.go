@@ -39,6 +39,15 @@ type ComposeBrowseReq struct {
 	Path string `form:"path,optional"`
 }
 
+// ComposeCreateReq 从内容创建并部署一个新的 Compose 项目。
+// WorkingDir 必须位于已配置的扫描根目录(scanPaths)之内，否则拒绝。
+type ComposeCreateReq struct {
+	WorkingDir      string `json:"workingDir"`                // 项目工作目录（绝对路径，须在 scanPaths 内）
+	Filename        string `json:"filename,optional"`         // compose 文件名，默认 docker-compose.yml
+	Content         string `json:"content"`                   // compose 文件内容
+	ConfirmWarnings bool   `json:"confirmWarnings,optional"`  // 为 true 表示已确认高风险配置
+}
+
 // ComposeConfigReq 保存 Compose 扫描配置（前端提交，写入持久化 AppConfig）。
 // 所有字段可选：ScanPaths 为项目扫描根目录列表；其余为扫描/执行参数。
 type ComposeConfigReq struct {

@@ -10,6 +10,14 @@ import (
 )
 
 // CancelProgressHandler 取消指定任务。
+// CancelProgressHandler 取消任务
+// @Summary 取消任务
+// @Tags 进度查询
+// @Produce json
+// @Param taskid path string true "任务ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /progress/{taskid}/cancel [post]
 func CancelProgressHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.GetProgressReq

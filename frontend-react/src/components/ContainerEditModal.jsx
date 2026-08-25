@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, Save, AlertTriangle } from 'lucide-react'
-import { containerAPI } from '../api/client.js'
+import { X, Plus, Trash2, Save, AlertTriangle, FolderSearch } from 'lucide-react'
+import { containerAPI, hostPathAPI } from '../api/client.js'
+import { DirectoryPicker } from './DirectoryPicker.jsx'
+import { ContainerPathPicker } from './ContainerPathPicker.jsx'
+import { useHostPathResolve } from '../hooks/useHostPathResolve.jsx'
 
 // Tab 定义：常规 / 网络 / 挂载 / 环境变量 / 资源 / 标签&命令
 const TABS = [
@@ -19,6 +22,33 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [tab, setTab] = useState('general')
+  // 路径选择器状态：{ type: 'host'|'container', index } 表示正在为哪一行的哪个字段选路径
+  const [picker, setPicker] = useState(null)
+  // 挂载路径转换提示：{ index, type: 'success'|'error', text }
+  const [mountHint, setMountHint] = useState(null)
+  // 容器是否运行中（决定容器内路径浏览是否可用，exec 需容器运行）
+  const running = container.status === 'running'
+  // 是否本地 Docker 主机（hostId 空或 'local' 视为本地）。仅本地容器需把 DC 容器内挂载源 resolve 成宿主机真实路径
+  const isLocalHost = !container.hostId || container.hostId === 'local'
+  const { available: resolveAvailable, resolve: resolveHostPath } = useHostPathResolve()
+
+  // 宿主机目录选择回调：DirectoryPicker 选出的是 DC 容器内可见路径，
+  // 需经后端映射转换为宿主机真实路径后写入 source；转换失败则提示并保留原始选择值。
+  const handleHostPathSelect = async (index, pickedPath) => {
+    bindOps.update(index, 'source', pickedPath)
+    try {
+      const resp = await hostPathAPI.resolve(pickedPath)
+      const data = resp.data
+      if (data?.code === 200 && data.data?.hostPath) {
+        bindOps.update(index, 'source', data.data.hostPath)
+        setMountHint({ index, type: 'success', text: `已转换为宿主机路径：${data.data.hostPath}` })
+      } else {
+        setMountHint({ index, type: 'error', text: (data?.msg || '无法转换为宿主机路径，请在「项目」页配置宿主机路径映射') })
+      }
+    } catch (e) {
+      setMountHint({ index, type: 'error', text: '路径转换失败：' + (e.response?.data?.msg || e.message) })
+    }
+  }
   // 表单状态（覆盖 6 个 Tab 的所有可编辑字段）
   const [form, setForm] = useState({
     image: '',
@@ -42,7 +72,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
     (async () => {
       setLoading(true)
       try {
-        const r = await containerAPI.inspectContainer(container.ID)
+        const r = await containerAPI.inspectContainer(container.ID, container.hostId || container.HostID)
         const cfg = r.data?.data || {}
         const hc = cfg.HostConfig || {}
         const cc = cfg.Config || {}
@@ -58,11 +88,22 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           const [port, proto] = containerPort.split('/')
           ports.push({ host: hostBindings[0].HostPort || '', container: port, proto: proto || 'tcp' })
         }
-        // 挂载（从 HostConfig.Binds 解析 "source:target:mode"）
-        const binds = (hc.Binds || []).map((b) => {
-          const segs = b.split(':')
-          return { source: segs[0] || '', target: segs[1] || '', mode: segs[2] || 'rw' }
-        })
+        // 挂载：优先从 Mounts 数组解析（新格式），回退到 HostConfig.Binds（旧格式）
+        let binds = []
+        if (cfg.Mounts && cfg.Mounts.length > 0) {
+          // 新格式：Mounts 数组（Docker API v1.20+）
+          binds = cfg.Mounts.map((m) => ({
+            source: m.Source || '',
+            target: m.Destination || m.Target || '',
+            mode: m.RW === false ? 'ro' : 'rw',
+          }))
+        } else if (hc.Binds && hc.Binds.length > 0) {
+          // 旧格式：Binds 字符串数组（"source:target:mode"）
+          binds = hc.Binds.map((b) => {
+            const segs = b.split(':')
+            return { source: segs[0] || '', target: segs[1] || '', mode: segs[2] || 'rw' }
+          })
+        }
         // 标签（过滤 Docker/Compose 内部标签，避免误改）
         const labels = Object.entries(cc.Labels || {})
           .filter(([k]) => !k.startsWith('com.docker.') && !k.startsWith('org.opencontainers.'))
@@ -84,13 +125,26 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           memoryMB,
           cpus,
         })
+
+        // Bug 修复：本地容器由 DC 管理时，inspect 的挂载源可能是 DC 容器内路径（如 /compose/xxx），
+        // 而非宿主机真实路径（如 /xxx/xxx）。此处对本地容器的 source 逐条 resolve 转成宿主机真实路径再显示。
+        // 远程容器的 source 本就是远程宿主机真实路径，不做转换。
+        if (isLocalHost && resolveAvailable && binds.length > 0) {
+          const resolved = await Promise.all(binds.map(async (b) => {
+            if (!b.source || !b.source.startsWith('/')) return b
+            const { hostPath } = await resolveHostPath(b.source)
+            return hostPath ? { ...b, source: hostPath } : b
+          }))
+          // 仅当确有变化时更新，避免无谓渲染
+          setForm((f) => ({ ...f, binds: resolved }))
+        }
       } catch (e) {
         setError('加载容器配置失败：' + (e.response?.data?.msg || e.message))
       } finally {
         setLoading(false)
       }
     })()
-  }, [container.ID])
+  }, [container.ID, isLocalHost, resolveAvailable, resolveHostPath])
 
   // 提交编辑（转为后端 EditSpec 格式）
   const submit = async () => {
@@ -131,7 +185,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         nanoCpus,
         confirmWarnings: true,
       }
-      await containerAPI.editContainer(container.ID, spec)
+      await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
       alert('编辑任务已提交，容器将重建')
       onSuccess?.()
       onClose()
@@ -261,14 +315,32 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                   render={(b, i) => (
                     <>
                       <input placeholder="宿主机路径" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
+                      <button type="button" onClick={() => setPicker({ type: 'host', index: i })}
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0" title="浏览宿主机目录">
+                        <FolderSearch className="h-4 w-4" />
+                      </button>
                       <span className="text-gray-500">:</span>
                       <input placeholder="容器内路径" value={b.target} onChange={(e) => bindOps.update(i, 'target', e.target.value)} className="input flex-1" />
+                      <button type="button" onClick={() => running && setPicker({ type: 'container', index: i })}
+                        disabled={!running}
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={running ? '浏览容器内目录' : '容器需运行中才能浏览'}>
+                        <FolderSearch className="h-4 w-4" />
+                      </button>
                       <select value={b.mode} onChange={(e) => bindOps.update(i, 'mode', e.target.value)} className="input w-20">
                         <option value="rw">读写</option>
                         <option value="ro">只读</option>
                       </select>
                     </>
                   )} />
+                {/* 路径转换结果提示：成功显示转换后的宿主机路径，失败引导去配置映射 */}
+                {mountHint && (
+                  <p className={`text-xs mt-2 ${mountHint.type === 'success'
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-amber-600 dark:text-amber-400'}`}>
+                    第 {mountHint.index + 1} 行：{mountHint.text}
+                  </p>
+                )}
               </Field>
             </>
           )}
@@ -342,6 +414,25 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           </button>
         </div>
       </div>
+
+      {/* 宿主机路径选择器：浏览 DC 自身挂载的目录，选中后经后端转换为宿主机真实路径 */}
+      {picker?.type === 'host' && (
+        <DirectoryPicker
+          initialPath={form.binds[picker.index]?.source || ''}
+          onSelect={(p) => handleHostPathSelect(picker.index, p)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      {/* 容器内路径选择器：浏览目标容器文件系统（需容器运行中） */}
+      {picker?.type === 'container' && (
+        <ContainerPathPicker
+          containerId={container.ID}
+          hostId={container.hostId || container.HostID}
+          initialPath={form.binds[picker.index]?.target || '/'}
+          onSelect={(p) => bindOps.update(picker.index, 'target', p)}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </div>
   )
 }

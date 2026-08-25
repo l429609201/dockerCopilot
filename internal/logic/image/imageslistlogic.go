@@ -24,6 +24,9 @@ type Info struct {
 	Size       string `json:"size"`
 	InUsed     bool   `json:"inUsed"`
 	CreateTime string `json:"createTime"`
+	// HostID / HostName 标记镜像所属 Docker 主机（多 Docker 管理）。
+	HostID   string `json:"hostId,omitempty"`
+	HostName string `json:"hostName,omitempty"`
 }
 
 func NewImagesListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ImagesListLogic {
@@ -36,7 +39,8 @@ func NewImagesListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Images
 
 func (l *ImagesListLogic) ImagesList() (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	list, err := utiles.GetImagesList(l.svcCtx)
+	// 按主机分别聚合所有已启用主机的镜像（不去重），使远程主机镜像也能展示
+	list, err := utiles.GetAllImagesListPerHost(l.svcCtx)
 	if err != nil {
 		resp.Code = 500
 		resp.Msg = err.Error()
@@ -53,6 +57,8 @@ func (l *ImagesListLogic) ImagesList() (resp *types.Resp, err error) {
 		imageInfo.Tag = v.ImageTag
 		imageInfo.Size = v.SizeFormat
 		imageInfo.InUsed = v.InUsed
+		imageInfo.HostID = v.HostID
+		imageInfo.HostName = v.HostName
 		t := time.Unix(v.Created, 0)
 		imageInfo.CreateTime = t.Format("2006-01-02 15:04:05")
 		imageInfoList = append(imageInfoList, imageInfo)

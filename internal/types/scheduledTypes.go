@@ -12,6 +12,10 @@ type ScheduledRuleReq struct {
 	Enabled          bool     `json:"enabled,optional"`
 	Cron             string   `json:"cron,optional"` // 该规则独立的定时表达式（五段式cron或简化写法daily/hourly/interval）
 	ContainerNames   []string `json:"containerNames,optional"`
+	// ContainerTargets 精确到「主机+容器名」的更新目标（update 类型使用）。
+	ContainerTargets []ContainerTargetReq `json:"containerTargets,optional"`
+	// HostIDs 目标主机列表（prune/backup 类型使用）。
+	HostIDs          []string `json:"hostIds,optional"`
 	OnlyWhenUpdate   bool     `json:"onlyWhenUpdate,optional"`
 	SkipInvalidTag   bool     `json:"skipInvalidTag,optional"`
 	RegistryID       string   `json:"registryId,optional"`
@@ -19,6 +23,12 @@ type ScheduledRuleReq struct {
 	NotifyOnStart    bool     `json:"notifyOnStart,optional"`
 	NotifyOnDone     bool     `json:"notifyOnDone,optional"`
 	NotifyOnError    bool     `json:"notifyOnError,optional"`
+}
+
+// ContainerTargetReq 精确到「主机+容器名」的更新目标（前端提交）。
+type ContainerTargetReq struct {
+	HostID string `json:"hostId,optional"` // 目标主机ID，空表示本地
+	Name   string `json:"name"`            // 容器名
 }
 
 // ScheduledRuleIDReq 按 ID 操作规则的请求（删除、立即执行）。

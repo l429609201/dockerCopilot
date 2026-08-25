@@ -10,6 +10,13 @@ import (
 )
 
 // ListHandler 返回所有定时更新规则。
+// ListHandler 获取定时规则列表
+// @Summary 获取定时规则列表
+// @Tags 定时任务
+// @Produce json
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /schedules [get]
 func ListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		l := schedule.NewScheduleLogic(r.Context(), svcCtx)
@@ -19,6 +26,15 @@ func ListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // SaveHandler 新建或更新定时更新规则。
+// SaveHandler 创建/更新定时规则
+// @Summary 创建或更新定时规则
+// @Tags 定时任务
+// @Accept json
+// @Produce json
+// @Param body body types.ScheduledRuleReq true "规则配置"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /schedules [post]
 func SaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ScheduledRuleReq
@@ -33,6 +49,14 @@ func SaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // DeleteHandler 删除定时更新规则。
+// DeleteHandler 删除定时规则
+// @Summary 删除定时规则
+// @Tags 定时任务
+// @Produce json
+// @Param id path string true "规则ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /schedules/{id} [delete]
 func DeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ScheduledRuleIDReq
@@ -47,6 +71,14 @@ func DeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 }
 
 // RunNowHandler 立即执行指定定时更新规则。
+// RunNowHandler 立即执行定时规则
+// @Summary 立即执行定时规则
+// @Tags 定时任务
+// @Produce json
+// @Param id path string true "规则ID"
+// @Success 200 {object} types.Resp
+// @Security BearerAuth
+// @Router /schedules/{id}/run [post]
 func RunNowHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ScheduledRuleIDReq

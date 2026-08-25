@@ -83,6 +83,20 @@ func ActionHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// CreateHandler 从内容创建并部署一个新的 Compose 项目。
+func CreateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeCreateReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.Create(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
 // BrowseHandler 浏览 DC 自身文件系统的目录（供前端目录选择器使用，只读）。
 func BrowseHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

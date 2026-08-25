@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Settings2, Plus, Trash2, Save, FolderOpen, FolderSearch, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { Settings2, Plus, Trash2, Save, FolderOpen, FolderSearch, SlidersHorizontal, Loader2 } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
 
@@ -12,7 +12,6 @@ export function ComposeConfigCard({ onSaved }) {
   const [cmdTimeout, setCmdTimeout] = useState(300)
   const [allowHighRisk, setAllowHighRisk] = useState(false)
   const [configured, setConfigured] = useState(false)
-  const [advanced, setAdvanced] = useState(false) // 高级参数折叠
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null) // { ok, text }
@@ -74,7 +73,7 @@ export function ComposeConfigCard({ onSaved }) {
   const hasValidPath = paths.some((p) => p.trim())
 
   return (
-    <div className="card">
+    <div className="card h-full flex flex-col">
       {/* 卡片标题 */}
       <div className="flex items-center gap-2 mb-3">
         <Settings2 className="h-5 w-5 text-primary-600" />
@@ -128,39 +127,36 @@ export function ComposeConfigCard({ onSaved }) {
         <Plus className="h-4 w-4" /> 添加目录
       </button>
 
-      {/* 高级参数折叠区 */}
-      <button onClick={() => setAdvanced((v) => !v)}
-        className="mt-4 flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-        {advanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+      {/* 高级参数：常态化展示，不折叠 */}
+      <div className="mt-4 flex items-center gap-1.5 text-sm font-medium text-gray-600 dark:text-gray-400">
+        <SlidersHorizontal className="h-4 w-4" />
         高级参数
-      </button>
-      {advanced && (
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">扫描深度</label>
-            <input type="number" min="1" value={maxDepth}
-              onChange={(e) => setMaxDepth(e.target.value)} className="input" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">文件大小上限(MB)</label>
-            <input type="number" min="1" value={maxFileSizeMB}
-              onChange={(e) => setMaxFileSizeMB(e.target.value)} className="input" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">命令超时(秒)</label>
-            <input type="number" min="1" value={cmdTimeout}
-              onChange={(e) => setCmdTimeout(e.target.value)} className="input" />
-          </div>
-          <label className="sm:col-span-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <input type="checkbox" checked={allowHighRisk}
-              onChange={(e) => setAllowHighRisk(e.target.checked)} className="rounded" />
-            允许部署高风险配置（privileged 等），启用后 up 操作不再拦截高风险警告
-          </label>
+      </div>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">扫描深度</label>
+          <input type="number" min="1" value={maxDepth}
+            onChange={(e) => setMaxDepth(e.target.value)} className="input" />
         </div>
-      )}
+        <div>
+          <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">文件大小上限(MB)</label>
+          <input type="number" min="1" value={maxFileSizeMB}
+            onChange={(e) => setMaxFileSizeMB(e.target.value)} className="input" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1 text-gray-600 dark:text-gray-400">命令超时(秒)</label>
+          <input type="number" min="1" value={cmdTimeout}
+            onChange={(e) => setCmdTimeout(e.target.value)} className="input" />
+        </div>
+        <label className="sm:col-span-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <input type="checkbox" checked={allowHighRisk}
+            onChange={(e) => setAllowHighRisk(e.target.checked)} className="rounded" />
+          允许部署高风险配置（privileged 等），启用后 up 操作不再拦截高风险警告
+        </label>
+      </div>
 
-      {/* 操作区 */}
-      <div className="flex flex-wrap items-center gap-3 pt-4 mt-3 border-t border-gray-100 dark:border-gray-700">
+      {/* 操作区：mt-auto 顶到卡片底部，保证等高时保存按钮贴底对齐 */}
+      <div className="flex flex-wrap items-center gap-3 pt-4 mt-auto border-t border-gray-100 dark:border-gray-700">
         <button onClick={save} disabled={saving || loading}
           className="flex items-center gap-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
