@@ -15,7 +15,8 @@ const muteSettingsPageSize = 10
 // sendMuteSettings 推送"更新通知设置"面板：容器双列排布、每页 10 个、支持上下页翻页。
 // 已屏蔽显示 🔕、未屏蔽显示 🔔，点击就地切换（编辑原消息刷新，保持当前页）。
 func (b *Bot) sendMuteSettings(chatID int64, page int, messageID int64) {
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器（通知屏蔽设置覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return

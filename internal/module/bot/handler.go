@@ -816,7 +816,8 @@ const imagesPageSize = 15
 // 按镜像大小倒序排列，大镜像在前方便用户识别存储占用大户。
 // page 从 0 开始；messageID > 0 时编辑原消息（翻页），否则发送新消息。
 func (b *Bot) replyImageList(chatID int64, messageID int64, page int) {
-	list, err := utiles.GetImagesList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的镜像（不去重，各主机各列一条），反映真实全局镜像状态
+	list, err := utiles.GetAllImagesListPerHost(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取镜像列表失败："+err.Error())
 		return
@@ -885,14 +886,15 @@ func (b *Bot) replyImageList(chatID int64, messageID int64, page int) {
 // 末尾统一附带「返回主菜单」按钮，保证菜单导航闭环。
 func (b *Bot) replySystemOverview(chatID int64, messageID int64) {
 	// 获取容器列表
-	containers, errC := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器，使系统概览反映全部实例（而非仅本地）
+	containers, errC := utiles.GetAllContainers(b.svcCtx)
 	if errC != nil {
 		b.reply(chatID, "获取容器信息失败："+errC.Error())
 		return
 	}
 
-	// 获取镜像列表
-	images, errI := utiles.GetImagesList(b.svcCtx)
+	// 镜像统计用「不去重」的逐主机列表：磁盘占用需按各主机各自累加才真实
+	images, errI := utiles.GetAllImagesListPerHost(b.svcCtx)
 	if errI != nil {
 		b.reply(chatID, "获取镜像信息失败："+errI.Error())
 		return
@@ -962,8 +964,8 @@ func (b *Bot) replySystemOverview(chatID int64, messageID int64) {
 func (b *Bot) checkAllUpdates(chatID int64) {
 	b.reply(chatID, "🔍 正在检查所有容器的镜像更新，请稍候...")
 
-	// 获取所有容器
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器，检查全局更新状态（而非仅本地）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return
@@ -986,8 +988,8 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 	// 等待检查完成（最多30秒）
 	time.Sleep(2 * time.Second) // 给予初始检查时间
 
-	// 重新获取容器列表并标记更新状态
-	containers, _ = utiles.GetContainerList(b.svcCtx)
+	// 重新获取全主机容器列表并标记更新状态
+	containers, _ = utiles.GetAllContainers(b.svcCtx)
 	containers = utiles.CheckImageUpdate(b.svcCtx, containers)
 
 	// 统计结果
@@ -1035,8 +1037,8 @@ func (b *Bot) checkAllUpdates(chatID int64) {
 
 // updateAllContainers 批量更新所有有可用更新的容器（高风险操作，需二次确认）。
 func (b *Bot) updateAllContainers(chatID int64) {
-	// 获取所有容器并检查更新
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器并检查更新（覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return
@@ -1088,8 +1090,8 @@ func (b *Bot) executeBatchUpdate(chatID int64, messageID int64) {
 	backHomeKb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
 		{Text: "⬅ 返回主菜单", CallbackData: "menu|home"},
 	}}}
-	// 获取所有需要更新的容器
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器（批量更新覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.editOrReplyKeyboard(chatID, messageID, "❌ 获取容器列表失败："+escapeHTML(err.Error()), backHomeKb)
 		return
@@ -1123,7 +1125,8 @@ func (b *Bot) executeBatchUpdate(chatID int64, messageID int64) {
 			name = c.ID[:12] // 使用短ID作为备选
 		}
 
-		taskID, err := b.ops.Update(c.ID, name, c.Image)
+		// 按容器所属 Docker 主机路由更新（全主机批量更新，非仅本地）
+		taskID, err := containerops.NewForHost(b.svcCtx, c.HostID).Update(c.ID, name, c.Image)
 		if err != nil {
 			failedList = append(failedList, fmt.Sprintf("- %s: %s", name, err.Error()))
 			continue
@@ -1409,8 +1412,8 @@ const updateCenterPageSize = 20
 // replyUpdateCenter 更新中心：分页显示所有有可用更新的容器列表，提供一键检查和批量更新。
 // page 从 0 开始（仅对待更新列表分页）；messageID > 0 时编辑原消息。
 func (b *Bot) replyUpdateCenter(chatID int64, messageID int64, page int) {
-	// 获取所有容器并检查更新状态
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器并检查更新状态（更新中心覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.editOrReplyKeyboard(chatID, messageID, "❌ 获取容器列表失败："+escapeHTML(err.Error()),
 			&telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
@@ -1590,7 +1593,8 @@ func (b *Bot) replySettingsCenter(chatID int64, messageID int64) {
 
 // replyContainerListStopped 显示已停止的容器列表（过滤掉运行中的容器）。
 func (b *Bot) replyContainerListStopped(chatID int64, page int, messageID int64) {
-	list, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器（已停容器列表覆盖远程主机）
+	list, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "获取容器列表失败："+err.Error())
 		return
@@ -2193,7 +2197,8 @@ func (b *Bot) sendUpdateNotificationToChatWithPage(chatID int64, containers []Up
 // confirmMuteAll 确认全部屏蔽更新通知（二次确认）。
 func (b *Bot) confirmMuteAll(chatID int64, messageID int64) {
 	// 获取所有有更新的容器
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器（屏蔽列表覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return
@@ -2252,7 +2257,8 @@ func (b *Bot) confirmMuteAll(chatID int64, messageID int64) {
 // executeMuteAll 执行全部屏蔽更新通知。
 func (b *Bot) executeMuteAll(chatID int64, messageID int64) {
 	// 获取所有有更新的容器
-	containers, err := utiles.GetContainerList(b.svcCtx)
+	// 汇总所有已启用 Docker 主机的容器（执行全部屏蔽覆盖远程主机）
+	containers, err := utiles.GetAllContainers(b.svcCtx)
 	if err != nil {
 		b.reply(chatID, "❌ 获取容器列表失败："+err.Error())
 		return

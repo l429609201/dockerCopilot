@@ -28,8 +28,8 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name, hostID string, messageID int
 		repo = curImage[:idx]
 	}
 
-	// 查找本地同名镜像的所有 tag
-	images, err := utiles.GetImagesList(b.svcCtx)
+	// 查找该容器所属主机上同名镜像的所有 tag（按主机路由，远程容器查远程镜像）
+	images, err := utiles.GetImagesListFromHost(b.svcCtx, hostID)
 	var rows [][]telegram.InlineKeyboardButton
 	if err == nil {
 		seen := map[string]bool{}
