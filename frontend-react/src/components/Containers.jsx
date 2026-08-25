@@ -1135,8 +1135,8 @@ export function Containers() {
                   )
                 }
                 return (
-                  <div key={container.id} className="group">
-                    {/* 容器卡片 - 简化设计，点击调起详情 */}
+                  <div key={container.id} className="group h-full">
+                    {/* 容器卡片 - 简化设计，点击调起详情。h-full+flex-col 让同排卡片等高、操作栏贴底对齐 */}
                     <div
                       onClick={(e) => {
                         // 如果启用批量模式，点击选择；否则打开详情
@@ -1148,7 +1148,7 @@ export function Containers() {
                         }
                       }}
                       className={cn(
-                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-5 cursor-pointer active:scale-98",
+                        "card relative overflow-hidden transition-all duration-200 hover:shadow-lg border rounded-2xl p-5 cursor-pointer active:scale-98 h-full flex flex-col",
                         isSelected
                           ? "border-primary-500 bg-primary-50 dark:bg-primary-900/20 shadow-md"
                           : "border-gray-200 dark:border-gray-700 hover:border-primary-300 dark:hover:border-primary-600"
@@ -1314,9 +1314,10 @@ export function Containers() {
                         </div>
                       )}
 
-                      {/* 操作按钮栏 - 底部 5 列网格排列（运行中共 10 个按钮，2 行） */}
+                      {/* 操作按钮栏 - 底部 5 列网格排列（运行中共 10 个按钮，2 行）。
+                          mt-auto 把按钮栏推到卡片底部，配合外层 h-full+flex-col 实现同排卡片操作栏贴底对齐 */}
                       {!isBatchMode && (
-                        <div className="grid grid-cols-5 gap-1.5 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="grid grid-cols-5 gap-1.5 mt-auto pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
                             <div className="col-span-5 flex flex-col gap-0.5 px-2 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800">
                               <div className="flex items-center justify-center gap-2 whitespace-nowrap">
@@ -2040,6 +2041,49 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               {inspectData?.NetworkSettings?.Networks && Object.entries(inspectData.NetworkSettings.Networks).map(([netName, net]) => (
                 <InfoRow key={netName} label={`网络 ${netName}`} value={net?.IPAddress || '—'} />
               ))}
+
+              {/* 端口映射：优先取 NetworkSettings.Ports（实际生效值），回退 HostConfig.PortBindings（配置值）。
+                  端口映射本质属于网络信息，故内聚在网络页展示，不单开分页。 */}
+              <div className="pt-2 border-t border-gray-100 dark:border-gray-700/50">
+                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">端口映射</div>
+                {(() => {
+                  // 归一化为 [{host, container, proto, hostIp}] 列表
+                  const ports = []
+                  const nsPorts = inspectData?.NetworkSettings?.Ports
+                  const pbPorts = inspectData?.HostConfig?.PortBindings
+                  if (nsPorts && Object.keys(nsPorts).length > 0) {
+                    for (const [cPort, bindings] of Object.entries(nsPorts)) {
+                      const [port, proto] = cPort.split('/')
+                      if (Array.isArray(bindings) && bindings.length > 0) {
+                        // 已映射：可能一个容器端口绑定多个宿主端口
+                        bindings.forEach((b) => ports.push({ host: b.HostPort || '', container: port, proto: proto || 'tcp', hostIp: b.HostIp || '' }))
+                      } else {
+                        // 仅暴露未映射（EXPOSE 但无 -p）
+                        ports.push({ host: '', container: port, proto: proto || 'tcp', hostIp: '' })
+                      }
+                    }
+                  } else if (pbPorts && Object.keys(pbPorts).length > 0) {
+                    for (const [cPort, bindings] of Object.entries(pbPorts)) {
+                      const [port, proto] = cPort.split('/')
+                      ;(bindings || []).forEach((b) => ports.push({ host: b.HostPort || '', container: port, proto: proto || 'tcp', hostIp: b.HostIp || '' }))
+                    }
+                  }
+                  if (ports.length === 0) {
+                    const isHost = String(inspectData?.HostConfig?.NetworkMode).toLowerCase() === 'host'
+                    return <p className="text-gray-500 text-sm">{isHost ? 'host 网络（与宿主共享端口）' : '无端口映射'}</p>
+                  }
+                  return (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ports.map((p, i) => (
+                        <span key={i} className="inline-flex items-center rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-1 text-xs font-mono"
+                          title={p.hostIp ? `${p.hostIp}:${p.host} → ${p.container}/${p.proto}` : undefined}>
+                          {p.host ? `${p.host} → ${p.container}/${p.proto}` : `${p.container}/${p.proto}（未映射）`}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
           )}
 
