@@ -11,6 +11,7 @@ import { Schedules } from './components/Schedules.jsx'
 import { Compose } from './components/Compose.jsx'
 import { Settings } from './components/Settings.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
+import { ToastProvider } from './hooks/useToast.jsx'
 import { TaskProvider } from './hooks/useTasks.jsx'
 import { TaskPanel } from './components/TaskPanel.jsx'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -205,9 +206,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <TaskProvider>
-          <AppContent />
-        </TaskProvider>
+        <ToastProvider>
+          <TaskProvider>
+            <AppContent />
+          </TaskProvider>
+        </ToastProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

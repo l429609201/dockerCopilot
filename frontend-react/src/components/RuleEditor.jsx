@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Search, Check, Clock, Server } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
+import { useToast } from '../hooks/useToast.jsx'
 
 // 按主机ID查主机名，找不到回退 ID
 function hostNameOf(hostList, hostId) {
@@ -36,6 +37,7 @@ function parseCronToVisual(cron) {
 
 // 定时规则编辑弹窗
 export function RuleEditor({ rule, registries, onCancel, onSave }) {
+  const toast = useToast() // 卡片式消息提示，替代原生 alert
   // 由规则已有 cron 反解析出可视化初值
   const initVisual = parseCronToVisual(rule.cron)
   const [form, setForm] = useState({
@@ -152,18 +154,18 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
 
   const submit = () => {
     if (!form.name) {
-      alert('规则名称必填')
+      toast.warning('规则名称必填')
       return
     }
     // 仅"自动更新"类型需要选择容器；清理/备份无需选容器
     if (form.type === 'update' && form.containerTargets.length === 0) {
-      alert('请至少选择一个容器')
+      toast.warning('请至少选择一个容器')
       return
     }
     // 校验定时表达式非空（高级模式手输可能清空）
     const finalCron = buildCron()
     if (!finalCron) {
-      alert('请设置该规则的执行时间（cron 不能为空）')
+      toast.warning('请设置该规则的执行时间（cron 不能为空）')
       return
     }
     // 同步 containerNames（取所选目标的容器名去重）以兼容后端历史字段

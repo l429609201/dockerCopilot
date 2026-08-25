@@ -85,7 +85,7 @@ export function HostPathMapperCard() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700 space-y-4">
+    <div className="h-full bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700 space-y-4">
       {/* 卡片标题 */}
       <div className="flex items-center gap-2">
         <FolderTree className="w-5 h-5 text-blue-500" />
