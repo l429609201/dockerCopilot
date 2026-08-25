@@ -9,6 +9,15 @@
 # 构建流程：
 #   prepare ──┬──> build-amd64 ──┬──> create-manifest（合并为单个多架构镜像）
 #             └──> build-arm64 ──┘
+#
+# 标签洁癖约定：
+#   两个构建 job 均以 push-by-digest 方式推送（只推 digest，不打任何 tag），
+#   manifest 阶段再用 digest 引用创建最终标签。因此仓库中永远不会出现
+#   :xxx-amd64 / :xxx-arm64 这类中间标签，只保留 :{版本号}、:latest、:test。
+#
+# 失败语义：
+#   main 分支要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
+#   不会把仅含 AMD64 的镜像伪装成多架构镜像发布出去。
 # =============================================================================
 
 name: docker-build-push
@@ -79,6 +88,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}  # 镜像 digest，供 manifest 合并使用
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -103,22 +114,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送 AMD64 镜像
+      # 按 digest 推送（push-by-digest），不打任何 tag，避免中间标签污染仓库。
+      # 同一份内容推送到两个 registry，digest 相同，故只需一个 digest 输出。
+      - name: 构建并按 digest 推送 AMD64 镜像
+        id: build
         uses: docker/build-push-action@v5.0.0
         with:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.DH_IMAGE }}:${{ needs.prepare.outputs.image_tag }}-amd64
-            ${{ steps.img.outputs.ghcr }}:${{ needs.prepare.outputs.image_tag }}-amd64
+          outputs: type=image,"name=${{ env.DH_IMAGE }},${{ steps.img.outputs.ghcr }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
 
   # ---------------------------------------------------------------------------
-  # Job 3: 构建 ARM64 镜像（仅 main 分支，使用 QEMU 模拟，与 AMD64 并行）
+  # Job 3: 构建 ARM64 镜像（仅 main 分支，与 AMD64 并行）
+  # Dockerfile 中前端与 Go 编译阶段固定在原生 amd64 上跑（--platform=$BUILDPLATFORM），
+  # Go 交叉编译出 arm64 二进制；QEMU 仅用于最后一层轻量运行时镜像。
   # ---------------------------------------------------------------------------
   build-arm64:
     name: 🔨 构建 ARM64
@@ -128,6 +141,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}  # 镜像 digest，供 manifest 合并使用
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -157,16 +172,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送 ARM64 镜像
+      # 按 digest 推送，不打 tag（同 AMD64）
+      - name: 构建并按 digest 推送 ARM64 镜像
+        id: build
         uses: docker/build-push-action@v5.0.0
         with:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/arm64
-          push: true
-          tags: |
-            ${{ env.DH_IMAGE }}:${{ needs.prepare.outputs.image_tag }}-arm64
-            ${{ steps.img.outputs.ghcr }}:${{ needs.prepare.outputs.image_tag }}-arm64
+          outputs: type=image,"name=${{ env.DH_IMAGE }},${{ steps.img.outputs.ghcr }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ needs.prepare.outputs.version }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
@@ -180,7 +194,9 @@ jobs:
   create-manifest:
     name: 📦 合并多架构 Manifest
     needs: [prepare, build-amd64, build-arm64]
-    # always() 确保 ARM 被跳过(test 分支)时仍执行；但要求 AMD64 成功
+    # always() 让 ARM 被跳过(test 分支)时仍能执行；
+    # 但 main 分支要求 ARM 必须成功——ARM 失败时不再静默降级为单架构发布，
+    # 具体判定在步骤内基于 build_arm 与 ARM digest 是否存在完成。
     if: always() && needs.build-amd64.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -200,32 +216,56 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 用 digest 引用创建 manifest。digest 由构建 job 输出，
+      # 镜像本身未打过 tag，因此仓库里只会出现最终标签(版本号 / latest / test)。
       - name: 创建并推送多架构 Manifest
         run: |
+          set -euo pipefail
           TAG="${{ needs.prepare.outputs.image_tag }}"
           DH="${{ env.DH_IMAGE }}"
           # GHCR 名转小写（owner 可能含大写）
           GHCR="$(echo '${{ env.GHCR_IMAGE }}' | tr '[:upper:]' '[:lower:]')"
           BUILD_ARM="${{ needs.prepare.outputs.build_arm }}"
           EXTRA_TAGS="${{ needs.prepare.outputs.extra_tags }}"
+          AMD_DIGEST="${{ needs.build-amd64.outputs.digest }}"
+          ARM_DIGEST="${{ needs.build-arm64.outputs.digest }}"
 
-          if [[ "$BUILD_ARM" == "true" && "${{ needs.build-arm64.result }}" == "success" ]]; then
-            echo "📦 合并双架构 manifest (AMD64 + ARM64)..."
-            docker buildx imagetools create -t ${DH}:${TAG} \
-              ${DH}:${TAG}-amd64 ${DH}:${TAG}-arm64
-            docker buildx imagetools create -t ${GHCR}:${TAG} \
-              ${GHCR}:${TAG}-amd64 ${GHCR}:${TAG}-arm64
-            # 追加额外标签(如 latest)
-            for EXTRA in $EXTRA_TAGS; do
-              echo "📦 追加 ${EXTRA} 标签..."
-              docker buildx imagetools create -t ${DH}:${EXTRA} \
-                ${DH}:${TAG}-amd64 ${DH}:${TAG}-arm64
-              docker buildx imagetools create -t ${GHCR}:${EXTRA} \
-                ${GHCR}:${TAG}-amd64 ${GHCR}:${TAG}-arm64
-            done
-          else
-            echo "📦 创建单架构 manifest (仅 AMD64)..."
-            docker buildx imagetools create -t ${DH}:${TAG} ${DH}:${TAG}-amd64
-            docker buildx imagetools create -t ${GHCR}:${TAG} ${GHCR}:${TAG}-amd64
+          # 校验 AMD64 digest 必须存在
+          if [ -z "$AMD_DIGEST" ]; then
+            echo "❌ AMD64 digest 为空，构建产物异常"
+            exit 1
           fi
-          echo "✅ Manifest 创建完成！"
+
+          # 组装参与合并的 digest 引用列表
+          if [ "$BUILD_ARM" = "true" ]; then
+            # main 分支：ARM64 必须成功，缺失则直接失败，绝不降级为单架构发布
+            if [ -z "$ARM_DIGEST" ]; then
+              echo "❌ 需要双架构但 ARM64 digest 为空，中止发布"
+              exit 1
+            fi
+            echo "📦 合并双架构 manifest (AMD64 + ARM64)"
+            DH_SRCS="${DH}@${AMD_DIGEST} ${DH}@${ARM_DIGEST}"
+            GHCR_SRCS="${GHCR}@${AMD_DIGEST} ${GHCR}@${ARM_DIGEST}"
+          else
+            # test 分支：设计上只构建 AMD64
+            echo "📦 创建单架构 manifest (仅 AMD64)"
+            DH_SRCS="${DH}@${AMD_DIGEST}"
+            GHCR_SRCS="${GHCR}@${AMD_DIGEST}"
+          fi
+
+          # 主标签 + 额外标签(如 latest)统一处理
+          for T in ${TAG} ${EXTRA_TAGS}; do
+            echo "🏷️  创建标签 ${T}"
+            docker buildx imagetools create -t ${DH}:${T} ${DH_SRCS}
+            docker buildx imagetools create -t ${GHCR}:${T} ${GHCR_SRCS}
+          done
+          echo "✅ Manifest 创建完成"
+
+      - name: 校验多架构 Manifest
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.image_tag }}"
+          DH="${{ env.DH_IMAGE }}"
+          echo "🔍 ${DH}:${TAG} 包含的架构："
+          docker buildx imagetools inspect ${DH}:${TAG} \
+            --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}}{{"\n"}}{{end}}'
