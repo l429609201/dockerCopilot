@@ -22,7 +22,8 @@ import {
   Plus,
   Trash2,
   Search,
-  Server
+  Server,
+  Bell
 } from 'lucide-react'
 import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -73,6 +74,8 @@ export function Containers() {
     setViewMode(mode)
     localStorage.setItem('dc_container_view', mode)
   }
+  // 更新检测进行中
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   // 通过 SSE 实时订阅容器资源监控（CPU/内存/流量），statsMap 以容器短ID为 key
   const { statsMap } = useContainerStats(true)
   // 容器ID可能是长ID，stats 用短ID，做个安全取值
@@ -406,6 +409,31 @@ export function Containers() {
         }
       },
     })
+  }
+
+  // 手动触发检测所有镜像更新（异步执行，立即返回）
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true)
+    try {
+      await imageAPI.checkUpdate()
+      setConfirmModal({
+        isOpen: true,
+        title: '更新检测',
+        message: '已触发更新检测，请稍后刷新容器列表查看结果',
+        type: 'info',
+        onConfirm: () => setConfirmModal({ isOpen: false })
+      })
+    } catch (error) {
+      setConfirmModal({
+        isOpen: true,
+        title: '检测失败',
+        message: '触发更新检测失败: ' + (error.response?.data?.msg || error.message || '未知错误'),
+        type: 'danger',
+        onConfirm: () => setConfirmModal({ isOpen: false })
+      })
+    } finally {
+      setCheckingUpdate(false)
+    }
   }
 
   const handleRenameContainer = async (containerId, newName) => {
@@ -788,6 +816,15 @@ export function Containers() {
               onClick={() => setIsBatchMode(true)}
             >
               批量操作
+            </button>
+
+            <button
+              className="btn-secondary"
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+            >
+              <Bell className="h-4 w-4 mr-2" />
+              {checkingUpdate ? '检测中...' : '检查更新'}
             </button>
 
             <button

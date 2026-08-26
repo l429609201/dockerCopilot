@@ -25,7 +25,8 @@ const (
 const authHTTPTimeout = 15 * time.Second
 
 func GetToken(image types.Image, registryAuth string) (string, error) {
-	logx.Infof("image name %s", image.ImageName)
+	// 每个镜像每轮都会走到这里，用 Debug 级别避免刷屏掩盖真实错误
+	logx.Debugf("获取 token，镜像: %s", image.ImageName)
 	normalizedRef, err := ref.ParseNormalizedNamed(image.ImageName)
 	if err != nil {
 		return "", err
@@ -90,10 +91,11 @@ func GetBearerHeader(challenge string, imageRef ref.Named, registryAuth string) 
 	}
 
 	if registryAuth != "" {
-		logx.Info("私有镜像，无法获取是否有更新")
 		r.Header.Add("Authorization", fmt.Sprintf("Basic %s", registryAuth))
+		logx.Debug("使用已配置凭证请求 token")
 	} else {
-		logx.Info("No credentials found.")
+		// 公开镜像匿名拉取本就无需凭证，这不是错误，降为 Debug 避免噪音
+		logx.Debug("未配置 registry 凭证，按匿名方式获取 token")
 	}
 
 	var authResponse *http.Response

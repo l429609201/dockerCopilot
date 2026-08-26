@@ -198,33 +198,43 @@ func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
 }
 
 func (i *ImageUpdateData) checkSingleImage(image types.Image) {
+	imageRef := image.ImageName + ":" + image.ImageTag
+
+	// ImageName/ImageTag 解析失败的镜像（悬空镜像等）无法构造 manifest URL，直接跳过
+	if image.ImageName == "None" || image.ImageTag == "None" {
+		logx.Debugf("跳过无有效 tag 的镜像: %s (ID: %s)", imageRef, image.ID)
+		return
+	}
+
 	digestURL, err := BuildManifestURL(image)
 	if err != nil {
-		logx.Error("获取digestURL失败" + err.Error())
+		logx.Errorf("构造 manifest URL 失败 [%s]: %v", imageRef, err)
 		return
 	}
 
 	// 优先命中缓存，省掉 token 获取 + manifest HEAD 两次网络往返
 	remoteDigest, cached := i.lookupDigestCache(digestURL)
 	if !cached {
+		// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
 		token, errToken := GetToken(image, "")
 		if errToken != nil {
-			logx.Error("获取token失败或者无需获取token，继续尝试检查" + errToken.Error())
+			logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
 		}
 		remoteDigest, err = GetDigest(digestURL, token)
 		if err != nil {
-			logx.Error("获取digest失败" + err.Error())
+			logx.Errorf("获取远端 digest 失败 [%s] url=%s: %v", imageRef, digestURL, err)
 			return
 		}
 		i.storeDigestCache(digestURL, remoteDigest)
 	}
 
 	if len(image.RepoDigests) == 0 {
-		logx.Error("未在本地获取到repoDigest" + image.ImageName + ":" + image.ImageTag)
+		// 本地构建、未推送过的镜像没有 RepoDigests，无法比对，属正常情况
+		logx.Debugf("本地无 repoDigest，跳过比对 [%s]", imageRef)
 		return
 	}
 	if remoteDigest == "" {
-		logx.Error("远端Digest为空" + image.ImageName + ":" + image.ImageTag)
+		logx.Errorf("远端返回的 digest 为空 [%s]", imageRef)
 		return
 	}
 
@@ -242,10 +252,12 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 		}
 	}
 	if needUpdate {
-		logx.Infof("%s:%s need update, remoteDigest: %s, localRepoDigests: %v",
-			image.ImageName, image.ImageTag, remoteDigest, image.RepoDigests)
+		// 有更新是需要用户关注的结论，保持 Info
+		logx.Infof("镜像有更新 [%s] remoteDigest=%s localRepoDigests=%v",
+			imageRef, remoteDigest, image.RepoDigests)
 	} else {
-		logx.Info(image.ImageName + ":" + image.ImageTag + " not need update")
+		// 已是最新占绝大多数，降为 Debug，避免每轮刷屏
+		logx.Debugf("镜像已是最新 [%s]", imageRef)
 	}
 	// 并发安全写入，禁止直接操作 map
 	i.setResult(image.ID, ImageCheckList{NeedUpdate: needUpdate})

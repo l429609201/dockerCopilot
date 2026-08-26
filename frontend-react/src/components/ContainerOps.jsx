@@ -130,6 +130,46 @@ function highlightLine(text, keyword) {
   )
 }
 
+// 解析单行结构化日志（dockerCopilot 自身使用 go-zero 的 JSON 日志格式）
+// 兼容 @timestamp/ts/time、content/msg/message 等常见字段名；非 JSON 行返回 null 走原文展示
+function parseLogLine(line) {
+  const t = line.trim()
+  if (!t.startsWith('{') || !t.endsWith('}')) return null
+  try {
+    const o = JSON.parse(t)
+    if (!o || typeof o !== 'object') return null
+    const time = o['@timestamp'] || o.ts || o.time || o.timestamp || ''
+    const raw = o.content ?? o.msg ?? o.message ?? ''
+    const content = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    if (!time && !o.caller && !content) return null
+    return {
+      time: String(time),
+      caller: o.caller ? String(o.caller) : '',
+      content,
+      level: String(o.level || 'info').toLowerCase(),
+    }
+  } catch {
+    return null
+  }
+}
+
+// 时间只保留 时:分:秒.毫秒，完整时间戳通过 title 提示，避免占满横向空间
+function formatLogTime(v) {
+  const m = /T(\d{2}:\d{2}:\d{2})(\.\d+)?/.exec(v)
+  if (m) return m[1] + (m[2] ? m[2].slice(0, 4) : '')
+  return v
+}
+
+// 日志级别对应的文字颜色，让 error/warn 能从大段 info 里跳出来
+const LEVEL_COLOR = {
+  error: 'text-red-400',
+  fatal: 'text-red-400',
+  warn: 'text-amber-400',
+  warning: 'text-amber-400',
+  info: 'text-sky-400',
+  debug: 'text-gray-500',
+}
+
 // 日志面板：支持行数/时间戳、关键词搜索过滤+高亮、日志下载
 function LogsPanel({ id, name, hostId }) {
   const [logs, setLogs] = useState('')
@@ -137,6 +177,7 @@ function LogsPanel({ id, name, hostId }) {
   const [timestamps, setTimestamps] = useState(false)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('') // 搜索关键词
+  const [pretty, setPretty] = useState(true) // 是否结构化展示（仅对 JSON 日志生效）
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -158,6 +199,14 @@ function LogsPanel({ id, name, hostId }) {
     const lower = kw.toLowerCase()
     return lines.filter((l) => l.toLowerCase().includes(lower))
   }, [logs, search])
+
+  // 逐行解析，并判断整体是否为结构化日志（过半行可解析才启用三列视图）
+  const { rows, structured } = useMemo(() => {
+    const parsedRows = shownLines.map((raw) => ({ raw, obj: parseLogLine(raw) }))
+    const valid = parsedRows.filter((r) => r.raw.trim())
+    const okCount = valid.filter((r) => r.obj).length
+    return { rows: parsedRows, structured: valid.length > 0 && okCount / valid.length > 0.5 }
+  }, [shownLines])
 
   // 下载当前完整日志为 .log 文件（不受搜索过滤影响，导出全部内容）
   const download = () => {
@@ -185,6 +234,12 @@ function LogsPanel({ id, name, hostId }) {
         <label className="flex items-center gap-1">
           <input type="checkbox" checked={timestamps} onChange={(e) => setTimestamps(e.target.checked)} /> 时间戳
         </label>
+        {/* 结构化展示开关：仅当日志本身是 JSON 格式时才有意义 */}
+        {structured && (
+          <label className="flex items-center gap-1" title="将 JSON 日志解析为 时间 / 位置 / 内容 三列">
+            <input type="checkbox" checked={pretty} onChange={(e) => setPretty(e.target.checked)} /> 解析
+          </label>
+        )}
         {/* 搜索框：实时过滤并高亮匹配行 */}
         <div className="relative flex-1 min-w-[160px]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -202,15 +257,31 @@ function LogsPanel({ id, name, hostId }) {
       {kw && (
         <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
       )}
-      <pre className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg whitespace-pre-wrap">
+      <div className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg">
         {loading
           ? '加载中...'
           : (kw && shownLines.length === 0)
             ? '(无匹配行)'
-            : shownLines.map((line, i) => (
-                <div key={i}>{highlightLine(line, kw)}</div>
+            : rows.map(({ raw, obj }, i) => (
+                (structured && pretty && obj) ? (
+                  // 三列布局：时间 | 位置 | 内容，行间用细分隔线区分
+                  <div key={i} className="flex gap-3 py-0.5 border-b border-gray-800/60 last:border-0">
+                    <span className="shrink-0 text-gray-500 tabular-nums" title={obj.time}>
+                      {formatLogTime(obj.time)}
+                    </span>
+                    <span className="shrink-0 w-52 truncate text-violet-400" title={obj.caller}>
+                      {highlightLine(obj.caller, kw)}
+                    </span>
+                    <span className={cn('flex-1 break-all whitespace-pre-wrap',
+                      LEVEL_COLOR[obj.level] || 'text-gray-100')}>
+                      {highlightLine(obj.content, kw)}
+                    </span>
+                  </div>
+                ) : (
+                  <div key={i} className="whitespace-pre-wrap break-all">{highlightLine(raw, kw)}</div>
+                )
               ))}
-      </pre>
+      </div>
     </div>
   )
 }
