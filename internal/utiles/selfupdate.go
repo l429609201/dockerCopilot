@@ -237,6 +237,11 @@ func SelfUpdate(ctx context.Context, svcCtx *svc.ServiceContext, id, name, image
 	progress.Message = "镜像就绪，正在启动辅助容器接管更新"
 	progress.DetailMsg = "主程序即将被辅助容器重启，请稍候几秒后刷新页面"
 	svcCtx.UpdateProgress(taskID, progress)
+
+	// 拉起 helper 前先置位闩锁：helper 会异步停掉本进程，此后任何新任务
+	// 都可能在「旧容器已删、新容器未建」时被中断，导致容器丢失。
+	svcCtx.TaskManager.BeginSelfUpdate()
+
 	if err := StartHelperContainer(svcCtx, id, name, imageNameAndTag, taskID, delOld); err != nil {
 		markTaskFailed(svcCtx, taskID, &progress, "启动辅助容器失败", err)
 		return err

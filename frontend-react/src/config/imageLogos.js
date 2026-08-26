@@ -159,9 +159,11 @@ export const hasBuiltInLogo = (imageName) => {
 
 /**
  * 统一解析容器图标 URL（卡片/列表/详情共用，保证优先级一致）。
- * 优先级：容器自定义 iconUrl > 站点抓取的 favicon > 内置logo/用户自定义logo（含模糊匹配）。
- * 说明：getImageLogo 第二参 customLogos 内部已包含"内置 + 自定义 + 模糊匹配"逻辑，
- *      因此这里直接把 customIcons 传入即可，避免各处重复且不一致的匹配代码。
+ * 优先级：容器自定义 iconUrl > 已持久化的 logo（内置/自定义/抓取后落盘）> 实时抓取的 favicon。
+ * 说明：持久化结果必须压过实时抓取，否则每次刷新 useFaviconMap 探测回来的地址
+ *      会覆盖已固定的图标——多端口容器就表现为「刷新就跳」。
+ *      实时 favicon 退化为兜底，仅在该镜像还没有任何图标时生效。
+ *      getImageLogo 第二参 customLogos 内部已包含"内置 + 自定义 + 模糊匹配"逻辑。
  * @param {object} container 容器对象（需含 id / iconUrl / usingImage）
  * @param {object} faviconMap 由 useFaviconMap 生成的 {容器id: url} 映射
  * @param {object} customIcons 用户自定义图标配置 {镜像名: url}
@@ -171,12 +173,12 @@ export const resolveContainerIcon = (container, faviconMap = {}, customIcons = {
   if (!container) return null;
   // 1. 容器自身已设置的自定义图标优先级最高
   if (container.iconUrl) return container.iconUrl;
-  // 2. 从容器站点抓取到的 favicon
-  if (faviconMap && faviconMap[container.id]) return faviconMap[container.id];
-  // 3. 内置logo / 用户自定义logo（getImageLogo 内部已做模糊匹配）
+  // 2. 内置logo / 用户自定义logo / 抓取后已持久化的图标（getImageLogo 内部已做模糊匹配）
   if (container.usingImage) {
     const logo = getImageLogo(container.usingImage, customIcons || {});
     if (logo) return logo;
   }
+  // 3. 兜底：本次会话实时抓取到的 favicon（尚未持久化时才会走到这里）
+  if (faviconMap && faviconMap[container.id]) return faviconMap[container.id];
   return null;
 };
