@@ -93,6 +93,7 @@ function taskTypeLabel(type) {
     compose_action: 'Compose 操作',
     scheduled_update: '定时更新',
     image_prune: '镜像清理',
+    image_check: '检查镜像更新',
   }
   return map[type] || ''
 }

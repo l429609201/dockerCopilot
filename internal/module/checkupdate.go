@@ -138,15 +138,31 @@ func (i *ImageUpdateData) endCheck() {
 	i.checking = false
 }
 
-// CheckUpdate 执行一轮镜像更新检查。
+// CheckUpdate 执行一轮镜像更新检查（无进度上报，供定时检查与启动检查使用）。
+func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
+	i.CheckUpdateWithProgress(imageList, nil)
+}
+
+// CheckProgress 单轮检查的进度回调参数。
+// done/total 为已完成/待检查镜像数，current 为刚检查完的镜像名（便于前端显示"正在检查 xxx"）。
+type CheckProgress struct {
+	Done    int
+	Total   int
+	Current string
+}
+
+// CheckUpdateWithProgress 执行一轮镜像更新检查，并在每个镜像检查完成后回调上报进度。
 // 通过 beginCheck/endCheck 去重，避免启动检查与定时检查并发执行；
 // 检查过程中出现的单镜像错误不会清空已有结果，保证前端状态稳定。
 //
 // 镜像间以固定并发度并行检查：原实现串行遍历，镜像数量多时单轮耗时随数量线性增长。
-func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
+//
+// onProgress 可为 nil（定时/启动检查不需要进度）。返回值表示本轮是否真正执行：
+// false 说明已有检查在进行中，本轮被跳过，调用方据此给出对应提示而非显示一个空任务。
+func (i *ImageUpdateData) CheckUpdateWithProgress(imageList []types.Image, onProgress func(CheckProgress)) bool {
 	if !i.beginCheck() {
 		logx.Info("已有镜像更新检查在进行中，跳过本轮")
-		return
+		return false
 	}
 	defer i.endCheck()
 
@@ -158,16 +174,35 @@ func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
 		}
 		targets = append(targets, image)
 	}
-	if len(targets) == 0 {
-		return
+	total := len(targets)
+	if total == 0 {
+		if onProgress != nil {
+			onProgress(CheckProgress{Done: 0, Total: 0})
+		}
+		return true
 	}
 
 	workers := checkConcurrency
-	if len(targets) < workers {
-		workers = len(targets)
+	if total < workers {
+		workers = total
 	}
-	logx.Infof("开始镜像更新检查：%d 个镜像，并发度 %d", len(targets), workers)
+	logx.Infof("开始镜像更新检查：%d 个镜像，并发度 %d", total, workers)
 	start := time.Now()
+
+	// 并发 worker 共同推进完成计数，故用独立互斥锁保护回调，
+	// 避免多个 goroutine 同时进入回调导致进度写入竞争。
+	var progressMu sync.Mutex
+	done := 0
+	report := func(name string) {
+		if onProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		done++
+		snapshot := CheckProgress{Done: done, Total: total, Current: name}
+		progressMu.Unlock()
+		onProgress(snapshot)
+	}
 
 	tasks := make(chan types.Image)
 	var wg sync.WaitGroup
@@ -178,10 +213,12 @@ func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
 			// 单个镜像 panic 不应带崩整轮检查
 			for image := range tasks {
 				func(img types.Image) {
+					// 无论检查成功、失败还是 panic，都要推进进度，否则进度会卡住不到 100%
 					defer func() {
 						if r := recover(); r != nil {
 							logx.Errorf("检查镜像 %s:%s 时 panic 已恢复: %v", img.ImageName, img.ImageTag, r)
 						}
+						report(img.ImageName + ":" + img.ImageTag)
 					}()
 					i.checkSingleImage(img)
 				}(image)
@@ -194,7 +231,8 @@ func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
 	close(tasks)
 	wg.Wait()
 
-	logx.Infof("镜像更新检查完成：%d 个镜像，耗时 %s", len(targets), time.Since(start).Round(time.Millisecond))
+	logx.Infof("镜像更新检查完成：%d 个镜像，耗时 %s", total, time.Since(start).Round(time.Millisecond))
+	return true
 }
 
 func (i *ImageUpdateData) checkSingleImage(image types.Image) {

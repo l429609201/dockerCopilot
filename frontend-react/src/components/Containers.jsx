@@ -411,18 +411,25 @@ export function Containers() {
     })
   }
 
-  // 手动触发检测所有镜像更新（异步执行，立即返回）
+  // 手动触发检测所有镜像更新（异步执行，立即返回 taskID，进度在任务中心追踪）
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true)
     try {
-      await imageAPI.checkUpdate()
-      setConfirmModal({
-        isOpen: true,
-        title: '更新检测',
-        message: '已触发更新检测，请稍后刷新容器列表查看结果',
-        type: 'info',
-        onConfirm: () => setConfirmModal({ isOpen: false })
-      })
+      const response = await imageAPI.checkUpdate()
+      const taskID = response.data?.data?.taskID
+      if (taskID) {
+        // 注册到全局任务中心，切换页面也能看到检测进度；完成后自动刷新列表呈现结果
+        addTask({ id: taskID, title: '检查镜像更新', onDone: () => refetch() })
+      } else {
+        // 后端未返回 taskID（旧版本）时退回原提示，避免无任何反馈
+        setConfirmModal({
+          isOpen: true,
+          title: '更新检测',
+          message: '已触发更新检测，请稍后刷新容器列表查看结果',
+          type: 'info',
+          onConfirm: () => setConfirmModal({ isOpen: false })
+        })
+      }
     } catch (error) {
       setConfirmModal({
         isOpen: true,
