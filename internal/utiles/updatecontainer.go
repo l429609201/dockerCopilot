@@ -106,6 +106,31 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.Message = "拉取镜像成功"
 	oldTaskProgress.DetailMsg = "拉取镜像成功"
 
+	// 【增强】拉取完成后，对比新旧镜像 digest，避免"假更新"（标签漂移、远程回滚等导致新旧镜像实际相同）
+	newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+	if err != nil {
+		logx.Errorf("获取新镜像信息失败: %v，跳过 digest 校验继续更新", err)
+	} else {
+		newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
+		// 如果新旧 digest 完全相同，说明拉取下来的镜像与本地已有镜像一致，跳过无意义的重启
+		if oldTaskProgress.OldImageDigest != "" && newDigest == oldTaskProgress.OldImageDigest {
+			logx.Infof("新旧镜像 digest 相同 (%s)，无需更新", newDigest)
+			oldTaskProgress.Message = "已是最新版本"
+			oldTaskProgress.DetailMsg = "镜像 digest 未变化，无需更新"
+			oldTaskProgress.Percentage = 100
+			oldTaskProgress.IsDone = true
+			// 保留新旧 digest 和大小字段供前端展示（size 相同时前端可识别为"假更新"）
+			oldTaskProgress.NewImageDigest = newDigest
+			oldTaskProgress.NewImageSize = newImageInfo.Size
+			serviceContext.UpdateProgress(taskID, oldTaskProgress)
+			return nil
+		}
+		// digest 不同，继续更新流程，提前记录新镜像信息
+		logx.Infof("新镜像 digest: %s (旧: %s)，继续更新", newDigest, oldTaskProgress.OldImageDigest)
+		oldTaskProgress.NewImageDigest = newDigest
+		oldTaskProgress.NewImageSize = newImageInfo.Size
+	}
+
 	// 【特殊处理】如果是 DC 自我更新，交给辅助容器处理
 	// 检测逻辑：对比当前容器ID与要更新的容器ID
 	selfID := os.Getenv("HOSTNAME") // Docker 容器内 HOSTNAME 通常是容器ID的短格式
@@ -255,16 +280,17 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 		return err
 	}
 
-	// 【增强】收集新镜像信息（SHA256、大小）
-	newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
-	if err != nil {
-		logx.Errorf("获取新镜像信息失败: %v，但容器已成功启动", err)
-	} else {
-		// 提取 SHA256（去掉 sha256: 前缀）
-		newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
-		oldTaskProgress.NewImageDigest = newDigest
-		oldTaskProgress.NewImageSize = newImageInfo.Size
-		logx.Infof("新镜像信息 - Digest: %s, Size: %d bytes", newDigest, newImageInfo.Size)
+	// 【增强】补充收集新镜像信息（仅当拉取后未成功收集时）
+	if oldTaskProgress.NewImageDigest == "" {
+		newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+		if err != nil {
+			logx.Errorf("补充获取新镜像信息失败: %v，但容器已成功启动", err)
+		} else {
+			newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
+			oldTaskProgress.NewImageDigest = newDigest
+			oldTaskProgress.NewImageSize = newImageInfo.Size
+			logx.Infof("新镜像信息 - Digest: %s, Size: %d bytes", newDigest, newImageInfo.Size)
+		}
 	}
 
 	oldTaskProgress.Message = "更新成功"

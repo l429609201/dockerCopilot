@@ -153,6 +153,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/images/prune",
 				Handler: image.PruneHandler(serverCtx),
 			},
+			{
+				// 手动触发检测所有镜像更新（异步执行，立即返回）
+				Method:  http.MethodPost,
+				Path:    "/images/check-update",
+				Handler: image.CheckUpdateHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
