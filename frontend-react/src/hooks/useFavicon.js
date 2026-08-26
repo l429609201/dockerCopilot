@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { faviconAPI, imageAPI, dockerHostAPI } from '../api/client.js'
+import { getImageLogo } from '../config/imageLogos.js'
 
 // favicon 结果本地缓存（key: 容器id，value: {url, ts}）
 const CACHE_KEY = 'dc_favicon_cache'
@@ -123,12 +124,18 @@ function scorePort(port) {
 
 // useFaviconMap：对一批容器批量解析 favicon，返回 { [containerId]: iconUrl }。
 // 供列表渲染时按容器 id 取图标，避免在 .map 循环里调用 hook。
-export function useFaviconMap(containers) {
+// customIcons 传入已持久化的图标映射：已有图标的镜像不再重复探测，
+// 避免多端口容器每次刷新探到不同端口导致图标跳变，同时省掉无谓的网络请求。
+export function useFaviconMap(containers, customIcons = {}) {
   const [map, setMap] = useState({})
 
   useEffect(() => {
     const list = (containers || []).filter(
-      (c) => (c.status || '').toLowerCase() === 'running' && pickProbePorts(c).length > 0
+      (c) =>
+        (c.status || '').toLowerCase() === 'running' &&
+        pickProbePorts(c).length > 0 &&
+        // 已有持久化图标（含内置 logo 与模糊匹配）的镜像直接跳过，只对"没图标"的才抓取
+        !(c.usingImage && getImageLogo(c.usingImage, customIcons || {}))
     )
     if (list.length === 0) return
     let cancelled = false
@@ -172,7 +179,8 @@ export function useFaviconMap(containers) {
     }
     run()
     return () => { cancelled = true }
-  }, [(containers || []).map((c) => c.id).join(',')])
+    // customIcons 变化后重新评估：新持久化的图标会让对应容器从待抓取列表中移除
+  }, [(containers || []).map((c) => c.id).join(','), Object.keys(customIcons || {}).join(',')])
 
   return map
 }

@@ -151,8 +151,9 @@ export function Containers() {
     refetchOnMount: true,
   })
 
-  // 阶段8：批量解析容器站点 favicon（运行中且有暴露端口的容器），按容器id取图标
-  const faviconMap = useFaviconMap(containers)
+  // 阶段8：批量解析容器站点 favicon（运行中、有暴露端口且尚无持久化图标的容器），按容器id取图标
+  // 传入 customIcons 让已有图标的容器不再重复探测，避免多端口容器刷新时图标跳变
+  const faviconMap = useFaviconMap(containers, customIcons)
 
   // 从容器列表提取去重后的主机列表，供主机下拉筛选使用（含本地）
   const hostOptions = React.useMemo(() => {
