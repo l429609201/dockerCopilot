@@ -33,6 +33,10 @@ type TaskManager struct {
 	byResID  map[string]string       // key: resourceID -> taskID，用于去重
 	sem      chan struct{}           // 并发信号量
 	maxTasks int
+	// selfUpdating 标记 DC 自更新已进入不可逆阶段（helper 已拉起，本进程即将被停止）。
+	// 置位后拒绝一切新任务：此时任何新开的容器重建都可能在「旧容器已删、新容器未建」
+	// 时被进程终止，造成容器丢失。该标记无需复位——进程马上就没了。
+	selfUpdating bool
 }
 
 // NewTaskManager 创建任务管理器，maxConcurrent 为全局并发上限。
@@ -55,7 +59,24 @@ func (e taskError) Error() string { return string(e) }
 
 const (
 	ErrDuplicateResource = taskError("该资源已有任务在执行中")
+	ErrSelfUpdating      = taskError("本程序正在自更新，已暂停接收新任务")
 )
+
+// BeginSelfUpdate 置位自更新闩锁，此后 TryStart 一律拒绝新任务。
+// 由 SelfUpdate 在拉起 helper 前调用。
+func (m *TaskManager) BeginSelfUpdate() {
+	m.mu.Lock()
+	m.selfUpdating = true
+	m.mu.Unlock()
+	logx.Info("本程序进入自更新流程，已停止接收新的更新任务")
+}
+
+// IsSelfUpdating 返回是否处于自更新阶段，供上层跳过后续容器。
+func (m *TaskManager) IsSelfUpdating() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.selfUpdating
+}
 
 // TryStart 尝试登记并异步执行一个任务。
 //   - taskID：任务唯一标识；
@@ -66,6 +87,11 @@ const (
 // 返回错误表示登记失败（如资源重复），此时不会执行 fn。
 func (m *TaskManager) TryStart(taskID, resourceID, taskType string, fn func(ctx context.Context)) error {
 	m.mu.Lock()
+	if m.selfUpdating {
+		m.mu.Unlock()
+		logx.Errorf("本程序正在自更新，拒绝新任务 %s（资源 %s）", taskID, resourceID)
+		return ErrSelfUpdating
+	}
 	if resourceID != "" {
 		if existing, ok := m.byResID[resourceID]; ok {
 			m.mu.Unlock()

@@ -80,7 +80,19 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		timeoutSec = 1800
 	}
 
+	// 把 DC 自身排到队尾最后更新。
+	// 原因：SelfUpdate 只负责拉镜像并拉起 helper 就立即返回，helper 随后会异步停掉本进程。
+	// 若 DC 排在中间，后续容器的更新会在「旧容器已删、新容器未建」时被进程终止，
+	// 导致容器彻底丢失（用户反馈：镜像已拉完但新容器没生成）。
+	containers = moveSelfToEnd(svcCtx, containers)
+
 	for _, c := range containers {
+		// DC 自身已进入自更新交接阶段，本进程随时会被 helper 停止。
+		// 此时继续更新其他容器会在中途被打断，直接中止本轮剩余任务。
+		if svcCtx.TaskManager.IsSelfUpdating() {
+			logx.Infof("定时更新规则[%s]因本程序自更新中止，剩余容器本轮跳过", rule.Name)
+			break
+		}
 		name := containerName(c)
 		hostID := normalizeHostID(c.HostID)
 		if _, want := targetSet[targetKey(hostID, name)]; !want {
@@ -171,6 +183,30 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 	}
 	notifier.Notify("定时更新完成", msg.String())
+}
+
+// moveSelfToEnd 将 DC 自身所在容器移动到列表末尾，保证它最后一个更新。
+// 判定条件与 runOne 中走 SelfUpdate 的条件保持一致：仅本地主机 + 命中自身。
+// 保持其余容器的原有相对顺序，避免影响既有更新次序。
+func moveSelfToEnd(svcCtx *svc.ServiceContext, containers []MyType.Container) []MyType.Container {
+	selfIdx := -1
+	for i, c := range containers {
+		if normalizeHostID(c.HostID) == appconfig.DockerHostLocalID && utiles.IsSelfContainer(svcCtx, c.ID) {
+			selfIdx = i
+			break
+		}
+	}
+	// 未命中自身，或本来就在末尾，无需调整
+	if selfIdx < 0 || selfIdx == len(containers)-1 {
+		return containers
+	}
+	self := containers[selfIdx]
+	reordered := make([]MyType.Container, 0, len(containers))
+	reordered = append(reordered, containers[:selfIdx]...)
+	reordered = append(reordered, containers[selfIdx+1:]...)
+	reordered = append(reordered, self)
+	logx.Infof("定时更新：已将本程序容器 %s 调整到队尾最后更新", containerName(self))
+	return reordered
 }
 
 // runOne 提交单个容器的更新任务并等待其结束，返回是否成功。
