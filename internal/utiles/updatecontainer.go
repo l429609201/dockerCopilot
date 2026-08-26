@@ -16,9 +16,18 @@ import (
 	"github.com/docker/docker/api/types/network"
 	dockerMsgType "github.com/docker/docker/pkg/jsonmessage"
 
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// displayHostID 用于日志/错误提示的主机标识：空串归一为本地ID，避免出现 "主机[]"。
+func displayHostID(hostID string) string {
+	if hostID == "" {
+		return appconfig.DockerHostLocalID
+	}
+	return hostID
+}
 
 // UpdateContainer 兼容旧签名的入口（本地主机），内部使用后台 context 调用带 context 版本。
 func UpdateContainer(serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string) error {
@@ -40,10 +49,25 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 // 在关键步骤前检查 ctx 是否已取消，取消时立即中止并标记任务失败，
 // 从而支持前端/机器人主动取消长时间运行的更新任务。
 func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceContext, hostID string, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string, registryAuth string) error {
-	// 按目标主机取 client，未找到回退本地；后续流程统一用此 cli
+	// 按目标主机取 client。取不到时必须直接失败，不能回退本地：
+	// 否则会拿本地 client 去停删/重建远程主机上的同名容器，误操作后果远重于更新失败。
+	// GetClient 内部已将空 hostID 归一为本地，本地连接正常时必然命中。
 	cli, ok := serviceContext.DockerManager.GetClient(hostID)
 	if !ok || cli == nil {
-		cli = serviceContext.DockerClient
+		err := fmt.Errorf("目标 Docker 主机[%s]未连接，已中止更新以避免误操作其他主机", displayHostID(hostID))
+		logx.Errorf("更新容器 %s 失败: %v", name, err)
+		serviceContext.UpdateProgress(taskID, svc.TaskProgress{
+			TaskID:     taskID,
+			Percentage: 0,
+			Name:       name,
+			Message:    "目标主机未连接",
+			DetailMsg:  err.Error(),
+			IsDone:     true,
+			Failed:     true,
+			TaskType:   svc.TaskTypeContainerUpdate,
+			ResourceID: id,
+		})
+		return err
 	}
 	serviceContext.UpdateProgress(taskID, svc.TaskProgress{
 		TaskID:     taskID,
@@ -195,6 +219,26 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.DetailMsg = "正在停止旧容器"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
+	// backupName 为本次保留下来的旧容器备份名（仅 !delOldContainer 且重命名成功时有值），
+	// 同时用于失败回滚恢复。提前声明以便下方 defer 清理闭包捕获其最终值。
+	var backupName string
+
+	// 清理历史 -old- 备份放在 defer 中执行：无论本次更新成功或失败都会收尾。
+	// 原实现只在成功路径末尾清理，导致定时更新在无人值守下连续失败时，
+	// 每轮留下的备份再没有机会被回收，最终无限累积。
+	//
+	// keep 的取值依据「本次是否真的留下了备份」，而不是 delOldContainer 意图：
+	//   - backupName != ""：本次留了 1 个（可能仍作为回滚目标存在），保留最新 1 个；
+	//   - backupName == ""：本次没留（删除成功，或还没走到重命名那一步），清空全部历史。
+	// 这样失败路径不会把刚刚用于回滚的备份误删。
+	defer func() {
+		keep := 0
+		if backupName != "" {
+			keep = 1
+		}
+		CleanupOldBackups(cli, name, keep)
+	}()
+
 	// 从停止旧容器开始进入关键区：此后不再响应取消/超时
 	stopOptions := container.StopOptions{
 		Signal:  signal,
@@ -212,8 +256,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 删除旧容器（释放容器名，如果配置要求保留则重命名）
-	// backupName 用于失败回滚时恢复（仅 !delOldContainer 时有值）
-	var backupName string
+	// backupName 已在上方关键区前声明，赋值后由 defer 清理逻辑读取
 	if delOldContainer {
 		err = cli.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
 		if err != nil {
@@ -303,13 +346,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.IsDone = true
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
-	// 更新成功后清理历史 -old- 备份，避免无限累积：
-	// delOld=true 本次未留备份 → 清空全部历史；delOld=false 本次留了 1 个 → 只保留最新 1 个。
-	keep := 0
-	if !delOldContainer {
-		keep = 1
-	}
-	CleanupOldBackups(cli, name, keep)
+	// 历史 -old- 备份的清理已统一移至函数开头的 defer，成功与失败路径都会执行
 	return nil
 }
 

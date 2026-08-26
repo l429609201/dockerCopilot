@@ -91,14 +91,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
     }
   }
 
-  // 点击侧栏空白区域收起：仅桌面模式且当前为展开态时生效，
-  // 收起态不处理（避免误展开）。导航项/按钮已 stopPropagation 不会触发。
-  const handleAsideBlankClick = () => {
-    if (canToggleSidebar && !isCollapsed && onToggleCollapse) {
-      onToggleCollapse()
-    }
-  }
-
   const navItems = NAV_ITEMS
 
   return (
@@ -162,7 +154,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
           windowWidth < 768 ? "top-14" : "top-0",
           "border-r border-gray-200 dark:border-gray-700"
         )}
-        onClick={handleAsideBlankClick}
       >
         <div className="flex flex-col h-full">
           {/* 头部 - 现代卡片设计 (仅在非手机模式显示) */}

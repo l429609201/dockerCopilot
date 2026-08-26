@@ -56,11 +56,40 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 	timestamp := time.Now().Format("20060102150405")
 	backupName := targetName + "-old-" + timestamp
 
+	// backupKept 标记本次是否真的留下了备份容器。
+	// 这里 backupName 在函数开头就已无条件生成，不能用它是否为空来判断，故单独用标志位。
+	var backupKept bool
+
+	// 清理历史 -old- 备份放在 defer 中执行，成功与失败路径都会收尾。
+	// 与 UpdateContainerOnHost 保持一致：keep 依据「本次是否真的留了备份」，
+	// 避免失败路径把刚用于回滚的备份误删。
+	defer func() {
+		keep := 0
+		if backupKept {
+			keep = 1
+		}
+		CleanupOldBackups(cli, targetName, keep)
+	}()
+
 	// 先 inspect 拿到旧容器完整配置（要在停止/删除前取，配置不受停止影响）
 	inspected, err := cli.ContainerInspect(ctx, targetID)
 	if err != nil {
 		return fmt.Errorf("inspect 主容器失败: %w", err)
 	}
+
+	// 准备新容器配置（原配置 + 新镜像）
+	cfg := inspected.Config
+	cfg.Hostname = "" // 清空，由 Docker 按新容器ID重新生成
+	cfg.Image = newImage
+	hostCfg := inspected.HostConfig
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: inspected.NetworkSettings.Networks,
+	}
+
+	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败。
+	// 与 UpdateContainerOnHost 保持一致：必须放在停止/删除旧容器之前，
+	// 保证配置有问题时旧容器仍然完好，可直接返回而无需回滚。
+	SanitizeCreateConfig(targetName, cfg, hostCfg, netCfg)
 
 	// 停止旧容器（主程序）。给足超时，等它优雅退出。
 	timeout := 15
@@ -82,16 +111,10 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 		if err := cli.ContainerRename(ctx, targetID, backupName); err != nil {
 			return fmt.Errorf("重命名旧容器失败: %w", err)
 		}
+		backupKept = true
 	}
 
 	// 用原配置 + 新镜像 + 原名创建新容器（无需重命名！）
-	cfg := inspected.Config
-	cfg.Hostname = "" // 清空，由 Docker 按新容器ID重新生成
-	cfg.Image = newImage
-	hostCfg := inspected.HostConfig
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: inspected.NetworkSettings.Networks,
-	}
 	logx.Infof("[helper] 正在用新镜像创建新容器（使用原名: %s）", targetName)
 	created, err := cli.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, targetName)
 	if err != nil {
@@ -120,12 +143,6 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 
 	logx.Infof("[helper] ✅ DC 自我更新成功！新容器 %s 已启动", targetName)
 
-	// 更新成功后清理历史 -old- 备份，避免无限累积：
-	// delOld=true 本次未留备份 → 清空全部历史；delOld=false 本次留了 1 个 → 只保留最新 1 个。
-	keep := 0
-	if !delOld {
-		keep = 1
-	}
-	CleanupOldBackups(cli, targetName, keep)
+	// 历史 -old- 备份的清理已统一移至函数开头的 defer，成功与失败路径都会执行
 	return nil
 }
