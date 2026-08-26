@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react'
-import { FileText, Terminal as TerminalIcon, RefreshCw, Maximize2, Minimize2, X, Search, Download } from 'lucide-react'
+import { FileText, Terminal as TerminalIcon, RefreshCw, Maximize2, Minimize2, X, Search, Download, ArrowDownToLine } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 import { Terminal } from './Terminal.jsx'
 import { cn } from '../utils/cn.js'
@@ -130,23 +130,77 @@ function highlightLine(text, keyword) {
   )
 }
 
+// Go 标准库 log 包的默认格式：2026/08/26 09:55:36 消息内容
+// net/http 等内部组件绕过了 go-zero 的 logx，只能在这里单独识别
+const STDLIB_LOG_RE = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([\s\S]*)$/
+
+// Docker 容器 stdout 常见的 ISO 时间戳前缀：2026-08-26T09:55:36.123456789Z 消息内容
+const ISO_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+([\s\S]*)$/
+
+// 从非结构化文本里推断日志级别，让 error/warn 也能上色
+function guessLevel(text) {
+  const s = text.toLowerCase()
+  if (/\b(panic|fatal)\b/.test(s)) return 'fatal'
+  if (/\b(error|err|failed|failure|unauthorized|forbidden)\b/.test(s)) return 'error'
+  if (/\b(warn|warning|unsolicited|superfluous|deprecated)\b/.test(s)) return 'warn'
+  if (/\bdebug\b/.test(s)) return 'debug'
+  return 'info'
+}
+
+// 百分号转义片段：连续的 %XX，用于识别被编码过的 URL 参数
+const PCT_ENCODED_RE = /(?:%[0-9A-Fa-f]{2})+/g
+
+// 解码日志中被百分号转义的片段。
+// go-zero 记录的 authURL 经 url.Values.Encode() 处理后，
+// scope 会变成 repository%3Alibrary%2Fpostgres%3Apull 之类，可读性很差。
+// 仅替换 %XX 片段而非整串 decodeURIComponent，避免正文里的 % 触发异常；
+// 单个片段解码失败时保留原文，不影响其余内容。
+function decodePctEscapes(text) {
+  if (!text || text.indexOf('%') === -1) return text
+  return text.replace(PCT_ENCODED_RE, (seg) => {
+    try {
+      const decoded = decodeURIComponent(seg)
+      // 解码出控制字符说明原文本就不是 URL 编码，保留原样
+      return /[\u0000-\u001f\u007f]/.test(decoded) ? seg : decoded
+    } catch {
+      return seg
+    }
+  })
+}
+
 // 解析单行结构化日志（dockerCopilot 自身使用 go-zero 的 JSON 日志格式）
-// 兼容 @timestamp/ts/time、content/msg/message 等常见字段名；非 JSON 行返回 null 走原文展示
+// 兼容 @timestamp/ts/time、content/msg/message 等常见字段名
+// 非 JSON 行会再尝试标准库 log 与 ISO 前缀两种格式，都不匹配才返回 null 走原文展示
 function parseLogLine(line) {
   const t = line.trim()
-  if (!t.startsWith('{') || !t.endsWith('}')) return null
+  if (!t) return null
+  if (!t.startsWith('{') || !t.endsWith('}')) {
+    const m = STDLIB_LOG_RE.exec(t) || ISO_PREFIX_RE.exec(t)
+    if (!m) return null
+    const content = m[2].trim()
+    if (!content) return null
+    // 级别判定用原文，避免解码后新增的关键词干扰推断
+    return { time: m[1], caller: '', content: decodePctEscapes(content), level: guessLevel(content) }
+  }
   try {
     const o = JSON.parse(t)
     if (!o || typeof o !== 'object') return null
     const time = o['@timestamp'] || o.ts || o.time || o.timestamp || ''
     const raw = o.content ?? o.msg ?? o.message ?? ''
-    const content = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    let content = typeof raw === 'string' ? raw : JSON.stringify(raw)
     if (!time && !o.caller && !content) return null
+    let level = String(o.level || 'info').toLowerCase()
+    // go-zero 无 Warn 级别，后端以 "warn:" 前缀标注，这里还原成 warn 并剥掉前缀
+    const pm = /^(warn|warning)\s*[:：]\s*/i.exec(content)
+    if (pm) {
+      level = 'warn'
+      content = content.slice(pm[0].length)
+    }
     return {
       time: String(time),
       caller: o.caller ? String(o.caller) : '',
-      content,
-      level: String(o.level || 'info').toLowerCase(),
+      content: decodePctEscapes(content),
+      level,
     }
   } catch {
     return null
@@ -154,8 +208,9 @@ function parseLogLine(line) {
 }
 
 // 时间只保留 时:分:秒.毫秒，完整时间戳通过 title 提示，避免占满横向空间
+// 同时支持 ISO 的 T 分隔符与标准库 log 的空格分隔符
 function formatLogTime(v) {
-  const m = /T(\d{2}:\d{2}:\d{2})(\.\d+)?/.exec(v)
+  const m = /[T ](\d{2}:\d{2}:\d{2})(\.\d+)?/.exec(v)
   if (m) return m[1] + (m[2] ? m[2].slice(0, 4) : '')
   return v
 }
@@ -178,6 +233,8 @@ function LogsPanel({ id, name, hostId }) {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('') // 搜索关键词
   const [pretty, setPretty] = useState(true) // 是否结构化展示（仅对 JSON 日志生效）
+  const [autoScroll, setAutoScroll] = useState(true) // 自动滚动到最新一行，默认开启
+  const scrollRef = React.useRef(null) // 日志滚动容器
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -190,6 +247,14 @@ function LogsPanel({ id, name, hostId }) {
   }, [id, tail, timestamps, hostId])
 
   React.useEffect(() => { load() }, [load])
+
+  // 用户手动向上滚动时自动关闭跟随，滚回底部（20px 容差）时重新开启
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20
+    setAutoScroll(atBottom)
+  }, [])
 
   // 按关键词过滤出需要展示的行（不区分大小写），空关键词时展示全部
   const shownLines = useMemo(() => {
@@ -207,6 +272,13 @@ function LogsPanel({ id, name, hostId }) {
     const okCount = valid.filter((r) => r.obj).length
     return { rows: parsedRows, structured: valid.length > 0 && okCount / valid.length > 0.5 }
   }, [shownLines])
+
+  // 日志内容变化后，若开启自动滚动则跟随到最新一行
+  React.useEffect(() => {
+    if (!autoScroll) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [rows, autoScroll, loading])
 
   // 下载当前完整日志为 .log 文件（不受搜索过滤影响，导出全部内容）
   const download = () => {
@@ -246,6 +318,15 @@ function LogsPanel({ id, name, hostId }) {
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索日志…"
             className="w-full pl-7 pr-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900" />
         </div>
+        {/* 自动滚动：开启后每次日志更新都跟随到最新一行 */}
+        <button onClick={() => setAutoScroll(v => !v)}
+          title={autoScroll ? '自动滚动已开启，点击关闭' : '自动滚动已关闭，点击开启'}
+          className={cn('flex items-center gap-1 px-2 py-1 rounded',
+            autoScroll
+              ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300'
+              : 'bg-gray-100 dark:bg-gray-700')}>
+          <ArrowDownToLine className="h-3.5 w-3.5" /> 自动滚动
+        </button>
         <button onClick={load} className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
           <RefreshCw className="h-3.5 w-3.5" /> 刷新
         </button>
@@ -257,7 +338,8 @@ function LogsPanel({ id, name, hostId }) {
       {kw && (
         <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
       )}
-      <div className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg">
+      <div ref={scrollRef} onScroll={onScroll}
+        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg">
         {loading
           ? '加载中...'
           : (kw && shownLines.length === 0)
@@ -269,8 +351,11 @@ function LogsPanel({ id, name, hostId }) {
                     <span className="shrink-0 text-gray-500 tabular-nums" title={obj.time}>
                       {formatLogTime(obj.time)}
                     </span>
-                    <span className="shrink-0 w-52 truncate text-violet-400" title={obj.caller}>
-                      {highlightLine(obj.caller, kw)}
+                    {/* 无 caller 的行（如标准库 log 输出）用占位符保持三列对齐 */}
+                    <span className={cn('shrink-0 w-52 truncate',
+                      obj.caller ? 'text-violet-400' : 'text-gray-600')}
+                      title={obj.caller || '无调用位置信息'}>
+                      {obj.caller ? highlightLine(obj.caller, kw) : '—'}
                     </span>
                     <span className={cn('flex-1 break-all whitespace-pre-wrap',
                       LEVEL_COLOR[obj.level] || 'text-gray-100')}>

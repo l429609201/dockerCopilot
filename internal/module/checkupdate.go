@@ -222,7 +222,14 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 		}
 		remoteDigest, err = GetDigest(digestURL, token)
 		if err != nil {
-			logx.Errorf("获取远端 digest 失败 [%s] url=%s: %v", imageRef, digestURL, err)
+			// 401/404 是私有仓库或未配置凭据时的预期结果，不算故障，降为 Info；
+			// go-zero 无 Warn 级别，故在文案中标注 warn 供前端与人工识别。
+			// 这样真正的网络故障、registry 不可用才会留在 error 里。
+			if isAuthOrNotFoundErr(err) {
+				logx.Infof("warn: 跳过无权限或不存在的镜像 [%s]: %v", imageRef, err)
+			} else {
+				logx.Errorf("获取远端 digest 失败 [%s] url=%s: %v", imageRef, digestURL, err)
+			}
 			return
 		}
 		i.storeDigestCache(digestURL, remoteDigest)
@@ -337,7 +344,38 @@ func GetDigest(url string, token string) (string, error) {
 		if wwwAuthHeader == "" {
 			wwwAuthHeader = "not present"
 		}
-		return "", fmt.Errorf("registry responded to head request with %q, auth: %q", res.Status, wwwAuthHeader)
+		return "", &RegistryStatusError{
+			StatusCode: res.StatusCode,
+			Status:     res.Status,
+			WWWAuth:    wwwAuthHeader,
+		}
 	}
 	return res.Header.Get(ContentDigestHeader), nil
+}
+
+// RegistryStatusError 表示 registry 返回了非 200 状态码。
+// 保留状态码便于调用方按类型分级处理，避免靠错误文本做字符串匹配。
+type RegistryStatusError struct {
+	StatusCode int
+	Status     string
+	WWWAuth    string
+}
+
+func (e *RegistryStatusError) Error() string {
+	return fmt.Sprintf("registry responded to head request with %q, auth: %q", e.Status, e.WWWAuth)
+}
+
+// isAuthOrNotFoundErr 判断错误是否为鉴权失败或镜像不存在。
+// 这类结果在未配置凭据、使用私有仓库时属预期情况，不应记为 error。
+func isAuthOrNotFoundErr(err error) bool {
+	var statusErr *RegistryStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	switch statusErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
 }
