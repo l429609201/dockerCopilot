@@ -128,6 +128,9 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 		networkingConfig = &network.NetworkingConfig{}
 	}
 
+	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败
+	utiles.SanitizeCreateConfig(name, &newConfig, &newHostConfig, networkingConfig)
+
 	report(30, "停止旧容器")
 	timeout := 10
 	_ = cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout})
