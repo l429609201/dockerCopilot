@@ -3,6 +3,8 @@ package svc
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"sync"
@@ -12,6 +14,56 @@ import (
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// 远程 Docker 主机的连接层超时。
+// 注意：这里刻意不设置 http.Client.Timeout —— 那是请求的墙钟总时长，
+// 会把 ImagePull / ContainerLogs / Events 这类长连接流式响应在读 body 途中截断
+// （典型报错：context deadline exceeded while reading body）。
+// 只约束「建连 / TLS 握手 / 等首个响应头」这三段，主机不可达时能快速失败，
+// 而一旦服务端开始正常回流数据，就允许它想传多久传多久。
+const (
+	remoteDialTimeout           = 10 * time.Second // 建立 TCP 连接
+	remoteTLSHandshakeTimeout   = 10 * time.Second // TLS 握手
+	remoteResponseHeaderTimeout = 30 * time.Second // 发完请求到收到响应头
+)
+
+// newRemoteHTTPClient 构造远程 Docker 主机专用的 HTTP client。
+// 超时全部落在 Transport 层，Client.Timeout 保持零值（不限制总时长）。
+// Proxy/DisableCompression 与 SDK 默认 Transport 对齐（见 sockets.ConfigureTransport），
+// 保证显式传入 client 后代理等行为不变。
+func newRemoteHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:              http.ProxyFromEnvironment,
+			DisableCompression: false,
+			DialContext: (&net.Dialer{
+				Timeout:   remoteDialTimeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   remoteTLSHandshakeTimeout,
+			ResponseHeaderTimeout: remoteResponseHeaderTimeout,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConnsPerHost:   4,
+		},
+	}
+}
+
+// withRemoteDialer 重设 Transport 的 DialContext。
+// 需要它是因为 client.WithHost 内部的 sockets.ConfigureTransport 会把 DialContext
+// 覆盖成一个只带 Timeout、没有 KeepAlive 的裸 dialer，因此必须在 WithHost 之后执行。
+func withRemoteDialer() client.Opt {
+	return func(c *client.Client) error {
+		tr, ok := c.HTTPClient().Transport.(*http.Transport)
+		if !ok {
+			return fmt.Errorf("远程 docker client 的 Transport 类型异常: %T", c.HTTPClient().Transport)
+		}
+		tr.DialContext = (&net.Dialer{
+			Timeout:   remoteDialTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+		return nil
+	}
+}
 
 // DockerManager 管理多个 Docker 主机的 client 连接池。
 // 内部按 hostID 维护 *client.Client；本地主机 ID 恒为 appconfig.DockerHostLocalID。
@@ -39,11 +91,19 @@ func newClientForHost(h appconfig.DockerHost) (*client.Client, error) {
 		// 本地：沿用 FromEnv，兼容各种运行环境
 		return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	}
-	// 远程：指定 tcp:// 地址并设置整体超时，避免不可达主机长时间阻塞
+	// 远程：指定 tcp:// 地址，超时交给自定义 Transport（见 newRemoteHTTPClient），
+	// 不用 client.WithTimeout —— 它设的是请求总时长，会截断镜像拉取等流式响应。
+	//
+	// opts 顺序有讲究，SDK 按 slice 次序逐个应用：
+	//  1. WithHTTPClient 先换上自定义 client，后续 opt 才作用在它身上；
+	//  2. WithHost 内部调 sockets.ConfigureTransport 做协议相关配置，
+	//     但它会覆盖 DialContext（换成不带 KeepAlive 的裸 dialer）；
+	//  3. 所以最后再用 withRemoteDialer 把 dialer 修回来。
 	opts := []client.Opt{
+		client.WithHTTPClient(newRemoteHTTPClient()),
 		client.WithHost(h.Address),
+		withRemoteDialer(),
 		client.WithAPIVersionNegotiation(),
-		client.WithTimeout(10 * time.Second),
 	}
 	// 附加自定义请求头（经反向代理/网关鉴权时携带 Authorization、X-Api-Key 等）
 	if len(h.Headers) > 0 {
