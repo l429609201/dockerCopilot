@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/l429609201/dockerCopilot/internal/utiles"
 )
 
 // EditSpec 承载容器重建时的可编辑字段。
@@ -46,8 +47,12 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 			progress(pct, msg)
 		}
 	}
-	// 按 Service 绑定的主机取 client，保证远程主机的容器也能正确重建
-	cli := s.cli()
+	// 按 Service 绑定的主机取 client，保证远程主机的容器也能正确重建；
+	// 主机不可达时直接报错，绝不回退到本地，避免误操作本地同名容器
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
 
 	report(10, "读取原容器配置")
 	inspected, err := cli.ContainerInspect(ctx, id)
@@ -123,6 +128,9 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 		networkingConfig = &network.NetworkingConfig{}
 	}
 
+	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败
+	utiles.SanitizeCreateConfig(name, &newConfig, &newHostConfig, networkingConfig)
+
 	report(30, "停止旧容器")
 	timeout := 10
 	_ = cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout})
@@ -155,6 +163,15 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 		report(95, "删除旧容器")
 		_ = cli.ContainerRemove(context.Background(), id, container.RemoveOptions{})
 	}
+
+	// 重建成功后清理历史 -old- 备份，避免无限累积：
+	// KeepOld=true 本次留了 1 个 → 只保留最新 1 个；KeepOld=false 本次已删 → 清空全部历史残留。
+	keep := 0
+	if spec.KeepOld {
+		keep = 1
+	}
+	utiles.CleanupOldBackups(cli, name, keep)
+
 	report(100, "参数编辑完成")
 	return nil
 }

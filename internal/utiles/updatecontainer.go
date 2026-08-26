@@ -16,9 +16,18 @@ import (
 	"github.com/docker/docker/api/types/network"
 	dockerMsgType "github.com/docker/docker/pkg/jsonmessage"
 
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/zeromicro/go-zero/core/logx"
 )
+
+// displayHostID 用于日志/错误提示的主机标识：空串归一为本地ID，避免出现 "主机[]"。
+func displayHostID(hostID string) string {
+	if hostID == "" {
+		return appconfig.DockerHostLocalID
+	}
+	return hostID
+}
 
 // UpdateContainer 兼容旧签名的入口（本地主机），内部使用后台 context 调用带 context 版本。
 func UpdateContainer(serviceContext *svc.ServiceContext, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string) error {
@@ -40,10 +49,25 @@ func UpdateContainerWithAuth(ctx context.Context, serviceContext *svc.ServiceCon
 // 在关键步骤前检查 ctx 是否已取消，取消时立即中止并标记任务失败，
 // 从而支持前端/机器人主动取消长时间运行的更新任务。
 func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceContext, hostID string, id string, name string, imageNameAndTag string, delOldContainer bool, taskID string, registryAuth string) error {
-	// 按目标主机取 client，未找到回退本地；后续流程统一用此 cli
+	// 按目标主机取 client。取不到时必须直接失败，不能回退本地：
+	// 否则会拿本地 client 去停删/重建远程主机上的同名容器，误操作后果远重于更新失败。
+	// GetClient 内部已将空 hostID 归一为本地，本地连接正常时必然命中。
 	cli, ok := serviceContext.DockerManager.GetClient(hostID)
 	if !ok || cli == nil {
-		cli = serviceContext.DockerClient
+		err := fmt.Errorf("目标 Docker 主机[%s]未连接，已中止更新以避免误操作其他主机", displayHostID(hostID))
+		logx.Errorf("更新容器 %s 失败: %v", name, err)
+		serviceContext.UpdateProgress(taskID, svc.TaskProgress{
+			TaskID:     taskID,
+			Percentage: 0,
+			Name:       name,
+			Message:    "目标主机未连接",
+			DetailMsg:  err.Error(),
+			IsDone:     true,
+			Failed:     true,
+			TaskType:   svc.TaskTypeContainerUpdate,
+			ResourceID: id,
+		})
+		return err
 	}
 	serviceContext.UpdateProgress(taskID, svc.TaskProgress{
 		TaskID:     taskID,
@@ -106,6 +130,31 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.Message = "拉取镜像成功"
 	oldTaskProgress.DetailMsg = "拉取镜像成功"
 
+	// 【增强】拉取完成后，对比新旧镜像 digest，避免"假更新"（标签漂移、远程回滚等导致新旧镜像实际相同）
+	newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+	if err != nil {
+		logx.Errorf("获取新镜像信息失败: %v，跳过 digest 校验继续更新", err)
+	} else {
+		newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
+		// 如果新旧 digest 完全相同，说明拉取下来的镜像与本地已有镜像一致，跳过无意义的重启
+		if oldTaskProgress.OldImageDigest != "" && newDigest == oldTaskProgress.OldImageDigest {
+			logx.Infof("新旧镜像 digest 相同 (%s)，无需更新", newDigest)
+			oldTaskProgress.Message = "已是最新版本"
+			oldTaskProgress.DetailMsg = "镜像 digest 未变化，无需更新"
+			oldTaskProgress.Percentage = 100
+			oldTaskProgress.IsDone = true
+			// 保留新旧 digest 和大小字段供前端展示（size 相同时前端可识别为"假更新"）
+			oldTaskProgress.NewImageDigest = newDigest
+			oldTaskProgress.NewImageSize = newImageInfo.Size
+			serviceContext.UpdateProgress(taskID, oldTaskProgress)
+			return nil
+		}
+		// digest 不同，继续更新流程，提前记录新镜像信息
+		logx.Infof("新镜像 digest: %s (旧: %s)，继续更新", newDigest, oldTaskProgress.OldImageDigest)
+		oldTaskProgress.NewImageDigest = newDigest
+		oldTaskProgress.NewImageSize = newImageInfo.Size
+	}
+
 	// 【特殊处理】如果是 DC 自我更新，交给辅助容器处理
 	// 检测逻辑：对比当前容器ID与要更新的容器ID
 	selfID := os.Getenv("HOSTNAME") // Docker 容器内 HOSTNAME 通常是容器ID的短格式
@@ -161,10 +210,34 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 		EndpointsConfig: inspectedContainer.NetworkSettings.Networks,
 	}
 
+	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败。
+	// 必须放在停止/删除旧容器之前，保证配置有问题时旧容器仍然完好。
+	SanitizeCreateConfig(name, config, hostConfig, networkingConfig)
+
 	oldTaskProgress.Percentage = 40
 	oldTaskProgress.Message = "正在停止旧容器"
 	oldTaskProgress.DetailMsg = "正在停止旧容器"
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
+
+	// backupName 为本次保留下来的旧容器备份名（仅 !delOldContainer 且重命名成功时有值），
+	// 同时用于失败回滚恢复。提前声明以便下方 defer 清理闭包捕获其最终值。
+	var backupName string
+
+	// 清理历史 -old- 备份放在 defer 中执行：无论本次更新成功或失败都会收尾。
+	// 原实现只在成功路径末尾清理，导致定时更新在无人值守下连续失败时，
+	// 每轮留下的备份再没有机会被回收，最终无限累积。
+	//
+	// keep 的取值依据「本次是否真的留下了备份」，而不是 delOldContainer 意图：
+	//   - backupName != ""：本次留了 1 个（可能仍作为回滚目标存在），保留最新 1 个；
+	//   - backupName == ""：本次没留（删除成功，或还没走到重命名那一步），清空全部历史。
+	// 这样失败路径不会把刚刚用于回滚的备份误删。
+	defer func() {
+		keep := 0
+		if backupName != "" {
+			keep = 1
+		}
+		CleanupOldBackups(cli, name, keep)
+	}()
 
 	// 从停止旧容器开始进入关键区：此后不再响应取消/超时
 	stopOptions := container.StopOptions{
@@ -183,8 +256,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 删除旧容器（释放容器名，如果配置要求保留则重命名）
-	// backupName 用于失败回滚时恢复（仅 !delOldContainer 时有值）
-	var backupName string
+	// backupName 已在上方关键区前声明，赋值后由 defer 清理逻辑读取
 	if delOldContainer {
 		err = cli.ContainerRemove(context.Background(), id, container.RemoveOptions{Force: true})
 		if err != nil {
@@ -192,9 +264,9 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 			return err
 		}
 	} else {
-		// 保留旧容器：重命名为带时间戳的备份名
-		currentDate := time.Now().Format("2006-01-02-15-04-05")
-		backupName = name + "-" + currentDate
+		// 保留旧容器：重命名为带时间戳的备份名（统一 {name}-old-{时间戳} 格式，供 CleanupOldBackups 识别）
+		currentDate := time.Now().Format("20060102150405")
+		backupName = name + "-old-" + currentDate
 		err = cli.ContainerRename(context.Background(), id, backupName)
 		if err != nil {
 			markTaskFailed(serviceContext, taskID, &oldTaskProgress, "重命名旧容器失败", err)
@@ -255,16 +327,17 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 		return err
 	}
 
-	// 【增强】收集新镜像信息（SHA256、大小）
-	newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
-	if err != nil {
-		logx.Errorf("获取新镜像信息失败: %v，但容器已成功启动", err)
-	} else {
-		// 提取 SHA256（去掉 sha256: 前缀）
-		newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
-		oldTaskProgress.NewImageDigest = newDigest
-		oldTaskProgress.NewImageSize = newImageInfo.Size
-		logx.Infof("新镜像信息 - Digest: %s, Size: %d bytes", newDigest, newImageInfo.Size)
+	// 【增强】补充收集新镜像信息（仅当拉取后未成功收集时）
+	if oldTaskProgress.NewImageDigest == "" {
+		newImageInfo, _, err := cli.ImageInspectWithRaw(context.Background(), imageNameAndTag)
+		if err != nil {
+			logx.Errorf("补充获取新镜像信息失败: %v，但容器已成功启动", err)
+		} else {
+			newDigest := strings.TrimPrefix(newImageInfo.ID, "sha256:")
+			oldTaskProgress.NewImageDigest = newDigest
+			oldTaskProgress.NewImageSize = newImageInfo.Size
+			logx.Infof("新镜像信息 - Digest: %s, Size: %d bytes", newDigest, newImageInfo.Size)
+		}
 	}
 
 	oldTaskProgress.Message = "更新成功"
@@ -272,6 +345,8 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	oldTaskProgress.Percentage = 100
 	oldTaskProgress.IsDone = true
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
+
+	// 历史 -old- 备份的清理已统一移至函数开头的 defer，成功与失败路径都会执行
 	return nil
 }
 

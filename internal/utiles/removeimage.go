@@ -2,6 +2,8 @@ package utiles
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/docker/docker/api/types/image"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 )
@@ -12,11 +14,11 @@ func RemoveImage(ctx *svc.ServiceContext, imageID string, force bool) error {
 }
 
 // RemoveImageOnHost 在指定 Docker 主机上删除镜像。hostID 为空表示本地。
+// 主机不可达时直接报错，绝不回退本地：删除不可逆，回退会误删本地镜像。
 func RemoveImageOnHost(ctx *svc.ServiceContext, hostID string, imageID string, force bool) error {
-	// 定位目标主机客户端；不可用则回退本地，避免 nil 崩溃
 	cli, ok := ctx.DockerManager.GetClient(hostID)
 	if !ok || cli == nil {
-		cli = ctx.DockerClient
+		return fmt.Errorf("docker 主机 %s 无可用连接", hostID)
 	}
 	_, err := cli.ImageRemove(context.Background(), imageID, image.RemoveOptions{Force: force})
 	if err != nil {

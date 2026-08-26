@@ -20,12 +20,13 @@ const (
 	DefaultRegistryHost   = "index.docker.io"
 )
 
-var DefaultAcceleratorHostList = []string{"docker.1ms.run", "docker.m.daocloud.io",
-	"docker.1panel.top", "docker.1panel.live", "proxy.1panel.live", "dockerproxy.1panel.live", "docker.1panel.dev",
-	"docker.anye.in", "hub.rat.dev", "docker.amingg.com"}
+// authHTTPTimeout 认证类请求的超时。原实现用裸 http.Client{}（无超时），
+// registry 无响应时会永久挂住，并行检查下会持续占用 worker。
+const authHTTPTimeout = 15 * time.Second
 
 func GetToken(image types.Image, registryAuth string) (string, error) {
-	logx.Infof("image name %s", image.ImageName)
+	// 每个镜像每轮都会走到这里，用 Debug 级别避免刷屏掩盖真实错误
+	logx.Debugf("获取 token，镜像: %s", image.ImageName)
 	normalizedRef, err := ref.ParseNormalizedNamed(image.ImageName)
 	if err != nil {
 		return "", err
@@ -38,7 +39,7 @@ func GetToken(image types.Image, registryAuth string) (string, error) {
 		return "", err
 	}
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: authHTTPTimeout}
 	var res *http.Response
 	if res, err = client.Do(req); err != nil {
 		return "", err
@@ -77,7 +78,7 @@ func GetChallengeRequest(URL url.URL) (*http.Request, error) {
 }
 
 func GetBearerHeader(challenge string, imageRef ref.Named, registryAuth string) (string, error) {
-	client := http.Client{}
+	client := http.Client{Timeout: authHTTPTimeout}
 	authURL, err := GetAuthURL(challenge, imageRef)
 
 	if err != nil {
@@ -90,10 +91,11 @@ func GetBearerHeader(challenge string, imageRef ref.Named, registryAuth string) 
 	}
 
 	if registryAuth != "" {
-		logx.Info("私有镜像，无法获取是否有更新")
 		r.Header.Add("Authorization", fmt.Sprintf("Basic %s", registryAuth))
+		logx.Debug("使用已配置凭证请求 token")
 	} else {
-		logx.Info("No credentials found.")
+		// 公开镜像匿名拉取本就无需凭证，这不是错误，降为 Debug 避免噪音
+		logx.Debug("未配置 registry 凭证，按匿名方式获取 token")
 	}
 
 	var authResponse *http.Response
@@ -154,6 +156,16 @@ func GetChallengeURL(imageRef ref.Named) url.URL {
 	return URL
 }
 
+// GetRegistryAddress 解析镜像引用所属的 registry 地址。
+//
+// 只使用镜像自身声明的源站，不做任何加速站替换或可达性探测：
+//   - 镜像名显式带 registry（如 ghcr.io/x/y、docker.1ms.run/x/y）时原样返回，
+//     用户想走哪个镜像源就在镜像名里指定；
+//   - 未带 registry 的官方镜像（如 nginx:latest）归一到 Docker Hub 源站。
+//
+// 旧实现会串行探测 index.docker.io + 10 个加速站（每个 5s 超时），
+// 且每个镜像检查要走两遍，镜像多时整轮检查极慢；同时自动改写镜像源
+// 也让用户无法确定 digest 究竟来自哪个站点，故一并移除。
 func GetRegistryAddress(imageRef string) (string, error) {
 	normalizedRef, err := ref.ParseNormalizedNamed(imageRef)
 	if err != nil {
@@ -161,50 +173,8 @@ func GetRegistryAddress(imageRef string) (string, error) {
 	}
 
 	address := ref.Domain(normalizedRef)
-
 	if address == DefaultRegistryDomain {
-		if checkHost(DefaultRegistryHost) {
-			address = DefaultRegistryHost
-		} else {
-			for _, host := range DefaultAcceleratorHostList {
-				if checkHost(host) {
-					address = host
-					break
-				}
-			}
-		}
-		if address == DefaultRegistryDomain {
-			address = DefaultRegistryHost
-		}
+		address = DefaultRegistryHost
 	}
 	return address, nil
-}
-
-func checkHost(host string) bool {
-	URL := "https://" + host + "/v2/"
-	// 创建带有超时设置的 http.Client
-	client := http.Client{
-		Timeout: 5 * time.Second,
-	}
-	// 发送 HEAD 请求
-	resp, err := client.Get(URL)
-	if err != nil {
-		logx.Errorf("Failed to connect to %s: %s", URL, err)
-		return false
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			logx.Errorf("关闭body失败: %v", err)
-		}
-	}(resp.Body)
-
-	// 检查 HTTP 响应状态码
-	if resp.StatusCode == http.StatusOK ||
-		resp.StatusCode == http.StatusUnauthorized {
-		return true
-	}
-
-	logx.Errorf("Failed to connect to %s: %s", URL, resp.Status)
-	return false
 }

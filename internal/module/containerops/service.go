@@ -33,12 +33,29 @@ func NewForHost(svcCtx *svc.ServiceContext, hostID string) *Service {
 	return &Service{svcCtx: svcCtx, hostID: hostID}
 }
 
-// cli 返回当前主机对应的 docker client，未找到时回退本地。
-func (s *Service) cli() *dockerclient.Client {
-	if c, ok := s.svcCtx.DockerManager.GetClient(s.hostID); ok {
-		return c
+// cliOrErr 返回当前主机对应的 docker client；主机无可用连接时返回错误。
+// 不再回退本地：远程主机不可达时若回退，会把 start/stop/update 等写操作误打到本地 Docker。
+func (s *Service) cliOrErr() (*dockerclient.Client, error) {
+	c, ok := s.svcCtx.DockerManager.GetClient(s.hostID)
+	if !ok || c == nil {
+		return nil, fmt.Errorf("docker 主机 %s 无可用连接", s.hostLabel())
 	}
-	return s.svcCtx.DockerClient
+	return c, nil
+}
+
+// hostLabel 返回用于报错的主机标识，空 hostID 显示为「本地」。
+func (s *Service) hostLabel() string {
+	if s.hostID == "" {
+		return "本地"
+	}
+	return s.hostID
+}
+
+// cli 返回当前主机对应的 docker client，无可用连接时返回 nil。
+// 仅供已通过 cliOrErr 校验过的内部路径使用，新增代码请优先用 cliOrErr。
+func (s *Service) cli() *dockerclient.Client {
+	c, _ := s.svcCtx.DockerManager.GetClient(s.hostID)
+	return c
 }
 
 // ResolveIDByName 按容器名查找容器ID，未找到返回错误。
@@ -60,45 +77,73 @@ func (s *Service) ResolveIDByName(name string) (string, error) {
 
 // Start 启动容器。
 func (s *Service) Start(id string) error {
-	return s.cli().ContainerStart(context.Background(), id, container.StartOptions{})
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerStart(context.Background(), id, container.StartOptions{})
 }
 
 // Stop 停止容器，timeout 为优雅停止秒数。
 func (s *Service) Stop(id string, timeoutSec int) error {
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
 	if timeoutSec <= 0 {
 		timeoutSec = 10
 	}
 	opts := container.StopOptions{Signal: "SIGINT", Timeout: &timeoutSec}
-	return s.cli().ContainerStop(context.Background(), id, opts)
+	return cli.ContainerStop(context.Background(), id, opts)
 }
 
 // Restart 重启容器。
 func (s *Service) Restart(id string, timeoutSec int) error {
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
 	if timeoutSec <= 0 {
 		timeoutSec = 10
 	}
 	opts := container.StopOptions{Signal: "SIGINT", Timeout: &timeoutSec}
-	return s.cli().ContainerRestart(context.Background(), id, opts)
+	return cli.ContainerRestart(context.Background(), id, opts)
 }
 
 // Pause 暂停容器。
 func (s *Service) Pause(id string) error {
-	return s.cli().ContainerPause(context.Background(), id)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerPause(context.Background(), id)
 }
 
 // Unpause 恢复容器。
 func (s *Service) Unpause(id string) error {
-	return s.cli().ContainerUnpause(context.Background(), id)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerUnpause(context.Background(), id)
 }
 
 // Kill 强制终止容器（默认 SIGKILL）。
 func (s *Service) Kill(id string) error {
-	return s.cli().ContainerKill(context.Background(), id, "SIGKILL")
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerKill(context.Background(), id, "SIGKILL")
 }
 
 // Remove 删除容器。force 强制删除运行中容器，removeVolumes 删除匿名卷。
 func (s *Service) Remove(id string, force, removeVolumes bool) error {
-	return s.cli().ContainerRemove(context.Background(), id, container.RemoveOptions{
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerRemove(context.Background(), id, container.RemoveOptions{
 		Force:         force,
 		RemoveVolumes: removeVolumes,
 	})
@@ -106,7 +151,11 @@ func (s *Service) Remove(id string, force, removeVolumes bool) error {
 
 // Rename 重命名容器。
 func (s *Service) Rename(id, newName string) error {
-	return s.cli().ContainerRename(context.Background(), id, newName)
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return err
+	}
+	return cli.ContainerRename(context.Background(), id, newName)
 }
 
 // Update 更新容器：拉取 imageNameAndTag 指定镜像并重建容器。

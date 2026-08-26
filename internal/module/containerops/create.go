@@ -36,7 +36,10 @@ func (s *Service) Create(ctx context.Context, spec CreateSpec, progress func(pct
 			progress(pct, msg)
 		}
 	}
-	cli := s.cli()
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return "", err
+	}
 
 	if spec.Name == "" || spec.Image == "" {
 		return "", fmt.Errorf("容器名和镜像不能为空")

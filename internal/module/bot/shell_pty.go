@@ -67,18 +67,24 @@ func newPtyShell(svcCtx *svc.ServiceContext, containerID, hostID string, chatID,
 	}
 }
 
-// cli 返回本会话目标主机的 docker client，未找到回退本地。
-func (p *ptyShell) cli() *dockerclient.Client {
+// cliOrErr 返回本会话目标主机的 docker client。
+// 主机不可达时直接报错而非回退本地：远程容器与本地容器可能同名/同 ID 前缀，
+// 一旦回退会把命令执行到本地错误的容器上，属于高危误操作。
+func (p *ptyShell) cliOrErr() (*dockerclient.Client, error) {
 	if c, ok := p.svcCtx.DockerManager.GetClient(p.hostID); ok && c != nil {
-		return c
+		return c, nil
 	}
-	return p.svcCtx.DockerClient
+	return nil, fmt.Errorf("docker 主机 %s 无可用连接", p.hostID)
 }
 
 // Start 在目标容器内以非 TTY 方式执行给定命令数组，并挂载输出流。
 // 不依赖宿主机 docker CLI；非 TTY 保证输出中不含命令回显与终端控制序列。
 func (p *ptyShell) Start(cmd []string) error {
-	execResp, err := p.cli().ContainerExecCreate(p.ctx, p.containerID, container.ExecOptions{
+	cli, err := p.cliOrErr()
+	if err != nil {
+		return err
+	}
+	execResp, err := cli.ContainerExecCreate(p.ctx, p.containerID, container.ExecOptions{
 		Cmd:          cmd,
 		Tty:          false,
 		AttachStdin:  false,
@@ -90,7 +96,7 @@ func (p *ptyShell) Start(cmd []string) error {
 	}
 	p.execID = execResp.ID
 
-	hijack, err := p.cli().ContainerExecAttach(p.ctx, execResp.ID, container.ExecStartOptions{
+	hijack, err := cli.ContainerExecAttach(p.ctx, execResp.ID, container.ExecStartOptions{
 		Tty: false,
 	})
 	if err != nil {
@@ -106,7 +112,11 @@ func (p *ptyShell) ExitCode() int {
 	if p.execID == "" {
 		return -1
 	}
-	insp, err := p.cli().ContainerExecInspect(context.Background(), p.execID)
+	cli, err := p.cliOrErr()
+	if err != nil {
+		return -1
+	}
+	insp, err := cli.ContainerExecInspect(context.Background(), p.execID)
 	if err != nil {
 		return -1
 	}

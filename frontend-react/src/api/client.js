@@ -197,6 +197,8 @@ export const imageAPI = {
     apiClient.delete(`/api/image/${id}?force=${force}${hostId ? `&hostId=${encodeURIComponent(hostId)}` : ''}`),
   // 异步批量清理镜像：提交 ids 列表，返回 taskID；hostId 指定目标主机
   pruneImages: (ids, force = false, hostId = '') => apiClient.post('/api/images/prune', { ids, force, hostId }),
+  // 手动触发检测所有镜像更新（异步执行，立即返回）
+  checkUpdate: () => apiClient.post('/api/images/check-update'),
   // 通过 URL 绑定图标到镜像名（无需上传图片）
   setIconUrl: (imageName, url) => apiClient.post('/api/icons/url', { imageName, url }),
   // 自动抓取站点 favicon 并下载持久化到 /data/images，url 为容器访问地址

@@ -60,6 +60,7 @@ const (
 	TaskTypeComposeAction   = "compose_action"
 	TaskTypeScheduledUpdate = "scheduled_update"
 	TaskTypeImagePrune      = "image_prune" // 批量清理/删除镜像
+	TaskTypeImageCheck      = "image_check" // 手动触发的镜像更新检测（定时检测不建任务）
 )
 
 type TaskProgress struct {

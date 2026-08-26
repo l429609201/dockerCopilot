@@ -1,10 +1,12 @@
 # =============================================================================
 # Docker 多架构镜像构建工作流
 # =============================================================================
-# 分支策略：
-#   - test 分支：仅构建 AMD64(x86)，打 :test 标签，用于测试
-#   - main 分支：并行构建 AMD64 + ARM64，最后合并为一个多架构镜像，
-#                打 :{版本号} 与 :latest 标签
+# 触发策略：
+#   - test 分支 push：仅构建 AMD64(x86)，打 :test 标签，用于测试
+#   - 推送 v* 标签：并行构建 AMD64 + ARM64，合并为多架构镜像，
+#                   打 :{标签号} 与 :latest 标签。版本号直接取自 Git 标签名。
+#     注意：向 main 分支 push 不再触发构建，需显式打标签才发正式版，
+#     且标签必须位于 main 分支上（非 main 的标签会被拒绝）。
 #
 # 构建流程：
 #   prepare ──┬──> build-amd64 ──┬──> create-manifest（合并为单个多架构镜像）
@@ -17,7 +19,7 @@
 #   :xxx-amd64 / :xxx-arm64 这类中间标签，只保留 :{版本号}、:latest、:test。
 #
 # 失败语义：
-#   main 分支要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
+#   正式版要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
 #   不会把仅含 AMD64 的镜像伪装成多架构镜像发布出去；
 #   最后一步会逐个 inspect 最终标签，架构组成与预期不符即失败。
 # =============================================================================
@@ -27,9 +29,11 @@ name: docker-build-push
 on:
   workflow_dispatch:
   push:
+    # main 分支不在此列：正式版由打标签触发，而非合入 main 即构建
     branches:
-      - main
       - test
+    tags:
+      - 'v*'
 
 # GHCR 推送需要包写权限
 permissions:
@@ -52,32 +56,62 @@ jobs:
     name: 📋 准备构建参数
     runs-on: ubuntu-latest
     outputs:
-      image_tag: ${{ steps.prep.outputs.image_tag }}   # 主镜像标签(test 或 版本号)
-      extra_tags: ${{ steps.prep.outputs.extra_tags }} # 额外标签(main 时为 latest)
+      image_tag: ${{ steps.prep.outputs.image_tag }}   # 主镜像标签(test 或 v版本号)
+      extra_tags: ${{ steps.prep.outputs.extra_tags }} # 额外标签(正式版为 latest)
       build_arm: ${{ steps.prep.outputs.build_arm }}   # 是否构建 ARM64
       version: ${{ steps.prep.outputs.version }}       # 版本号
       build_date: ${{ steps.prep.outputs.build_date }} # 构建时间
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # 需要完整历史与所有分支引用，才能校验标签是否位于 main 分支
+          fetch-depth: 0
 
       - name: 解析构建参数
         id: prep
         run: |
-          VERSION=$(cat version)
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          set -euo pipefail
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-          # 分支策略
-          if [ "${{ github.ref_name }}" = "test" ]; then
-            # test 分支：仅构建 AMD64，打 :test
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # ---- 标签触发：正式版，版本号即标签号，双架构 ----
+            TAG_NAME="${{ github.ref_name }}"
+
+            # 校验标签格式：v 开头的语义化版本，可带 -rc.1 之类后缀
+            if ! echo "$TAG_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+              echo "❌ 标签格式非法：${TAG_NAME}，要求形如 v1.2.3 或 v1.2.3-rc.1"
+              exit 1
+            fi
+
+            # 校验标签必须位于 main 分支，避免从旧分支或功能分支误发正式版
+            if ! git branch -r --contains "${{ github.sha }}" | grep -qE 'origin/main$'; then
+              echo "❌ 标签 ${TAG_NAME} 所指提交不在 main 分支上，拒绝构建正式版"
+              exit 1
+            fi
+
+            # 版本号即标签名，保留 v 前缀（与 version 文件既有格式一致）
+            VERSION="${TAG_NAME}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "image_tag=${TAG_NAME}" >> $GITHUB_OUTPUT
+            echo "extra_tags=latest" >> $GITHUB_OUTPUT
+            echo "build_arm=true" >> $GITHUB_OUTPUT
+            echo "✅ 正式版构建：标签 ${TAG_NAME}，版本号 ${VERSION}，双架构"
+          else
+            # ---- 分支触发：仅允许 test 分支，产出测试版 ----
+            # workflow_dispatch 从非 test 分支手动触发时在此拦下，
+            # 避免把 main 的代码误发成 :test 标签。
+            if [ "${{ github.ref_name }}" != "test" ]; then
+              echo "❌ 分支 ${{ github.ref_name }} 不支持直接构建；正式版请打 v* 标签"
+              exit 1
+            fi
+            # 测试版：仅 AMD64，版本号取自 version 文件并加 -test 后缀
+            VERSION="$(cat version)-test"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
             echo "image_tag=test" >> $GITHUB_OUTPUT
             echo "extra_tags=" >> $GITHUB_OUTPUT
             echo "build_arm=false" >> $GITHUB_OUTPUT
-          else
-            # main 分支：双架构，打 :{版本号} + :latest
-            echo "image_tag=${VERSION}" >> $GITHUB_OUTPUT
-            echo "extra_tags=latest" >> $GITHUB_OUTPUT
-            echo "build_arm=true" >> $GITHUB_OUTPUT
+            echo "✅ 测试版构建：标签 test，版本号 ${VERSION}，仅 AMD64"
           fi
 
   # ---------------------------------------------------------------------------
@@ -122,7 +156,7 @@ jobs:
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
 
   # ---------------------------------------------------------------------------
-  # Job 3: 构建 ARM64 镜像（仅 main 分支，与 AMD64 并行）
+  # Job 3: 构建 ARM64 镜像（仅标签触发的正式版，与 AMD64 并行）
   # Dockerfile 中前端与 Go 编译阶段固定在原生 amd64 上跑（--platform=$BUILDPLATFORM），
   # Go 交叉编译出 arm64 二进制；QEMU 仅用于最后一层轻量运行时镜像。
   # ---------------------------------------------------------------------------
@@ -171,13 +205,13 @@ jobs:
   # Job 4: 合并多架构 Manifest
   # ---------------------------------------------------------------------------
   # 将 AMD64 与 ARM64 镜像合并为一个多架构镜像（拉取时自动匹配架构）
-  # test 分支只有 AMD64，则合并为单架构；main 分支合并双架构并追加 latest 标签
+  # test 分支只有 AMD64，则合并为单架构；标签触发合并双架构并追加 latest 标签
   # ---------------------------------------------------------------------------
   create-manifest:
     name: 📦 合并多架构 Manifest
     needs: [prepare, build-amd64, build-arm64]
     # always() 让 ARM 被跳过(test 分支)时仍能执行；
-    # 但 main 分支要求 ARM 必须成功——ARM 失败时不再静默降级为单架构发布，
+    # 但正式版要求 ARM 必须成功——ARM 失败时不再静默降级为单架构发布，
     # 具体判定在步骤内基于 build_arm 与 ARM digest 是否存在完成。
     if: always() && needs.build-amd64.result == 'success'
     runs-on: ubuntu-latest
@@ -221,7 +255,7 @@ jobs:
 
           # 组装参与合并的 digest 引用列表（源统一为 Docker Hub）
           if [ "$BUILD_ARM" = "true" ]; then
-            # main 分支：ARM64 必须成功，缺失则直接失败，绝不降级为单架构发布
+            # 正式版：ARM64 必须成功，缺失则直接失败，绝不降级为单架构发布
             if [ -z "$ARM_DIGEST" ]; then
               echo "❌ 需要双架构但 ARM64 digest 为空，中止发布"
               exit 1

@@ -1,7 +1,6 @@
 package module
 
 import (
-	"crypto/tls"
 	"errors"
 	"fmt"
 	ref "github.com/distribution/reference"
@@ -30,14 +29,66 @@ type ImageUpdateData struct {
 	Data map[string]ImageCheckList
 	// checking 标记后台是否正在执行一轮检查，用于避免重复触发。
 	checking bool
+	// digestCache 缓存远端 manifest digest，key 为 manifest URL。
+	// 同一轮内多个镜像可能指向同一 URL（多主机同镜像），跨轮则在 TTL 内复用，
+	// 避免对 registry 的重复 HEAD 请求（Docker Hub 有匿名速率限制）。
+	digestCache map[string]digestCacheEntry
+}
+
+// digestCacheEntry 单条 digest 缓存。只缓存成功结果，失败不缓存以便下轮立即重试。
+type digestCacheEntry struct {
+	digest   string
+	cachedAt time.Time
 }
 
 const ContentDigestHeader = "Docker-Content-Digest"
 
+const (
+	// digestCacheTTL 远端 digest 缓存有效期。取值需明显小于最小检查周期，
+	// 保证「用户手动点检查更新」能拿到较新结果，同时挡住同一轮内的重复请求。
+	digestCacheTTL = 5 * time.Minute
+	// checkConcurrency 单轮检查的并发度。并行发起 registry 请求，
+	// 上限避免大量镜像时打爆 registry 速率限制或本地连接数。
+	checkConcurrency = 8
+	// digestHTTPTimeout 单次 manifest HEAD 请求超时。
+	digestHTTPTimeout = 20 * time.Second
+)
+
 func NewImageCheck() *ImageUpdateData {
 	return &ImageUpdateData{
-		Data: map[string]ImageCheckList{},
+		Data:        map[string]ImageCheckList{},
+		digestCache: map[string]digestCacheEntry{},
 	}
+}
+
+// lookupDigestCache 读取未过期的 digest 缓存。
+func (i *ImageUpdateData) lookupDigestCache(url string) (string, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	e, ok := i.digestCache[url]
+	if !ok || time.Since(e.cachedAt) > digestCacheTTL {
+		return "", false
+	}
+	return e.digest, true
+}
+
+// storeDigestCache 写入 digest 缓存，同时顺带清理已过期条目，避免长期运行后无界增长。
+func (i *ImageUpdateData) storeDigestCache(url, digest string) {
+	if digest == "" {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.digestCache == nil {
+		i.digestCache = map[string]digestCacheEntry{}
+	}
+	now := time.Now()
+	for k, v := range i.digestCache {
+		if now.Sub(v.cachedAt) > digestCacheTTL {
+			delete(i.digestCache, k)
+		}
+	}
+	i.digestCache[url] = digestCacheEntry{digest: digest, cachedAt: now}
 }
 
 // NeedUpdate 以并发安全的方式读取指定镜像ID是否需要更新。
@@ -87,57 +138,171 @@ func (i *ImageUpdateData) endCheck() {
 	i.checking = false
 }
 
-// CheckUpdate 执行一轮镜像更新检查。
+// CheckUpdate 执行一轮镜像更新检查（无进度上报，供定时检查与启动检查使用）。
+func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
+	i.CheckUpdateWithProgress(imageList, nil)
+}
+
+// CheckProgress 单轮检查的进度回调参数。
+// done/total 为已完成/待检查镜像数，current 为刚检查完的镜像名（便于前端显示"正在检查 xxx"）。
+type CheckProgress struct {
+	Done    int
+	Total   int
+	Current string
+}
+
+// CheckUpdateWithProgress 执行一轮镜像更新检查，并在每个镜像检查完成后回调上报进度。
 // 通过 beginCheck/endCheck 去重，避免启动检查与定时检查并发执行；
 // 检查过程中出现的单镜像错误不会清空已有结果，保证前端状态稳定。
-func (i *ImageUpdateData) CheckUpdate(imageList []types.Image) {
+//
+// 镜像间以固定并发度并行检查：原实现串行遍历，镜像数量多时单轮耗时随数量线性增长。
+//
+// onProgress 可为 nil（定时/启动检查不需要进度）。返回值表示本轮是否真正执行：
+// false 说明已有检查在进行中，本轮被跳过，调用方据此给出对应提示而非显示一个空任务。
+func (i *ImageUpdateData) CheckUpdateWithProgress(imageList []types.Image, onProgress func(CheckProgress)) bool {
 	if !i.beginCheck() {
 		logx.Info("已有镜像更新检查在进行中，跳过本轮")
-		return
+		return false
 	}
 	defer i.endCheck()
+
+	// 先过滤掉不需要检查的镜像（自身镜像），再分发给 worker
+	targets := make([]types.Image, 0, len(imageList))
 	for _, image := range imageList {
 		if strings.Contains(image.ImageName, "0nlylty/dockercopilot") {
 			continue
 		}
-		i.checkSingleImage(image)
+		targets = append(targets, image)
 	}
+	total := len(targets)
+	if total == 0 {
+		if onProgress != nil {
+			onProgress(CheckProgress{Done: 0, Total: 0})
+		}
+		return true
+	}
+
+	workers := checkConcurrency
+	if total < workers {
+		workers = total
+	}
+	logx.Infof("开始镜像更新检查：%d 个镜像，并发度 %d", total, workers)
+	start := time.Now()
+
+	// 并发 worker 共同推进完成计数，故用独立互斥锁保护回调，
+	// 避免多个 goroutine 同时进入回调导致进度写入竞争。
+	var progressMu sync.Mutex
+	done := 0
+	report := func(name string) {
+		if onProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		done++
+		snapshot := CheckProgress{Done: done, Total: total, Current: name}
+		progressMu.Unlock()
+		onProgress(snapshot)
+	}
+
+	tasks := make(chan types.Image)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// 单个镜像 panic 不应带崩整轮检查
+			for image := range tasks {
+				func(img types.Image) {
+					// 无论检查成功、失败还是 panic，都要推进进度，否则进度会卡住不到 100%
+					defer func() {
+						if r := recover(); r != nil {
+							logx.Errorf("检查镜像 %s:%s 时 panic 已恢复: %v", img.ImageName, img.ImageTag, r)
+						}
+						report(img.ImageName + ":" + img.ImageTag)
+					}()
+					i.checkSingleImage(img)
+				}(image)
+			}
+		}()
+	}
+	for _, image := range targets {
+		tasks <- image
+	}
+	close(tasks)
+	wg.Wait()
+
+	logx.Infof("镜像更新检查完成：%d 个镜像，耗时 %s", total, time.Since(start).Round(time.Millisecond))
+	return true
 }
 
 func (i *ImageUpdateData) checkSingleImage(image types.Image) {
-	token, err := GetToken(image, "")
-	if err != nil {
-		logx.Error("获取token失败或者无需获取token，继续尝试检查" + err.Error())
+	imageRef := image.ImageName + ":" + image.ImageTag
+
+	// ImageName/ImageTag 解析失败的镜像（悬空镜像等）无法构造 manifest URL，直接跳过
+	if image.ImageName == "None" || image.ImageTag == "None" {
+		logx.Debugf("跳过无有效 tag 的镜像: %s (ID: %s)", imageRef, image.ID)
+		return
 	}
+
 	digestURL, err := BuildManifestURL(image)
 	if err != nil {
-		logx.Error("获取digestURL失败" + err.Error())
+		logx.Errorf("构造 manifest URL 失败 [%s]: %v", imageRef, err)
 		return
 	}
-	remoteDigest, err := GetDigest(digestURL, token)
-	if err != nil {
-		logx.Error("获取digest失败" + err.Error())
-		return
-	}
-	if len(image.RepoDigests) == 0 {
-		logx.Error("未在本地获取到repoDigest" + image.ImageName + ":" + image.ImageTag)
-		return
-	}
-	needUpdate := false
-	for _, localRepoDigests := range image.RepoDigests {
-		localDigest := strings.Split(localRepoDigests, "@")[1]
-		if remoteDigest != localDigest {
-			if remoteDigest == "" || localDigest == "" {
-				logx.Error("Digest为空" + image.ImageName + ":" + image.ImageTag)
-				continue
-			}
-			logx.Info(image.ImageName + ":" + image.ImageTag + " need update")
-			logx.Infof("localDigest: %s, remoteDigest: %s", localDigest, remoteDigest)
-			needUpdate = true
-		} else {
-			logx.Info(image.ImageName + ":" + image.ImageTag + " not need update")
-			needUpdate = false
+
+	// 优先命中缓存，省掉 token 获取 + manifest HEAD 两次网络往返
+	remoteDigest, cached := i.lookupDigestCache(digestURL)
+	if !cached {
+		// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
+		token, errToken := GetToken(image, "")
+		if errToken != nil {
+			logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
 		}
+		remoteDigest, err = GetDigest(digestURL, token)
+		if err != nil {
+			// 401/404 是私有仓库或未配置凭据时的预期结果，不算故障，降为 Info；
+			// go-zero 无 Warn 级别，故在文案中标注 warn 供前端与人工识别。
+			// 这样真正的网络故障、registry 不可用才会留在 error 里。
+			if isAuthOrNotFoundErr(err) {
+				logx.Infof("warn: 跳过无权限或不存在的镜像 [%s]: %v", imageRef, err)
+			} else {
+				logx.Errorf("获取远端 digest 失败 [%s] url=%s: %v", imageRef, digestURL, err)
+			}
+			return
+		}
+		i.storeDigestCache(digestURL, remoteDigest)
+	}
+
+	if len(image.RepoDigests) == 0 {
+		// 本地构建、未推送过的镜像没有 RepoDigests，无法比对，属正常情况
+		logx.Debugf("本地无 repoDigest，跳过比对 [%s]", imageRef)
+		return
+	}
+	if remoteDigest == "" {
+		logx.Errorf("远端返回的 digest 为空 [%s]", imageRef)
+		return
+	}
+
+	// 任一本地 digest 与远端一致即视为已是最新。
+	// 原实现在循环里反复覆盖 needUpdate，多条 RepoDigests 时结论被最后一条决定，会导致误判。
+	needUpdate := true
+	for _, localRepoDigests := range image.RepoDigests {
+		parts := strings.SplitN(localRepoDigests, "@", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			continue
+		}
+		if parts[1] == remoteDigest {
+			needUpdate = false
+			break
+		}
+	}
+	if needUpdate {
+		// 有更新是需要用户关注的结论，保持 Info
+		logx.Infof("镜像有更新 [%s] remoteDigest=%s localRepoDigests=%v",
+			imageRef, remoteDigest, image.RepoDigests)
+	} else {
+		// 已是最新占绝大多数，降为 Debug，避免每轮刷屏
+		logx.Debugf("镜像已是最新 [%s]", imageRef)
 	}
 	// 并发安全写入，禁止直接操作 map
 	i.setResult(image.ID, ImageCheckList{NeedUpdate: needUpdate})
@@ -168,8 +333,11 @@ func BuildManifestURL(image types.Image) (string, error) {
 	return url.String(), nil
 }
 
-func GetDigest(url string, token string) (string, error) {
-	tr := &http.Transport{
+// digestHTTPClient 供所有 manifest HEAD 请求共享。
+// 原实现每次调用都新建 Transport，并发检查时连接池无法复用、每个镜像都要重新 TLS 握手。
+var digestHTTPClient = &http.Client{
+	Timeout: digestHTTPTimeout,
+	Transport: &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -177,14 +345,18 @@ func GetDigest(url string, token string) (string, error) {
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   checkConcurrency,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
+	},
+}
 
-	req, _ := http.NewRequest("HEAD", url, nil)
+func GetDigest(url string, token string) (string, error) {
+	req, err := http.NewRequest("HEAD", url, nil)
+	if err != nil {
+		return "", err
+	}
 
 	if token != "" {
 		req.Header.Add("Authorization", token)
@@ -194,7 +366,7 @@ func GetDigest(url string, token string) (string, error) {
 	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+json")
 	req.Header.Add("Accept", "application/vnd.oci.image.index.v1+json")
 
-	res, err := client.Do(req)
+	res, err := digestHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -210,7 +382,38 @@ func GetDigest(url string, token string) (string, error) {
 		if wwwAuthHeader == "" {
 			wwwAuthHeader = "not present"
 		}
-		return "", fmt.Errorf("registry responded to head request with %q, auth: %q", res.Status, wwwAuthHeader)
+		return "", &RegistryStatusError{
+			StatusCode: res.StatusCode,
+			Status:     res.Status,
+			WWWAuth:    wwwAuthHeader,
+		}
 	}
 	return res.Header.Get(ContentDigestHeader), nil
+}
+
+// RegistryStatusError 表示 registry 返回了非 200 状态码。
+// 保留状态码便于调用方按类型分级处理，避免靠错误文本做字符串匹配。
+type RegistryStatusError struct {
+	StatusCode int
+	Status     string
+	WWWAuth    string
+}
+
+func (e *RegistryStatusError) Error() string {
+	return fmt.Sprintf("registry responded to head request with %q, auth: %q", e.Status, e.WWWAuth)
+}
+
+// isAuthOrNotFoundErr 判断错误是否为鉴权失败或镜像不存在。
+// 这类结果在未配置凭据、使用私有仓库时属预期情况，不应记为 error。
+func isAuthOrNotFoundErr(err error) bool {
+	var statusErr *RegistryStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	switch statusErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
 }

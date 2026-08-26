@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle, Server } from 'lucide-react'
+import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle, Server, Bell } from 'lucide-react'
 import { imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
@@ -28,6 +28,7 @@ export function Images() {
   const { addTask } = useTasks()
   // 删除/清理等操作的 loading（与列表查询的 loading 区分）
   const [actionLoading, setActionLoading] = useState(false)
+  const [checkingUpdate, setCheckingUpdate] = useState(false) // 更新检测进行中
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, image: null })
@@ -175,6 +176,23 @@ export function Images() {
     }
   }
 
+  // 手动触发检测所有镜像更新（异步执行，立即返回）
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      await imageAPI.checkUpdate()
+      setSuccess('已触发更新检测，请稍后刷新镜像列表查看结果')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (error) {
+      const errorMsg = error.response?.data?.msg || error.message || '触发更新检测失败'
+      setError(errorMsg)
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
   const formatImageSize = (sizeStr) => {
     if (!sizeStr) return '0 MB'
     return sizeStr.replace(/mb/gi, 'MB')
@@ -252,6 +270,14 @@ export function Images() {
             >
               <BrushCleaning className="h-4 w-4" />
               <span>未使用</span>
+            </button>
+            <button
+              onClick={handleCheckUpdate}
+              disabled={isLoading || checkingUpdate}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors disabled:opacity-50 text-sm font-medium"
+            >
+              <Bell className={`h-4 w-4 ${checkingUpdate ? 'animate-pulse' : ''}`} />
+              <span>检查更新</span>
             </button>
             <button
               onClick={fetchImages}
