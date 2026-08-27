@@ -198,32 +198,39 @@ export function ComposeFileManager({ onClose, onFileCreated }) {
         </div>
 
         {/* 工具栏 */}
-        <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700/50 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700/50 space-y-3">
+          {/* 路径导航栏 */}
+          <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={() => load(parent || '/compose')}
               disabled={current === '/compose' || loading}
-              className="p-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="p-1.5 flex-shrink-0 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
               title="上一级"
             >
               <ArrowUp className="h-4 w-4" />
             </button>
-            <code className="flex-1 text-xs bg-gray-50 dark:bg-gray-900 rounded px-2 py-1.5 break-all text-gray-700 dark:text-gray-300">
+            <code className="flex-1 min-w-0 text-xs bg-gray-50 dark:bg-gray-900 rounded px-2 py-1.5 text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-nowrap">
               {current}
             </code>
             <button onClick={() => load(current)} disabled={loading}
-              className="p-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40" title="刷新">
+              className="p-1.5 flex-shrink-0 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40" title="刷新">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* 操作按钮栏 */}
+          <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => setShowCreateFolder(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600">
-              <FolderPlus className="h-4 w-4" /> 新建文件夹
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 whitespace-nowrap">
+              <FolderPlus className="h-4 w-4" />
+              <span className="hidden sm:inline">新建文件夹</span>
+              <span className="sm:hidden">文件夹</span>
             </button>
             <button onClick={() => setShowCreateFile(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">
-              <Plus className="h-4 w-4" /> 新建 Compose 文件
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 whitespace-nowrap">
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">新建 Compose 文件</span>
+              <span className="sm:hidden">Compose</span>
             </button>
           </div>
         </div>

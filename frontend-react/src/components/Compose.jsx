@@ -109,19 +109,28 @@ export function Compose() {
         <div className="grid gap-3">
         {filteredProjects.map((p) => (
           <div key={p.id} className="card">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="min-w-0">
-                <div className="font-semibold text-gray-900 dark:text-white truncate">{p.name}</div>
-                <div className="text-xs text-gray-500 mt-0.5 truncate">{p.dir}</div>
-                <div className="text-xs text-gray-400 mt-0.5">{p.composeFile}</div>
+            <div className="flex items-start justify-between gap-4">
+              {/* 左侧：项目信息区 */}
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="font-semibold text-gray-900 dark:text-white break-words">
+                  {p.name}
+                </div>
+                <div className="text-xs text-gray-500 break-all">
+                  {p.dir}
+                </div>
+                <div className="text-xs text-gray-400 truncate">
+                  {p.composeFile}
+                </div>
               </div>
+
+              {/* 右侧：操作按钮区 */}
               <div className="flex items-center gap-1 flex-shrink-0">
                 <ActionBtn disabled={busyId === p.id} onClick={() => doAction(p, 'up')} icon={Play} title="启动" color="emerald" />
                 <ActionBtn disabled={busyId === p.id} onClick={() => doAction(p, 'down')} icon={Square} title="停止" color="red" />
                 <ActionBtn disabled={busyId === p.id} onClick={() => doAction(p, 'restart')} icon={RotateCw} title="重启" color="blue" />
                 <ActionBtn disabled={busyId === p.id} onClick={() => doAction(p, 'pull')} icon={Download} title="拉取" color="gray" />
                 <button onClick={() => setEditing({ project: p, filename: p.composeFile })}
-                  className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg" title="编辑">
+                  className="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-colors" title="编辑">
                   <FileEdit className="h-4 w-4" />
                 </button>
               </div>

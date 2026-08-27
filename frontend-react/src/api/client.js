@@ -358,6 +358,30 @@ export const githubAPI = {
   },
 }
 
+// 图标管理 API
+export const iconAPI = {
+  // 获取所有图标配置
+  getIcons: () => apiClient.get('/api/icons'),
+
+  // 上传图标文件
+  uploadIcon: (imageName, file) => {
+    const formData = new FormData()
+    formData.append('imageName', imageName)
+    formData.append('icon', file)
+    return apiClient.post('/api/icons', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
+  // 通过 URL 绑定图标
+  setIconURL: (imageName, iconURL) =>
+    apiClient.post('/api/icons/url', { imageName, iconURL }),
+
+  // 自动抓取站点 favicon 并持久化
+  fetchIcon: (imageName, url) =>
+    apiClient.post('/api/icons/fetch', { imageName, url }),
+}
+
 // 导出 apiClient 供其他组件使用
 export { apiClient }
 export default apiClient

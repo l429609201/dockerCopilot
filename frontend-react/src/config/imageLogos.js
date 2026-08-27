@@ -1,128 +1,109 @@
-// 内置常用镜像logo配置
-// 格式: { "镜像名称": "logo 文件路径" }
-// 支持镜像名称匹配，如 "nginx" 会匹配 "nginx:latest", "nginx:alpine" 等
+// 动态图标加载模块
+// 优先从后端 API 获取，后端没有时可自动从容器页面抓取 favicon
+import { iconAPI } from '../api/client.js'
 
-// 导入图片资源
-import MediaSaberLogo from '../assets/logos/media-saber.png';
-import MoviepilotLogo from '../assets/logos/moviepilot.png';
-import DockerCopilotLogo from '../assets/logos/docker-copilot.png';
-import MTPhotos from '../assets/logos/mt-photos.png';
-import ITToolsLogo from '../assets/logos/it-tools.webp';
-import SubStoreLogo from '../assets/logos/sub-store.webp';
-import JellyfinLogo from '../assets/logos/jellyfin.png';
-import RedisLogo from '../assets/logos/redis.png';
-import PostgresLogo from '../assets/logos/postgres.png';
-import SunPanelLogo from '../assets/logos/sun-panel.png';
-import QinglongLogo from '../assets/logos/qinglong.svg';
-import TransmissionLogo from '../assets/logos/transmission.png';
-import QBittorrentLogo from '../assets/logos/qbittorrent.webp';
-import FnDeskLogo from '../assets/logos/fndesk.png';
-import FNTVLogo from '../assets/logos/fntv.png';
-import CookiecloudLogo from '../assets/logos/cookiecloud.png';
-import CodeServerLogo from '../assets/logos/code-server.png';
-import IYUULogo from '../assets/logos/iyuu.png';
-import LuckyLogo from '../assets/logos/lucky.png';
-import EmbyserverLogo from '../assets/logos/embyserver.png';
-import AudiobookshelfLogo from '../assets/logos/audiobookshelf.png';
-import MySQLLogo from '../assets/logos/mysql.png';
-import OneApiLogo from '../assets/logos/one-api.png';
-import QDLogo from '../assets/logos/qd.png';
-import OneHubogo from '../assets/logos/one-hub.png';
-import ByteMuseLogo from '../assets/logos/byte-muse.jpg';
-import NextChatLogo from '../assets/logos/next-chat.png';
-import MdcNgLogo from '../assets/logos/mdc-ng.png';
-import RichDogLogo from '../assets/logos/rich-dog.svg';
-import MsTmdbLogo from '../assets/logos/ms_tmdb.png';
+// 运行时图标缓存（从后端加载）
+let dynamicIconCache = {}
+let cacheLoaded = false
+let loadingPromise = null
 
-export const builtInImageLogos = {
-  "xylplm/media-saber": MediaSaberLogo,
-  "xylplm/bm-simulate-xunlei-api-to-media-saber": MediaSaberLogo,
-  "jxxghp/moviepilot-v2": MoviepilotLogo,
-  "0nlylty/dockercopilot": DockerCopilotLogo,
-  "mtphotos/mt-photos": MTPhotos,
-  "kqstone/mt-photos-insightface-unofficial": MTPhotos,
-  "mtphotos/mt-photos-ai": MTPhotos,
-  "corentinth/it-tools": ITToolsLogo,
-  "xream/sub-store": SubStoreLogo,
-  "nyanmisaka/jellyfin": JellyfinLogo,
-  "redis": RedisLogo,
-  "postgres": PostgresLogo,
-  "hslr/sun-panel": SunPanelLogo,
-  "whyour/qinglong": QinglongLogo,
-  "linuxserver/transmission": TransmissionLogo,
-  "linuxserver/qbittorrent": QBittorrentLogo,
-  "imgzcq/fndesk": FnDeskLogo,
-  "qiaokes/fntv-record-view": FNTVLogo,
-  "easychen/cookiecloud": CookiecloudLogo,
-  "codercom/code-server": CodeServerLogo,
-  "iyuucn/iyuuplus": IYUULogo,
-  "iyuucn/iyuuplus-dev-nodb": IYUULogo,
-  "gdy666/lucky": LuckyLogo,
-  "amilys/embyserver": EmbyserverLogo,
-  "audiobookshelf": AudiobookshelfLogo,
-  "mysql": MySQLLogo,
-  "qdtoday/qd": QDLogo,
-  "songquanpeng/one-api": OneApiLogo,
-  "martialbe/one-api": OneHubogo,
-  "envyafish/byte-muse":ByteMuseLogo,
-  "yidadaa/chatgpt-next-web":NextChatLogo,
-  "mdcng/mdc":MdcNgLogo,
-  "zhaoyangguang/rebatedog":RichDogLogo,
-  "gatecross/ms_tmdb":MsTmdbLogo,
-  "ms_tmdb":MsTmdbLogo,
-};
+// 从后端加载图标配置
+async function loadIconsFromBackend() {
+  if (cacheLoaded) return dynamicIconCache
+  if (loadingPromise) return loadingPromise
+
+  loadingPromise = (async () => {
+    try {
+      const response = await iconAPI.getIcons()
+      if (response.data?.code === 200 && response.data?.data) {
+        dynamicIconCache = response.data.data
+        cacheLoaded = true
+        console.log('✅ 已加载图标配置，共', Object.keys(dynamicIconCache).length, '个镜像')
+      }
+    } catch (error) {
+      console.warn('⚠️ 加载图标配置失败:', error.message)
+    } finally {
+      loadingPromise = null
+    }
+    return dynamicIconCache
+  })()
+
+  return loadingPromise
+}
+
+// 初始化时自动加载
+loadIconsFromBackend()
+
+// 导出空对象（向后兼容，实际不再使用）
+export const builtInImageLogos = {}
 
 // 获取镜像的logo
-// 优先级: 内置logo > 用户自定义 > 默认图标
-export const getImageLogo = (imageName, customLogos = {}) => {
-  // 先检查内置logo（优先级最高）
-  const baseImageName = imageName.split(':')[0]; // 去掉tag部分
+// 优先级: 动态加载的图标 > 用户自定义 > 默认图标
+export const getImageLogo = async (imageName, customLogos = {}) => {
+  // 确保已加载后端配置
+  await loadIconsFromBackend()
 
-  // 优先匹配完整镜像名（包含 registry/namespace）
-  if (builtInImageLogos[baseImageName]) {
-    return builtInImageLogos[baseImageName];
+  const baseImageName = imageName.split(':')[0] // 去掉tag部分
+  const simpleName = baseImageName.split('/').pop()
+
+  // 优先匹配动态加载的图标（精确匹配）
+  if (dynamicIconCache[baseImageName]) {
+    return dynamicIconCache[baseImageName]
+  }
+  if (dynamicIconCache[simpleName]) {
+    return dynamicIconCache[simpleName]
   }
 
-  // 尝试匹配最后一段镜像名（去掉 registry/namespace）
-  const simpleName = baseImageName.split('/').pop();
-  if (builtInImageLogos[simpleName]) {
-    return builtInImageLogos[simpleName];
+  // 大小写不敏感匹配（动态图标）
+  const lowerBaseImageName = baseImageName.toLowerCase()
+  const lowerSimpleName = simpleName.toLowerCase()
+
+  for (const [key, url] of Object.entries(dynamicIconCache)) {
+    if (key.toLowerCase() === lowerBaseImageName) {
+      return url
+    }
   }
 
-  // 如果仍未匹配，使用关键字（子串）匹配
-  for (const [key, url] of Object.entries(builtInImageLogos)) {
-    if (!key) continue;
+  for (const [key, url] of Object.entries(dynamicIconCache)) {
+    const keySimple = key.split('/').pop().toLowerCase()
+    if (keySimple === lowerSimpleName) {
+      return url
+    }
+  }
+
+  // 模糊匹配（动态图标）
+  for (const [key, url] of Object.entries(dynamicIconCache)) {
+    if (!key) continue
     try {
-      if (baseImageName.includes(key) || simpleName.includes(key)) {
-        return url;
+      const lowerKey = key.toLowerCase()
+      if (lowerBaseImageName.includes(lowerKey) || lowerSimpleName.includes(lowerKey)) {
+        return url
       }
     } catch (e) {
-      // 防御性代码：忽略任何异常并继续
+      // 忽略异常
     }
   }
 
   // 再检查用户自定义的logo
   if (customLogos[imageName]) {
-    return customLogos[imageName];
+    return customLogos[imageName]
   }
   if (customLogos[baseImageName]) {
-    return customLogos[baseImageName];
+    return customLogos[baseImageName]
   }
   if (customLogos[simpleName]) {
-    return customLogos[simpleName];
+    return customLogos[simpleName]
   }
 
   // 尝试自定义图标的模糊匹配
   for (const [key, url] of Object.entries(customLogos)) {
-    if (!key) continue;
+    if (!key) continue
     try {
-      // 检查key是否是imageName的前缀（处理tag不同的情况）
       if (baseImageName === key || baseImageName.startsWith(key + ':') || baseImageName.startsWith(key + '/')) {
-        return url;
+        return url
       }
-      // 反向检查：如果自定义图标配置的是 nginx:latest，但当前是 nginx
       if (key.split(':')[0] === baseImageName) {
-        return url;
+        return url
       }
     } catch (e) {
       // 忽略异常
@@ -130,32 +111,33 @@ export const getImageLogo = (imageName, customLogos = {}) => {
   }
 
   // 没有找到logo，返回null
-  return null;
-};
+  return null
+}
 
 // 获取所有支持的镜像名称列表
 export const getSupportedImageNames = () => {
-  return Object.keys(builtInImageLogos);
-};
+  return Object.keys(dynamicIconCache)
+}
 
 // 检查镜像是否有内置logo
-export const hasBuiltInLogo = (imageName) => {
-  const baseImageName = imageName.split(':')[0];
-  if (builtInImageLogos[baseImageName]) return true;
-  const simpleName = baseImageName.split('/').pop();
-  if (builtInImageLogos[simpleName]) return true;
+export const hasBuiltInLogo = async (imageName) => {
+  await loadIconsFromBackend()
+  const baseImageName = imageName.split(':')[0]
+  if (dynamicIconCache[baseImageName]) return true
+  const simpleName = baseImageName.split('/').pop()
+  if (dynamicIconCache[simpleName]) return true
 
   // 关键字（子串）匹配
-  for (const key of Object.keys(builtInImageLogos)) {
-    if (!key) continue;
+  for (const key of Object.keys(dynamicIconCache)) {
+    if (!key) continue
     try {
-      if (baseImageName.includes(key) || simpleName.includes(key)) return true;
+      if (baseImageName.includes(key) || simpleName.includes(key)) return true
     } catch (e) {
       // 忽略并继续
     }
   }
-  return false;
-};
+  return false
+}
 
 /**
  * 统一解析容器图标 URL（卡片/列表/详情共用，保证优先级一致）。
