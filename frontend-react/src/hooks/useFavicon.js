@@ -193,14 +193,21 @@ async function persistIconToServer(container, iconUrl, containerUrl) {
     const imageName = container.image.split(':')[0]
 
     // 调用后端接口下载并保存
-    await imageAPI.fetchIcon({
+    const response = await imageAPI.fetchIcon({
       imageName: imageName,
-      url: containerUrl
+      url: containerUrl,
+      targetType: 'image' // 明确指定类型
     })
 
     console.log(`✅ 图标已持久化: ${imageName} -> ${iconUrl}`)
+    console.debug('持久化响应:', response)
   } catch (error) {
-    // 静默失败，不影响用户体验
-    console.debug(`图标持久化失败 (${container.name}):`, error.message)
+    // 输出详细错误信息用于调试
+    console.error(`❌ 图标持久化失败 (${container.name}):`, {
+      imageName: container.image.split(':')[0],
+      containerUrl,
+      error: error.message,
+      response: error.response?.data
+    })
   }
 }
