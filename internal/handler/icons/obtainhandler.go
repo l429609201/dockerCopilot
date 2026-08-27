@@ -47,6 +47,46 @@ func writeIconsConfig(icons []IconItem) error {
 	return os.WriteFile(iconsConfigPath, data, 0644)
 }
 
+// ensureBuiltInIcons 确保内置图标配置存在（DockerCopilot 自身的图标）
+func ensureBuiltInIcons() error {
+	icons, err := readIconsConfig()
+	if err != nil {
+		return err
+	}
+
+	// 检查是否已存在 DockerCopilot 图标配置
+	hasDockerCopilot := false
+	for _, item := range icons {
+		if item.TargetType == "image" &&
+		   (item.Target == "dockercopilot" || item.Target == "ghcr.io/l429609201/dockercopilot") {
+			hasDockerCopilot = true
+			break
+		}
+	}
+
+	// 如果不存在，添加内置配置
+	if !hasDockerCopilot {
+		builtInIcons := []IconItem{
+			{
+				Target:     "dockercopilot",
+				TargetType: "image",
+				IconURL:    "/images/dockercopilot-favicon.png",
+				Priority:   2,
+			},
+			{
+				Target:     "ghcr.io/l429609201/dockercopilot",
+				TargetType: "image",
+				IconURL:    "/images/dockercopilot-favicon.png",
+				Priority:   2,
+			},
+		}
+		icons = append(icons, builtInIcons...)
+		return writeIconsConfig(icons)
+	}
+
+	return nil
+}
+
 // addOrUpdateIcon 添加或更新图标配置
 func addOrUpdateIcon(target, targetType, iconURL string, priority int) error {
 	icons, err := readIconsConfig()
@@ -82,6 +122,11 @@ func addOrUpdateIcon(target, targetType, iconURL string, priority int) error {
 func ObtainHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logx.Info("获取图标配置")
+
+		// 确保内置图标配置存在（首次调用时自动添加）
+		if err := ensureBuiltInIcons(); err != nil {
+			logx.Errorf("初始化内置图标配置失败: %v", err)
+		}
 
 		// 读取新格式配置文件（icons.json）
 		data, err := os.ReadFile(iconsConfigPath)

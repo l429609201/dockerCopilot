@@ -68,7 +68,7 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 
 		// 3. 确保目录存在
-		dataPath := "/data/images"
+		dataPath := filepath.Join("data", "images")
 		if err := os.MkdirAll(dataPath, 0o755); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "failed to prepare upload dir")
 			return

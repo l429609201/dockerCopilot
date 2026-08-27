@@ -209,6 +209,22 @@ func RegisterHandlers(engine *rest.Server) {
 					imagesFileServer.ServeHTTP(w, r)
 				},
 			},
+			{
+				// DockerCopilot 自身的 favicon（用于容器卡片图标显示）
+				Method: http.MethodGet,
+				Path:   "/favicon.png",
+				Handler: func(w http.ResponseWriter, r *http.Request) {
+					http.ServeFile(w, r, "/data/images/dockercopilot-favicon.png")
+				},
+			},
+			{
+				// 兼容 /favicon.ico 请求
+				Method: http.MethodGet,
+				Path:   "/favicon.ico",
+				Handler: func(w http.ResponseWriter, r *http.Request) {
+					http.ServeFile(w, r, "/data/images/dockercopilot-favicon.png")
+				},
+			},
 		},
 	)
 
