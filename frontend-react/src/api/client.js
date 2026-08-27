@@ -358,4 +358,6 @@ export const githubAPI = {
   },
 }
 
+// 导出 apiClient 供其他组件使用
+export { apiClient }
 export default apiClient
