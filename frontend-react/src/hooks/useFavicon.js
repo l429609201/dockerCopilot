@@ -130,13 +130,43 @@ export function useFaviconMap(containers, customIcons = {}) {
   const [map, setMap] = useState({})
 
   useEffect(() => {
+    console.log('🔍 useFaviconMap: 开始过滤容器列表', {
+      totalContainers: containers?.length || 0,
+      customIconsCount: Object.keys(customIcons || {}).length
+    })
+
     const list = (containers || []).filter(
-      (c) =>
-        (c.status || '').toLowerCase() === 'running' &&
-        pickProbePorts(c).length > 0 &&
-        // 已有持久化图标（含内置 logo 与模糊匹配）的镜像直接跳过，只对"没图标"的才抓取
-        !(c.usingImage && getImageLogo(c.usingImage, customIcons || {}))
+      (c) => {
+        const isRunning = (c.status || '').toLowerCase() === 'running'
+        const ports = pickProbePorts(c)
+        const hasPorts = ports.length > 0
+        const hasLogo = c.usingImage && getImageLogo(c.usingImage, customIcons || {})
+
+        const shouldProbe = isRunning && hasPorts && !hasLogo
+
+        // 调试日志：显示每个容器的过滤结果
+        if (!shouldProbe) {
+          console.debug(`⏭️ 跳过容器 ${c.name}:`, {
+            image: c.usingImage,
+            isRunning,
+            hasPorts,
+            ports: ports.length,
+            hasLogo: !!hasLogo,
+            logoUrl: hasLogo || 'none'
+          })
+        } else {
+          console.log(`✅ 将抓取容器 ${c.name}:`, {
+            image: c.usingImage,
+            ports: ports.length
+          })
+        }
+
+        return shouldProbe
+      }
     )
+
+    console.log('🎯 useFaviconMap: 过滤后需要抓取的容器数量:', list.length)
+
     if (list.length === 0) return
     let cancelled = false
 
