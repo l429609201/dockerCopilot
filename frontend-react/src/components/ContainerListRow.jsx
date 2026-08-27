@@ -42,9 +42,13 @@ export function ContainerListRow({
       {/* 图标：有 url 且未加载失败时显示图片，否则回退首字母占位 */}
       <div className="flex-shrink-0">
         {iconUrl && !iconError ? (
-          <img src={iconUrl} alt={container.name}
+          <img
+            src={iconUrl}
+            alt={container.name}
             className="h-9 w-9 rounded-lg object-cover"
-            onError={() => setIconError(true)} />
+            onError={() => setIconError(true)}
+            loading="lazy"
+          />
         ) : (
           <div className="h-9 w-9 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold">
             {(container.name || '?').charAt(0).toUpperCase()}

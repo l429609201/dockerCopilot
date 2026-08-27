@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity, ChevronRight, ChevronDown, Layers } from 'lucide-react'
 import { useTasks } from '../hooks/useTasks.jsx'
 import { progressAPI } from '../api/client.js'
@@ -7,9 +7,15 @@ import { cn } from '../utils/cn.js'
 // 任务中心：右下角常驻悬浮球，点开从右侧滑出全高抽屉（MoviePilot 智能助手样式）。
 // 展示所有后台任务（更新/恢复/镜像/Compose/定时更新/清理）。
 // 修改：有新任务时不自动弹开，只显示红色角标提示。
+// 支持右滑关闭手势（移动端优化）。
 export function TaskPanel() {
   const { tasks, removeTask } = useTasks()
   const [open, setOpen] = useState(false)
+  const drawerRef = useRef(null)
+  const touchStartX = useRef(0)
+  const touchCurrentX = useRef(0)
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragOffset, setDragOffset] = useState(0)
 
   const running = tasks.filter(t => !t.isDone)
   const done = tasks.filter(t => t.isDone)
@@ -20,6 +26,49 @@ export function TaskPanel() {
     try { await progressAPI.cancelProgress(id) } catch (e) { console.error('取消任务失败:', e) }
   }
   const clearDone = () => done.forEach(t => removeTask(t.id))
+
+  // 右滑关闭手势处理
+  useEffect(() => {
+    const drawer = drawerRef.current
+    if (!drawer || !open) return
+
+    const handleTouchStart = (e) => {
+      touchStartX.current = e.touches[0].clientX
+      touchCurrentX.current = e.touches[0].clientX
+      setIsDragging(true)
+    }
+
+    const handleTouchMove = (e) => {
+      if (!isDragging) return
+      touchCurrentX.current = e.touches[0].clientX
+      const diff = touchCurrentX.current - touchStartX.current
+      // 仅允许向右滑动（diff > 0）
+      if (diff > 0) {
+        setDragOffset(diff)
+      }
+    }
+
+    const handleTouchEnd = () => {
+      if (!isDragging) return
+      const diff = touchCurrentX.current - touchStartX.current
+      // 滑动超过 100px 或速度够快则关闭
+      if (diff > 100) {
+        setOpen(false)
+      }
+      setIsDragging(false)
+      setDragOffset(0)
+    }
+
+    drawer.addEventListener('touchstart', handleTouchStart, { passive: true })
+    drawer.addEventListener('touchmove', handleTouchMove, { passive: true })
+    drawer.addEventListener('touchend', handleTouchEnd, { passive: true })
+
+    return () => {
+      drawer.removeEventListener('touchstart', handleTouchStart)
+      drawer.removeEventListener('touchmove', handleTouchMove)
+      drawer.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [open, isDragging])
 
   return (
     <>
@@ -46,13 +95,16 @@ export function TaskPanel() {
 
       {/* 右侧全高抽屉（移除灰色遮罩） */}
       <aside
+        ref={drawerRef}
         className={cn(
-          'fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-2xl flex flex-col transition-transform duration-300 ease-out',
+          'fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-white dark:bg-gray-900 shadow-2xl flex flex-col',
+          isDragging ? '' : 'transition-transform duration-300 ease-out',
           open ? 'translate-x-0' : 'translate-x-full'
         )}
+        style={isDragging ? { transform: `translateX(${dragOffset}px)` } : {}}
       >
-        {/* 顶部标题栏 */}
-        <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-primary-500 to-primary-600 text-white">
+        {/* 顶部标题栏 - 手机端增加安全区域适配，下移避免刘海/状态栏遮挡 */}
+        <div className="flex items-center justify-between px-5 py-4 pt-safe bg-gradient-to-r from-primary-500 to-primary-600 text-white">
           <div className="flex items-center gap-3 min-w-0">
             <div className="h-10 w-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
               <Activity className="h-5 w-5" />

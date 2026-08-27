@@ -27,6 +27,13 @@
     @apply w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
   }
 
+  /* 手机端顶部安全区域类（避免刘海/状态栏遮挡） */
+  .pt-safe {
+    @supports (padding: max(0px)) {
+      padding-top: max(1rem, env(safe-area-inset-top));
+    }
+  }
+
   /* 手机端底部安全区域类 */
   .safe-area-inset-bottom {
     @supports (padding: max(0px)) {
