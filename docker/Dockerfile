@@ -52,7 +52,8 @@ COPY --from=backend /out/dockerCopilot ./dockerCopilot
 COPY etc/. ./etc
 COPY start.sh ./start.sh
 
-RUN apk add --no-cache tzdata \
+# 安装时区数据、Docker CLI 和 Compose 插件（用于执行 docker compose 命令）
+RUN apk add --no-cache tzdata docker-cli docker-cli-compose \
     && chmod +x start.sh \
     && chmod +x dockerCopilot
 

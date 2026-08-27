@@ -62,6 +62,20 @@ func RunAction(ctx context.Context, projectDir, composeFile, action string, time
 		return ActionResult{Success: false, Output: fmt.Sprintf("命令超时(%ds)\n%s", timeoutSec, output), Duration: duration}
 	}
 	if err != nil {
+		// 特殊处理：docker 命令未找到的情况，给出更清晰的提示
+		if strings.Contains(err.Error(), "executable file not found") {
+			return ActionResult{
+				Success: false,
+				Output: fmt.Sprintf("❌ Docker 命令未找到\n\n"+
+					"可能的原因：\n"+
+					"1. Docker 未安装或未加入 PATH 环境变量\n"+
+					"2. 容器内运行需要：\n"+
+					"   - 挂载 Docker socket: -v /var/run/docker.sock:/var/run/docker.sock\n"+
+					"   - 容器内安装 Docker CLI\n\n"+
+					"原始错误：%s", err.Error()),
+				Duration: duration,
+			}
+		}
 		return ActionResult{Success: false, Output: fmt.Sprintf("执行失败: %s\n%s", err.Error(), output), Duration: duration}
 	}
 	return ActionResult{Success: true, Output: output, Duration: duration}
