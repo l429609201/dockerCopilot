@@ -344,10 +344,16 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 		b.replyUpdateCenter(chatID, messageID, page)
 		return
 	}
-	// 周期更新提醒「查看并管理」：updnotify|<page> —— 编辑摘要消息为分页详情
+	// 周期更新提醒「查看并管理」：updnotify|<page> —— 编辑摘要消息为分页详情（仅未屏蔽）
 	if parts[0] == "updnotify" && len(parts) == 2 {
 		page, _ := strconv.Atoi(parts[1])
-		b.resendUpdateNotification(chatID, page, messageID)
+		b.resendUpdateNotification(chatID, page, messageID, false)
+		return
+	}
+	// 周期更新提醒「查看被屏蔽的」：updmuted|<page> —— 显示已屏蔽但有更新的容器
+	if parts[0] == "updmuted" && len(parts) == 2 {
+		page, _ := strconv.Atoi(parts[1])
+		b.resendUpdateNotification(chatID, page, messageID, true)
 		return
 	}
 	// 定时更新完成结果交互：rres|<action>|<ruleID>[|...]
@@ -462,7 +468,7 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 			// 翻页：notify|page|<page>
 			if len(parts) == 3 {
 				page, _ := strconv.Atoi(parts[2])
-				b.resendUpdateNotification(chatID, page, messageID)
+				b.resendUpdateNotification(chatID, page, messageID, false) // 默认显示未屏蔽
 			}
 		}
 		return
@@ -2060,27 +2066,44 @@ func (b *Bot) executePruneImages(chatID int64, mode string, messageID int64) {
 // sendUpdateNotificationToChat 周期检测的更新推送入口：只发精简摘要 + 一个「查看并管理」按钮，
 // 避免一次性铺开大量容器按钮刷屏。点按钮后（回调 updnotify|0）再进入分页详情。
 // 仅在有可更新容器时才会被调用（调用方 notifier 已保证 len>0 且已排除屏蔽容器）。
-func (b *Bot) sendUpdateNotificationToChat(chatID int64, containers []UpdateContainer) {
-	if len(containers) == 0 {
+// muted 为已屏蔽但有更新的容器列表，非空时额外提供"查看被屏蔽的"按钮。
+func (b *Bot) sendUpdateNotificationToChat(chatID int64, containers []UpdateContainer, muted []UpdateContainer) {
+	if len(containers) == 0 && len(muted) == 0 {
 		return
 	}
 	var text strings.Builder
 	text.WriteString("<b>🔔 容器更新提醒</b>\n\n")
-	text.WriteString(fmt.Sprintf("检测到 <b>%d</b> 个容器有可用更新：\n\n", len(containers)))
-	// 摘要只列容器名（最多展示 15 个，超出以省略提示），不含按钮，保持消息简洁
-	const maxPreview = 15
-	for i, c := range containers {
-		if i >= maxPreview {
-			text.WriteString(fmt.Sprintf("… 还有 %d 个\n", len(containers)-maxPreview))
-			break
+	if len(containers) > 0 {
+		text.WriteString(fmt.Sprintf("检测到 <b>%d</b> 个容器有可用更新：\n\n", len(containers)))
+		// 摘要只列容器名（最多展示 15 个，超出以省略提示），不含按钮，保持消息简洁
+		const maxPreview = 15
+		for i, c := range containers {
+			if i >= maxPreview {
+				text.WriteString(fmt.Sprintf("… 还有 %d 个\n", len(containers)-maxPreview))
+				break
+			}
+			text.WriteString(fmt.Sprintf("🔺 %s\n", escapeHTML(c.Name)))
 		}
-		text.WriteString(fmt.Sprintf("🔺 %s\n", escapeHTML(c.Name)))
+		text.WriteString("\n点击下方按钮查看详情并逐个更新。")
+	} else {
+		text.WriteString("当前没有未屏蔽的容器需要更新。")
 	}
-	text.WriteString("\n点击下方按钮查看详情并逐个更新 / 屏蔽。")
-	// 单个「查看并管理」按钮，点击进入分页详情（编辑本条消息）
-	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
-		{Text: "📋 查看并管理", CallbackData: "updnotify|0"},
-	}}}
+
+	// 构建按钮：主按钮始终是"查看并管理"（显示未屏蔽的），如果有屏蔽容器则加第二个按钮
+	var buttons [][]telegram.InlineKeyboardButton
+	if len(containers) > 0 {
+		buttons = append(buttons, []telegram.InlineKeyboardButton{
+			{Text: "📋 查看并管理", CallbackData: "updnotify|0"},
+		})
+	}
+	if len(muted) > 0 {
+		text.WriteString(fmt.Sprintf("\n\n💤 另有 <b>%d</b> 个已屏蔽容器有更新", len(muted)))
+		buttons = append(buttons, []telegram.InlineKeyboardButton{
+			{Text: "👁 查看被屏蔽的", CallbackData: "updmuted|0"},
+		})
+	}
+
+	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: buttons}
 	b.replyKeyboard(chatID, text.String(), kb)
 }
 
@@ -2372,7 +2395,8 @@ func (b *Bot) setUpdateInterval(chatID int64, interval string, messageID int64) 
 }
 
 // resendUpdateNotification 重新获取更新列表并发送通知（用于翻页）。
-func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) {
+// mutedOnly: true 时只显示已屏蔽的容器，false 时只显示未屏蔽的容器。
+func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64, mutedOnly bool) {
 	// 获取所有主机的有更新容器：与周期检测摘要（scheduler 的 pending）保持同一数据源，
 	// 避免"摘要用 GetAllContainers（含远程主机）、详情用 GetContainerList（仅本地）"导致两者内容对不上。
 	containers, err := utiles.GetAllContainers(b.svcCtx)
@@ -2382,9 +2406,14 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 	}
 	containers = utiles.CheckImageUpdate(b.svcCtx, containers)
 
-	// 筛选有更新的容器
-	// 注意：此处**不再过滤已屏蔽容器**，屏蔽状态改由详情页按钮就地显示（🔔/🔕）并支持切换。
-	// 这样用户屏蔽某容器后仍能在列表看到它、随时取消屏蔽，避免屏蔽即消失导致无法撤销。
+	// 获取屏蔽列表
+	cfg := b.svcCtx.AppConfig.Get()
+	mutedSet := make(map[string]struct{}, len(cfg.Telegram.MutedContainers))
+	for _, m := range cfg.Telegram.MutedContainers {
+		mutedSet[m] = struct{}{}
+	}
+
+	// 筛选有更新的容器，按 mutedOnly 参数过滤
 	var updateContainers []UpdateContainer
 	for _, c := range containers {
 		if !c.Update {
@@ -2397,6 +2426,16 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 		if name == "" {
 			continue
 		}
+
+		// 根据 mutedOnly 决定是否包含此容器
+		_, isMuted := mutedSet[name]
+		if mutedOnly && !isMuted {
+			continue // 只显示屏蔽的，跳过未屏蔽的
+		}
+		if !mutedOnly && isMuted {
+			continue // 只显示未屏蔽的，跳过屏蔽的
+		}
+
 		// 优先使用 CreateImage，避免镜像更新后 Image 字段变空或变成 SHA256
 		imageToUse := c.CreateImage
 		if imageToUse == "" {
@@ -2410,7 +2449,12 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 	}
 
 	if len(updateContainers) == 0 {
-		text := "✅ 当前没有需要更新的容器"
+		var text string
+		if mutedOnly {
+			text = "✅ 当前没有已屏蔽的容器需要更新"
+		} else {
+			text = "✅ 当前没有未屏蔽的容器需要更新"
+		}
 		if messageID > 0 {
 			b.editMessage(chatID, messageID, text)
 		} else {
