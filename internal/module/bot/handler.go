@@ -2397,10 +2397,15 @@ func (b *Bot) resendUpdateNotification(chatID int64, page int, messageID int64) 
 		if name == "" {
 			continue
 		}
+		// 优先使用 CreateImage，避免镜像更新后 Image 字段变空或变成 SHA256
+		imageToUse := c.CreateImage
+		if imageToUse == "" {
+			imageToUse = c.Image // 降级使用 Image 字段
+		}
 		updateContainers = append(updateContainers, UpdateContainer{
 			ID:    c.ID,
 			Name:  name,
-			Image: c.Image,
+			Image: imageToUse,
 		})
 	}
 

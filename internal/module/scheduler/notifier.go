@@ -102,7 +102,12 @@ func (s *Scheduler) runUpdateCheck() {
 		if _, ok := muted[name]; ok {
 			continue // 已屏蔽
 		}
-		pending = append(pending, notify.UpdateItem{ID: c.ID, Name: name, Image: c.Image})
+		// 优先使用 CreateImage，避免镜像更新后 Image 字段变空或变成 SHA256
+		imageToUse := c.CreateImage
+		if imageToUse == "" {
+			imageToUse = c.Image // 降级使用 Image 字段
+		}
+		pending = append(pending, notify.UpdateItem{ID: c.ID, Name: name, Image: imageToUse})
 	}
 
 	if len(pending) == 0 {
