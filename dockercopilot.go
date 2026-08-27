@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gorilla/mux"
 	"github.com/l429609201/dockerCopilot/internal/config"
 	"github.com/l429609201/dockerCopilot/internal/handler"
 	"github.com/l429609201/dockerCopilot/internal/module/bot"
@@ -22,7 +21,6 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/httpx"
-	"github.com/zeromicro/go-zero/rest/pathvar"
 	"github.com/zeromicro/x/errors"
 	xhttp "github.com/zeromicro/x/http"
 )
@@ -217,7 +215,7 @@ func RegisterHandlers(engine *rest.Server) {
 				Path:   "/favicon.png",
 				Handler: func(w http.ResponseWriter, r *http.Request) {
 					// 从嵌入的前端资源返回
-					data, err := embeddedDist.ReadFile("dist/favicon.png")
+					data, err := embeddedFront.ReadFile("frontend-react/dist/favicon.png")
 					if err != nil {
 						logx.Errorf("无法读取嵌入的 favicon: %v", err)
 						http.Error(w, "Icon not found", http.StatusNotFound)
@@ -234,7 +232,7 @@ func RegisterHandlers(engine *rest.Server) {
 				Path:   "/favicon.ico",
 				Handler: func(w http.ResponseWriter, r *http.Request) {
 					// 从嵌入的前端资源返回
-					data, err := embeddedDist.ReadFile("dist/favicon.png")
+					data, err := embeddedFront.ReadFile("frontend-react/dist/favicon.png")
 					if err != nil {
 						logx.Errorf("无法读取嵌入的 favicon: %v", err)
 						http.Error(w, "Icon not found", http.StatusNotFound)
