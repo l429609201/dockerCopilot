@@ -105,16 +105,9 @@ func main() {
 	if err := os.MkdirAll("/data/images", 0755); err != nil {
 		logx.Errorf("Failed to create images directory: %v", err)
 	}
-
-	imageLogosPath := "/data/config/imageLogos.js"
-	if _, err := os.Stat(imageLogosPath); os.IsNotExist(err) {
-		defaultConfig := []byte(`// 自定义镜像logo配置
-export const customImageLogos = {
-};
-`)
-		if err := os.WriteFile(imageLogosPath, defaultConfig, 0644); err != nil {
-			logx.Errorf("Failed to create default imageLogos.js: %v", err)
-		}
+	// 图标配置目录（用于 icons.json）
+	if err := os.MkdirAll("/data/config", 0755); err != nil {
+		logx.Errorf("Failed to create config directory: %v", err)
 	}
 
 	// 首轮镜像更新检查放到后台执行：镜像列表获取和加速器域名探测都可能较慢，
