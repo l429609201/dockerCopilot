@@ -1237,15 +1237,21 @@ export function Containers() {
                                   alt={container.name}
                                   className="h-12 w-12 rounded-xl object-cover shadow-sm flex-shrink-0"
                                   onError={(e) => {
+                                    // 图标加载失败时静默降级到默认图标，避免404影响用户体验
                                     e.target.style.display = 'none';
-                                    e.target.parentElement.innerHTML = `
-                                    <div class="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm">
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white">
-                                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+                                    const fallback = document.createElement('div');
+                                    fallback.className = 'h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0';
+                                    fallback.innerHTML = `
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white">
+                                        <path d="m7.5 4.27 9 5.15"></path>
+                                        <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path>
+                                        <path d="m3.3 7 8.7 5 8.7-5"></path>
+                                        <path d="M12 22V12"></path>
                                       </svg>
-                                    </div>
-                                  `;
+                                    `;
+                                    e.target.parentElement.appendChild(fallback);
                                   }}
+                                  loading="lazy"
                                 />
                               );
                             } else {
@@ -1823,9 +1829,12 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             alt={currentContainer.name}
             className="h-12 w-12 rounded-xl object-cover"
             onError={(e) => {
+              // 图标加载失败时静默降级，不影响用户体验
               e.target.style.display = 'none';
-              e.target.nextSibling.style.display = 'flex';
+              const fallback = e.target.nextElementSibling;
+              if (fallback) fallback.style.display = 'flex';
             }}
+            loading="lazy"
           />
         );
       }
