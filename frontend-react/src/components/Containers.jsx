@@ -1241,9 +1241,18 @@ export function Containers() {
                                   className="h-12 w-12 rounded-xl object-cover shadow-sm flex-shrink-0"
                                   onError={(e) => {
                                     // 图标加载失败时静默降级到默认图标，避免404影响用户体验
+                                    // 防止重复触发：只处理一次
+                                    if (e.target.dataset.errorHandled) return;
+                                    e.target.dataset.errorHandled = 'true';
                                     e.target.style.display = 'none';
+
+                                    // 检查是否已经有降级图标，避免重复添加
+                                    const parent = e.target.parentElement;
+                                    const existingFallback = parent.querySelector('.fallback-icon');
+                                    if (existingFallback) return;
+
                                     const fallback = document.createElement('div');
-                                    fallback.className = 'h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0';
+                                    fallback.className = 'fallback-icon h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0';
                                     fallback.innerHTML = `
                                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white">
                                         <path d="m7.5 4.27 9 5.15"></path>
@@ -1252,7 +1261,7 @@ export function Containers() {
                                         <path d="M12 22V12"></path>
                                       </svg>
                                     `;
-                                    e.target.parentElement.appendChild(fallback);
+                                    parent.appendChild(fallback);
                                   }}
                                   loading="lazy"
                                 />
