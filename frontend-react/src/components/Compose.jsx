@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw } from 'lucide-react'
+import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw, FolderOpen } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
 import { ComposeEditor } from './ComposeEditor.jsx'
+import { ComposeFileManager } from './ComposeFileManager.jsx'
 
 // Compose 项目管理页面
 export function Compose() {
@@ -10,6 +11,7 @@ export function Compose() {
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(null) // { project, filename }
   const [busyId, setBusyId] = useState('')
+  const [showFileManager, setShowFileManager] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -54,9 +56,15 @@ export function Compose() {
           <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
             <Layers className="h-5 w-5" /> Compose 项目
           </h2>
-          <button onClick={load} className="flex items-center gap-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm hover:bg-gray-200">
-            <RefreshCw className="h-4 w-4" /> 刷新
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowFileManager(true)}
+              className="flex items-center gap-1 px-3 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700">
+              <FolderOpen className="h-4 w-4" /> 文件管理
+            </button>
+            <button onClick={load} className="flex items-center gap-1 px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm hover:bg-gray-200 dark:hover:bg-gray-600">
+              <RefreshCw className="h-4 w-4" /> 刷新
+            </button>
+          </div>
         </div>
       </div>
 
@@ -96,6 +104,16 @@ export function Compose() {
       {editing && (
         <ComposeEditor project={editing.project} filename={editing.filename}
           onClose={() => setEditing(null)} />
+      )}
+
+      {showFileManager && (
+        <ComposeFileManager
+          onClose={() => setShowFileManager(false)}
+          onFileCreated={(filePath) => {
+            setShowFileManager(false)
+            load() // 刷新项目列表
+          }}
+        />
       )}
     </div>
   )

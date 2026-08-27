@@ -133,3 +133,59 @@ func SaveConfigHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		writeResp(w, r, resp, err)
 	}
 }
+
+// CreateFolderHandler 在指定目录下创建文件夹。
+func CreateFolderHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeCreateFolderReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.CreateFolder(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
+// CreateComposeFileHandler 在指定目录下创建 Compose 配置文件。
+func CreateComposeFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeCreateFileReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.CreateComposeFile(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
+// ReadFileHandler 读取文件内容。
+func ReadFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeReadFileReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.ReadFile(&req)
+		writeResp(w, r, resp, err)
+	}
+}
+
+// SaveFileHandler 保存文件内容。
+func SaveFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ComposeSaveFileReq
+		if err := httpx.Parse(r, &req); err != nil {
+			httpx.ErrorCtx(r.Context(), w, err)
+			return
+		}
+		l := compose.NewComposeLogic(r.Context(), svcCtx)
+		resp, err := l.SaveFile(&req)
+		writeResp(w, r, resp, err)
+	}
+}

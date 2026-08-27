@@ -264,6 +264,12 @@ export const composeAPI = {
   saveConfig: (cfg) => apiClient.put('/api/compose/config', cfg),
   // 浏览 DC 自身文件系统目录（目录选择器用）；path 为空返回起始目录
   browse: (path = '') => apiClient.get('/api/compose/browse', { params: { path } }),
+  // 创建文件夹
+  createFolder: (parentPath, folderName) =>
+    apiClient.post('/api/compose/folder', { parentPath, folderName }),
+  // 创建 Compose 配置文件
+  createFile: (parentPath, fileName) =>
+    apiClient.post('/api/compose/file', { parentPath, fileName }),
 }
 
 // 阶段8：favicon 抓取API（按容器暴露端口解析站点图标）

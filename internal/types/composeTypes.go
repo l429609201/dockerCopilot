@@ -57,3 +57,26 @@ type ComposeConfigReq struct {
 	CommandTimeoutSec int      `json:"commandTimeoutSec,optional"`
 	AllowHighRisk     bool     `json:"allowHighRisk,optional"`
 }
+
+// ComposeCreateFolderReq 在指定目录下创建文件夹。
+type ComposeCreateFolderReq struct {
+	ParentPath string `json:"parentPath"` // 父目录路径（绝对路径）
+	FolderName string `json:"folderName"` // 文件夹名称
+}
+
+// ComposeCreateFileReq 在指定目录下创建 Compose 配置文件。
+type ComposeCreateFileReq struct {
+	ParentPath string `json:"parentPath"` // 父目录路径（绝对路径）
+	FileName   string `json:"fileName"`   // 文件名（如 docker-compose.yml）
+}
+
+// ComposeReadFileReq 读取指定路径的文件内容。
+type ComposeReadFileReq struct {
+	Path string `form:"path"` // 文件完整路径（绝对路径）
+}
+
+// ComposeSaveFileReq 保存文件内容到指定路径。
+type ComposeSaveFileReq struct {
+	Path    string `json:"path"`    // 文件完整路径（绝对路径）
+	Content string `json:"content"` // 文件内容
+}
