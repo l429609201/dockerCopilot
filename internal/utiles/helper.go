@@ -141,7 +141,53 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 		return fmt.Errorf("启动新容器失败: %w", err)
 	}
 
-	logx.Infof("[helper] ✅ DC 自我更新成功！新容器 %s 已启动", targetName)
+	// 启动成功后等待 2 秒，检查容器是否仍在运行（排除启动后立即崩溃的情况）
+	logx.Info("[helper] 等待 2 秒以验证新容器是否稳定运行")
+	time.Sleep(2 * time.Second)
+	inspect, err := cli.ContainerInspect(ctx, created.ID)
+	if err != nil {
+		logx.Errorf("[helper] 无法检查新容器状态: %v（已启动但无法确认运行状态）", err)
+	} else if !inspect.State.Running {
+		logx.Errorf("[helper] 新容器启动后立即退出（ExitCode=%d），回滚", inspect.State.ExitCode)
+		// 尝试获取容器日志（前 50 行），帮助诊断问题
+		if logs, logErr := cli.ContainerLogs(ctx, created.ID, container.LogsOptions{
+			ShowStdout: true, ShowStderr: true, Tail: "50",
+		}); logErr == nil {
+			defer logs.Close()
+			buf := make([]byte, 4096)
+			if n, _ := logs.Read(buf); n > 0 {
+				logx.Errorf("[helper] 新容器启动失败日志（前 50 行）:\n%s", string(buf[:n]))
+			}
+		}
+		// 回滚：删除崩溃的新容器，重启旧容器
+		_ = cli.ContainerRemove(ctx, created.ID, container.RemoveOptions{Force: true})
+		if !delOld {
+			_ = cli.ContainerRename(ctx, backupName, targetName)
+			_ = cli.ContainerStart(ctx, targetID, container.StartOptions{})
+			logx.Infof("[helper] 已回滚：旧容器 %s 已重启", targetName)
+		}
+		return fmt.Errorf("新容器启动后立即退出: ExitCode=%d", inspect.State.ExitCode)
+	}
+
+	logx.Infof("[helper] ✅ DC 自我更新成功！新容器 %s 已启动并运行正常", targetName)
+
+	// 成功完成后，主动删除 helper 自己（因 selfupdate.go 已改为 AutoRemove=false）
+	// 通过容器名找到自己的 ID
+	helperName := targetName + "-selfupdate-helper"
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err == nil {
+		for _, c := range containers {
+			for _, name := range c.Names {
+				// Docker API 返回的容器名带前导斜杠
+				if name == "/"+helperName || name == helperName {
+					logx.Infof("[helper] 自清理：删除 %s (ID=%s)", helperName, c.ID[:12])
+					_ = cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+					return nil
+				}
+			}
+		}
+	}
+	logx.Infof("[helper] 自清理：未找到自己的容器记录（可能已被外部清理）")
 
 	// 历史 -old- 备份的清理已统一移至函数开头的 defer，成功与失败路径都会执行
 	return nil

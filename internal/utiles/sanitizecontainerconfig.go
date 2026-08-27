@@ -16,6 +16,9 @@ package utiles
 //  4. 非 host 网络下 EndpointsConfig 里残留 MacAddress，与新容器网络配置冲突。
 //  5. daemon API < 1.44 不支持 per-network MacAddress，带上会被 SDK 直接拒绝
 //     （报错 "specify mac-address per network" requires API version 1.44）。
+//  6. NetworkingConfig.EndpointsConfig 包含运行态字段（EndpointID、Gateway、
+//     IPAddress、DNSNames 等）：官方 daemon 会自动忽略，但非标准 daemon 可能
+//     校验并拒绝启动（报错 "endpoint already exists" 或类似网络冲突错误）。
 //
 // 处理原则：只做「补齐」与「剔除明显非法值」，不改变用户的有效配置语义。
 
@@ -92,13 +95,22 @@ func sanitizeDevices(containerName string, hostConfig *container.HostConfig) {
 	}
 }
 
-// sanitizeEndpointMac 清理与网络模式或 daemon 版本冲突的 MAC 地址残留。
+// sanitizeEndpointMac 清理网络端点配置中的运行态字段与冲突值。
+//
+// Docker daemon 在容器启动时会自动分配 EndpointID、Gateway、IPAddress 等运行态字段，
+// inspect 返回的 EndpointsConfig 直接包含这些字段。官方 daemon 在 ContainerCreate 时
+// 会自动忽略它们，但非标准 daemon（群晖、定制环境）可能会校验并拒绝启动。
+//
+// 本函数清理策略：
+//   1. 清除所有运行态字段（EndpointID、Gateway、IPAddress、DNSNames 等）
+//   2. 保留用户有效配置（Aliases、Links、DriverOpts、IPAMConfig）
+//   3. host 网络模式或低版本 API 下额外清除 MacAddress
 func sanitizeEndpointMac(containerName, apiVersion string, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig) {
 	if networkingConfig == nil || len(networkingConfig.EndpointsConfig) == 0 {
 		return
 	}
 
-	// 判定是否需要清除：满足任一条件即清。
+	// 判定 MAC 地址是否需要清除（满足任一条件即清）
 	//
 	// 1) host 网络模式：该模式下不允许指定 MAC，带上会被守护进程拒绝。
 	//    这里不用 NetworkMode.IsHost()：该方法在 Docker SDK 中是平台相关实现，
@@ -110,20 +122,58 @@ func sanitizeEndpointMac(containerName, apiVersion string, hostConfig *container
 	//    「旧容器已删、新容器建不起来」。此时 MAC 本就无法生效，清掉是安全的。
 	//    apiVersion 为空表示未知，保守起见不做处理。
 	isLegacyAPI := apiVersion != "" && versions.LessThan(apiVersion, endpointMacMinAPIVersion)
+	shouldClearMac := isHostNetwork || isLegacyAPI
 
-	if !isHostNetwork && !isLegacyAPI {
-		return
+	macReason := ""
+	if shouldClearMac {
+		if isHostNetwork {
+			macReason = "host 网络模式"
+		} else {
+			macReason = "daemon API 版本 " + apiVersion + " 低于 " + endpointMacMinAPIVersion + "，不支持 per-network MAC"
+		}
 	}
 
-	reason := "host 网络模式"
-	if isLegacyAPI {
-		reason = "daemon API 版本 " + apiVersion + " 低于 " + endpointMacMinAPIVersion + "，不支持 per-network MAC"
-	}
+	// 逐网络清理运行态字段
 	for netName, endpoint := range networkingConfig.EndpointsConfig {
-		if endpoint == nil || endpoint.MacAddress == "" {
+		if endpoint == nil {
 			continue
 		}
-		endpoint.MacAddress = ""
-		logx.Infof("容器 %s: %s，已清除网络 %s 的 MAC 地址", containerName, reason, netName)
+		hadOperationalData := false
+
+		// 清除运行态字段（daemon 自动分配，不应由客户端提供）
+		if endpoint.EndpointID != "" {
+			endpoint.EndpointID = ""
+			hadOperationalData = true
+		}
+		if endpoint.Gateway != "" {
+			endpoint.Gateway = ""
+			hadOperationalData = true
+		}
+		if endpoint.IPAddress != "" {
+			endpoint.IPAddress = ""
+			hadOperationalData = true
+		}
+		if endpoint.GlobalIPv6Address != "" {
+			endpoint.GlobalIPv6Address = ""
+			hadOperationalData = true
+		}
+		if endpoint.IPv6Gateway != "" {
+			endpoint.IPv6Gateway = ""
+			hadOperationalData = true
+		}
+		if len(endpoint.DNSNames) > 0 {
+			endpoint.DNSNames = nil
+			hadOperationalData = true
+		}
+
+		// 按条件清除 MAC 地址
+		if shouldClearMac && endpoint.MacAddress != "" {
+			endpoint.MacAddress = ""
+			logx.Infof("容器 %s: %s，已清除网络 %s 的 MAC 地址", containerName, macReason, netName)
+		}
+
+		if hadOperationalData {
+			logx.Infof("容器 %s: 已清除网络 %s 的运行态字段（EndpointID/Gateway/IPAddress/DNSNames 等）", containerName, netName)
+		}
 	}
 }

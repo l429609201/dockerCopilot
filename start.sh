@@ -1,5 +1,5 @@
 #!/bin/sh
-cd "${WORKDIR}" || exit
+cd "${WORKDIR:-/app}" || exit 1
 # 判断当前目录下是否存在名为 dockerCopilot-new 的二进制文件
 if [ -f "./dockerCopilot-new" ]; then
     # 如果存在，则用它覆盖 dockerCopilot
