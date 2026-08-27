@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/l429609201/dockerCopilot/internal/svc"
@@ -14,11 +13,12 @@ import (
 
 // setIconURLReq 通过 URL 绑定图标的请求体。
 type setIconURLReq struct {
-	ImageName string `json:"imageName"`
-	URL       string `json:"url"`
+	ImageName  string `json:"imageName"`  // 镜像名或容器名
+	URL        string `json:"url"`        // 图标 URL
+	TargetType string `json:"targetType"` // "container" 或 "image"，默认 "image"
 }
 
-// SetIconURLHandler 直接用一个图标 URL 绑定到指定镜像名。
+// SetIconURLHandler 直接用一个图标 URL 绑定到指定镜像名或容器名。
 // 相比上传图片，URL 方式更快，且在生产环境（本地静态目录不可访问时）更可靠。
 func SetIconURLHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -35,23 +35,43 @@ func SetIconURLHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			writeUploadError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if _, err := os.Stat(imageLogosPath); os.IsNotExist(err) {
-			_ = os.MkdirAll(imageUploadDir, 0o755)
-			_ = os.WriteFile(imageLogosPath, []byte("export const customImageLogos = {\n}\n"), 0644)
+
+		// 获取目标类型，默认为 "image"
+		targetType := req.TargetType
+		if targetType == "" {
+			targetType = "image"
 		}
-		if err := writeImageLogoValue(imageLogosPath, req.ImageName, req.URL); err != nil {
+		if targetType != "container" && targetType != "image" {
+			writeUploadError(w, http.StatusBadRequest, "targetType must be 'container' or 'image'")
+			return
+		}
+
+		// 确定优先级
+		priority := 2 // 镜像级
+		if targetType == "container" {
+			priority = 1 // 容器级
+		}
+
+		// 添加或更新图标配置
+		if err := addOrUpdateIcon(req.ImageName, targetType, req.URL, priority); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "写入配置失败: "+err.Error())
 			return
 		}
+
 		httpx.OkJsonCtx(r.Context(), w, types.Resp{
 			Code: 200,
 			Msg:  "Success",
-			Data: req.URL,
+			Data: map[string]interface{}{
+				"target":     req.ImageName,
+				"targetType": targetType,
+				"iconUrl":    req.URL,
+				"priority":   priority,
+			},
 		})
 	}
 }
 
-// validateIconURL 校验图标 URL：必须是 http/https 绝对地址，且不含引号（防注入 js 文件）。
+// validateIconURL 校验图标 URL：必须是 http/https 绝对地址或本地路径，且不含引号。
 func validateIconURL(u string) error {
 	if u == "" {
 		return errIcon("url is required")
@@ -59,12 +79,19 @@ func validateIconURL(u string) error {
 	if strings.ContainsAny(u, "\"'\n\r") {
 		return errIcon("url 包含非法字符")
 	}
+
+	// 允许本地路径（以 / 开头）
+	if strings.HasPrefix(u, "/") {
+		return nil
+	}
+
+	// 校验外部 URL
 	parsed, err := url.Parse(u)
 	if err != nil {
 		return errIcon("url 格式错误")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return errIcon("url 必须以 http:// 或 https:// 开头")
+		return errIcon("url 必须以 http:// 或 https:// 开头，或者是以 / 开头的本地路径")
 	}
 	if parsed.Host == "" {
 		return errIcon("url 缺少主机名")
