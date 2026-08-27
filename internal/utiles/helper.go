@@ -89,7 +89,7 @@ func doHelperUpdate(ctx context.Context, cli *client.Client, targetID, targetNam
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败。
 	// 与 UpdateContainerOnHost 保持一致：必须放在停止/删除旧容器之前，
 	// 保证配置有问题时旧容器仍然完好，可直接返回而无需回滚。
-	SanitizeCreateConfig(targetName, cfg, hostCfg, netCfg)
+	SanitizeCreateConfig(targetName, cli.ClientVersion(), cfg, hostCfg, netCfg)
 
 	// 停止旧容器（主程序）。给足超时，等它优雅退出。
 	timeout := 15

@@ -212,7 +212,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败。
 	// 必须放在停止/删除旧容器之前，保证配置有问题时旧容器仍然完好。
-	SanitizeCreateConfig(name, config, hostConfig, networkingConfig)
+	SanitizeCreateConfig(name, cli.ClientVersion(), config, hostConfig, networkingConfig)
 
 	oldTaskProgress.Percentage = 40
 	oldTaskProgress.Message = "正在停止旧容器"
