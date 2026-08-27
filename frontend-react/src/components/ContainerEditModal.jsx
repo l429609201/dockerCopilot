@@ -314,9 +314,9 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                 <KVList items={form.binds} ops={bindOps} addLabel="添加挂载"
                   render={(b, i) => (
                     <>
-                      <input placeholder="宿主机路径" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
+                      <input placeholder="宿主机路径（直接输入）" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
                       <button type="button" onClick={() => setPicker({ type: 'host', index: i })}
-                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0" title="浏览宿主机目录">
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0" title="浏览 DockerCopilot 容器内目录（仅供参考）">
                         <FolderSearch className="h-4 w-4" />
                       </button>
                       <span className="text-gray-500">:</span>
@@ -324,7 +324,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                       <button type="button" onClick={() => running && setPicker({ type: 'container', index: i })}
                         disabled={!running}
                         className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={running ? '浏览容器内目录' : '容器需运行中才能浏览'}>
+                        title={running ? '浏览目标容器内目录' : '容器需运行中才能浏览'}>
                         <FolderSearch className="h-4 w-4" />
                       </button>
                       <select value={b.mode} onChange={(e) => bindOps.update(i, 'mode', e.target.value)} className="input w-20">

@@ -46,8 +46,14 @@ export function DirectoryPicker({ initialPath = '', onSelect, onClose }) {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Folder className="h-5 w-5 text-primary-600" /> 选择目录
+          <div>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+              <Folder className="h-5 w-5 text-primary-600" /> 浏览 DockerCopilot 容器内目录
+            </h3>
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+              ⚠️ 这里显示的是 DockerCopilot 容器内的目录，不是宿主机真实路径
+            </p>
+          </div>
           </h3>
           <button onClick={onClose} className="p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             <X className="h-4 w-4" />
