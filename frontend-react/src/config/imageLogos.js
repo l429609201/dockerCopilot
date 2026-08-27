@@ -37,12 +37,10 @@ loadIconsFromBackend()
 // 导出空对象（向后兼容，实际不再使用）
 export const builtInImageLogos = {}
 
-// 获取镜像的logo
+// 获取镜像的logo（同步函数，使用已加载的缓存）
 // 优先级: 动态加载的图标 > 用户自定义 > 默认图标
-export const getImageLogo = async (imageName, customLogos = {}) => {
-  // 确保已加载后端配置
-  await loadIconsFromBackend()
-
+export const getImageLogo = (imageName, customLogos = {}) => {
+  // 直接使用已加载的缓存（不等待，避免异步问题）
   const baseImageName = imageName.split(':')[0] // 去掉tag部分
   const simpleName = baseImageName.split('/').pop()
 
@@ -119,9 +117,8 @@ export const getSupportedImageNames = () => {
   return Object.keys(dynamicIconCache)
 }
 
-// 检查镜像是否有内置logo
-export const hasBuiltInLogo = async (imageName) => {
-  await loadIconsFromBackend()
+// 检查镜像是否有内置logo（同步函数）
+export const hasBuiltInLogo = (imageName) => {
   const baseImageName = imageName.split(':')[0]
   if (dynamicIconCache[baseImageName]) return true
   const simpleName = baseImageName.split('/').pop()

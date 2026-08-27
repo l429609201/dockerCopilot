@@ -1162,7 +1162,10 @@ export function Containers() {
                       onToggleSelect={toggleContainerSelection}
                       onAction={handleContainerAction}
                       onUpdate={handleUpdateContainer}
-                      onOps={(tab) => setOpsTarget({ container, tab })}
+                      onOps={(tab) => {
+                        if (tab === 'logs') setLogsTarget(container)
+                        else if (tab === 'exec') setConsoleTarget(container)
+                      }}
                       onFiles={() => setFileTarget(container)}
                       onEdit={(c) => setEditTarget(c)}
                       onProcess={(c) => setProcessTarget(c)}
