@@ -54,7 +54,6 @@ export function DirectoryPicker({ initialPath = '', onSelect, onClose }) {
               ⚠️ 这里显示的是 DockerCopilot 容器内的目录，不是宿主机真实路径
             </p>
           </div>
-          </h3>
           <button onClick={onClose} className="p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             <X className="h-4 w-4" />
           </button>
