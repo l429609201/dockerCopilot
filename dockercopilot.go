@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/gorilla/mux"
 	"github.com/l429609201/dockerCopilot/internal/config"
 	"github.com/l429609201/dockerCopilot/internal/handler"
 	"github.com/l429609201/dockerCopilot/internal/module/bot"
@@ -21,6 +22,7 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/rest/pathvar"
 	"github.com/zeromicro/x/errors"
 	xhttp "github.com/zeromicro/x/http"
 )
@@ -210,11 +212,20 @@ func RegisterHandlers(engine *rest.Server) {
 				},
 			},
 			{
-				// DockerCopilot 自身的 favicon（用于容器卡片图标显示）
+				// DockerCopilot 自身的 favicon（用于浏览器标签页图标）
 				Method: http.MethodGet,
 				Path:   "/favicon.png",
 				Handler: func(w http.ResponseWriter, r *http.Request) {
-					http.ServeFile(w, r, "/data/images/dockercopilot-favicon.png")
+					// 从嵌入的前端资源返回
+					data, err := embeddedDist.ReadFile("dist/favicon.png")
+					if err != nil {
+						logx.Errorf("无法读取嵌入的 favicon: %v", err)
+						http.Error(w, "Icon not found", http.StatusNotFound)
+						return
+					}
+					w.Header().Set("Content-Type", "image/png")
+					w.Header().Set("Cache-Control", "public, max-age=86400")
+					w.Write(data)
 				},
 			},
 			{
@@ -222,7 +233,16 @@ func RegisterHandlers(engine *rest.Server) {
 				Method: http.MethodGet,
 				Path:   "/favicon.ico",
 				Handler: func(w http.ResponseWriter, r *http.Request) {
-					http.ServeFile(w, r, "/data/images/dockercopilot-favicon.png")
+					// 从嵌入的前端资源返回
+					data, err := embeddedDist.ReadFile("dist/favicon.png")
+					if err != nil {
+						logx.Errorf("无法读取嵌入的 favicon: %v", err)
+						http.Error(w, "Icon not found", http.StatusNotFound)
+						return
+					}
+					w.Header().Set("Content-Type", "image/png")
+					w.Header().Set("Cache-Control", "public, max-age=86400")
+					w.Write(data)
 				},
 			},
 		},

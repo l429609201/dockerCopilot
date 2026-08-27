@@ -378,8 +378,8 @@ export const iconAPI = {
     apiClient.post('/api/icons/url', { imageName, iconURL }),
 
   // 自动抓取站点 favicon 并持久化
-  fetchIcon: (imageName, url) =>
-    apiClient.post('/api/icons/fetch', { imageName, url }),
+  fetchIcon: (params) =>
+    apiClient.post('/api/icons/fetch', params),
 }
 
 // 导出 apiClient 供其他组件使用

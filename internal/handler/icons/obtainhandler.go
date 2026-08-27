@@ -70,13 +70,13 @@ func ensureBuiltInIcons() error {
 			{
 				Target:     "dockercopilot",
 				TargetType: "image",
-				IconURL:    "/images/dockercopilot-favicon.png",
+				IconURL:    "/favicon.png",
 				Priority:   2,
 			},
 			{
 				Target:     "ghcr.io/l429609201/dockercopilot",
 				TargetType: "image",
-				IconURL:    "/images/dockercopilot-favicon.png",
+				IconURL:    "/favicon.png",
 				Priority:   2,
 			},
 		}
