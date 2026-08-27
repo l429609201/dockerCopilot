@@ -73,7 +73,7 @@ type ComposeCreateFileReq struct {
 // ComposeReadFileReq 读取指定路径的文件内容。
 type ComposeReadFileReq struct {
 	Path string `form:"path"` // 文件完整路径（绝对路径）
-}
+} 
 
 // ComposeSaveFileReq 保存文件内容到指定路径。
 type ComposeSaveFileReq struct {
