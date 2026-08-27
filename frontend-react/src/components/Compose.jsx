@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw, FolderOpen } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { Layers, Play, Square, RotateCw, Download, FileEdit, RefreshCw, FolderOpen, Search } from 'lucide-react'
 import { composeAPI } from '../api/client.js'
 import { ComposeEditor } from './ComposeEditor.jsx'
 import { ComposeFileManager } from './ComposeFileManager.jsx'
@@ -12,6 +12,7 @@ export function Compose() {
   const [editing, setEditing] = useState(null) // { project, filename }
   const [busyId, setBusyId] = useState('')
   const [showFileManager, setShowFileManager] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('') // 搜索关键词
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -25,6 +26,17 @@ export function Compose() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 根据搜索关键词过滤项目
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery.trim()) return projects
+    const query = searchQuery.toLowerCase()
+    return projects.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      p.dir.toLowerCase().includes(query) ||
+      p.composeFile.toLowerCase().includes(query)
+    )
+  }, [projects, searchQuery])
 
   // 执行部署动作，处理高风险 409 二次确认
   const doAction = async (project, action) => {
@@ -51,7 +63,7 @@ export function Compose() {
   return (
     <div className="w-full space-y-6">
       {/* 页面头部 */}
-      <div className="px-2 sm:px-6 py-4">
+      <div className="px-2 sm:px-6 py-4 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
             <Layers className="h-5 w-5" /> Compose 项目
@@ -66,6 +78,27 @@ export function Compose() {
             </button>
           </div>
         </div>
+
+        {/* 搜索框 */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索项目名称、路径或配置文件..."
+            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              title="清除搜索"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 内容区域 */}
@@ -74,7 +107,7 @@ export function Compose() {
         {loading && <div className="text-gray-500 text-sm">加载中...</div>}
 
         <div className="grid gap-3">
-        {projects.map((p) => (
+        {filteredProjects.map((p) => (
           <div key={p.id} className="card">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="min-w-0">
@@ -95,6 +128,11 @@ export function Compose() {
             </div>
           </div>
         ))}
+        {!loading && filteredProjects.length === 0 && projects.length > 0 && (
+          <div className="text-gray-400 text-sm">
+            未找到匹配 "{searchQuery}" 的项目
+          </div>
+        )}
         {!loading && projects.length === 0 && (
           <div className="text-gray-400 text-sm">未发现 Compose 项目。请在「设置」页面的「Compose 目录配置」中填写已挂载进容器的项目目录并保存。</div>
         )}
