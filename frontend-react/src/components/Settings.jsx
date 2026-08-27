@@ -3,6 +3,8 @@ import { Settings as SettingsIcon, Save, Send, CheckCircle, XCircle, Loader2, Ey
 import { botAPI } from '../api/client.js'
 import { RegistrySection } from './RegistrySection.jsx'
 import { ImageUpdateCheckCard } from './ImageUpdateCheckCard.jsx'
+import { ComposeConfigCard } from './ComposeConfigCard.jsx'
+import { HostPathMapperCard } from './HostPathMapperCard.jsx'
 
 // 解码后端用登录令牌 XOR 混淆后的 Base64 明文 Token。
 // key 为当前登录 JWT 令牌字符串（与后端混淆时所用密钥一致），失败时返回空串。
@@ -112,10 +114,13 @@ export function Settings() {
 
       {/* 内容区域 */}
       <div className="px-2 sm:px-6 space-y-6">
-        <div className="card space-y-4">
-        <div className="flex items-center gap-2 text-gray-900 dark:text-white font-semibold">
-          <Send className="h-4 w-4" /> Telegram 机器人
-        </div>
+        {/* Telegram 和镜像更新检查：PC 端横向布局，移动端纵向 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Telegram 机器人配置卡片 */}
+          <div className="card space-y-4">
+            <div className="flex items-center gap-2 text-gray-900 dark:text-white font-semibold">
+              <Send className="h-4 w-4" /> Telegram 机器人
+            </div>
         {loading && <div className="text-gray-500 text-sm">加载中...</div>}
 
         <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -194,19 +199,26 @@ export function Settings() {
         <p className="text-xs text-gray-400">
           提示：测试会使用当前填写的 Token（留空则用已保存的）向白名单 Chat ID 发送一条消息。请先确保已填写白名单 Chat ID。
         </p>
-      </div>
+          </div>
 
-      {/* 镜像更新检查卡片：更新检查周期 + 屏蔽黑名单，独立保存（内部提交完整配置避免互相覆盖） */}
-      <ImageUpdateCheckCard
-        intervalMinutes={cfg.updateCheckIntervalMinutes}
-        mutedContainers={cfg.mutedContainers}
-        onChangeInterval={(v) => set('updateCheckIntervalMinutes', v)}
-        onChangeMuted={(list) => set('mutedContainers', list)}
-        onSave={saveAll}
-      />
+          {/* 镜像更新检查卡片 */}
+          <ImageUpdateCheckCard
+            intervalMinutes={cfg.updateCheckIntervalMinutes}
+            mutedContainers={cfg.mutedContainers}
+            onChangeInterval={(v) => set('updateCheckIntervalMinutes', v)}
+            onChangeMuted={(list) => set('mutedContainers', list)}
+            onSave={saveAll}
+          />
+        </div>
 
-      {/* 仓库凭据卡片：从定时更新页迁移至此，供拉取私有镜像使用 */}
-      <RegistrySection />
+        {/* Compose 目录配置和宿主机路径映射：PC 端横向布局 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <ComposeConfigCard />
+          <HostPathMapperCard />
+        </div>
+
+        {/* 仓库凭据卡片 */}
+        <RegistrySection />
       </div>
     </div>
   )

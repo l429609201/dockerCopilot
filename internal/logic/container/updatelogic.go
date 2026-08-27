@@ -29,8 +29,8 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 	resp = &types.Resp{}
 	taskID := uuid.New().String()
 	imageNameAndTag := req.ImageNameAndTag
-	// 默认删除旧容器（不再使用环境变量控制）
-	delOldContainer := true
+	// 从请求中读取是否删除旧容器的参数（前端传递 "true" 或 "false"）
+	delOldContainer := req.DelOldContainer != "false"
 	// 整体超时时间来自配置，默认 1800 秒
 	timeoutSec := l.svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
