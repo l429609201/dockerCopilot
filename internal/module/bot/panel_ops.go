@@ -18,15 +18,20 @@ func (b *Bot) doUpdate(chatID int64, id, name, hostID string, messageID int64) {
 		b.reply(chatID, "❌ 容器不存在或已被删除")
 		return
 	}
+	// 优先使用 CreateImage（创建时的镜像名），避免 Image 字段在镜像更新后变空或变成 SHA256
+	imageToUse := c.CreateImage
+	if imageToUse == "" {
+		imageToUse = c.Image // 降级使用 Image 字段
+	}
 	// 沿用容器当前镜像进行更新（拉取同名 tag 的最新镜像并重建），按主机路由
-	taskID, err := containerops.NewForHost(b.svcCtx, hostID).Update(c.ID, name, c.Image)
+	taskID, err := containerops.NewForHost(b.svcCtx, hostID).Update(c.ID, name, imageToUse)
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 提交更新失败：%s", err.Error()))
 		return
 	}
 
 	// 启动进度监听 goroutine，持续编辑消息显示进度
-	go b.watchUpdateProgress(chatID, messageID, taskID, name, c.Image)
+	go b.watchUpdateProgress(chatID, messageID, taskID, name, imageToUse)
 }
 
 // sendContainerLogs 推送容器最近日志（最后 50 行，限制长度避免超 TG 消息上限）。

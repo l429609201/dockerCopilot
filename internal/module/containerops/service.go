@@ -3,7 +3,6 @@ package containerops
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -163,7 +162,8 @@ func (s *Service) Rename(id, newName string) error {
 // 复用与 HTTP 层一致的任务管理器与自更新逻辑，返回提交的 taskID。
 func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
 	taskID := uuid.New().String()
-	delOldContainer := os.Getenv("DelOldContainer") != "false"
+	// 默认删除旧容器（不再使用环境变量控制）
+	delOldContainer := true
 	timeoutSec := s.svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 1800

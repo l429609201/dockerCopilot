@@ -77,12 +77,6 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 			containerInfo.Name = "get container name error"
 			l.Error("get container name error" + v.ID)
 		}
-		if v.Image != "" {
-			containerInfo.UsingImage = v.Image
-		} else {
-			containerInfo.UsingImage = v.ImageID
-			l.Error("image dont have name" + v.ID)
-		}
 		// 按容器所属主机查询详情，保证远程容器也能拿到 inspect 信息
 		containerInspect, err := utiles.GetContainerInspectFromHost(l.svcCtx, v.HostID, v.ID)
 		if err != nil {
@@ -91,6 +85,23 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 		// inspect 失败时 Config 可能为 nil，需防御性判空（远程主机不可达时尤为常见）
 		if containerInspect.Config != nil {
 			containerInfo.CreateImage = containerInspect.Config.Image
+		}
+
+		// 镜像名优先级：
+		// 1. Config.Image（创建时的镜像名，最稳定，不受后续 tag 变化影响）
+		// 2. Image（当前运行镜像的 tag，可能因镜像更新而变成空）
+		// 3. ImageID（SHA256 digest，最后降级选项）
+		//
+		// 背景：同一镜像部署多个容器时，第一个容器更新后会拉取新镜像并重新打 tag，
+		// 导致其他容器仍在使用的旧镜像变成 untagged 状态，此时 v.Image 会变成空字符串。
+		// 使用 Config.Image 可以避免显示 SHA256 digest，保持用户友好的镜像名称。
+		if containerInfo.CreateImage != "" {
+			containerInfo.UsingImage = containerInfo.CreateImage
+		} else if v.Image != "" {
+			containerInfo.UsingImage = v.Image
+		} else {
+			containerInfo.UsingImage = v.ImageID
+			l.Error("image dont have name, fallback to ImageID: " + v.ID)
 		}
 		t := time.Unix(v.Created, 0)
 		containerInfo.CreateTime = t.Format("2006-01-02 15:04:05")

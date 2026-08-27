@@ -21,8 +21,11 @@ func (b *Bot) sendTagSwitch(chatID int64, id, name, hostID string, messageID int
 		return
 	}
 	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
-	// 解析当前镜像名（去掉 tag）
-	curImage := c.Image
+	// 解析当前镜像名（去掉 tag），优先使用 CreateImage
+	curImage := c.CreateImage
+	if curImage == "" {
+		curImage = c.Image // 降级使用 Image 字段
+	}
 	repo := curImage
 	if idx := strings.LastIndex(curImage, ":"); idx >= 0 && !strings.Contains(curImage[idx:], "/") {
 		repo = curImage[:idx]

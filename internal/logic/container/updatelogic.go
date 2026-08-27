@@ -9,7 +9,6 @@ import (
 	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
-	"os"
 )
 
 type UpdateLogic struct {
@@ -30,7 +29,8 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 	resp = &types.Resp{}
 	taskID := uuid.New().String()
 	imageNameAndTag := req.ImageNameAndTag
-	delOldContainer := os.Getenv("DelOldContainer") != "false"
+	// 默认删除旧容器（不再使用环境变量控制）
+	delOldContainer := true
 	// 整体超时时间来自配置，默认 1800 秒
 	timeoutSec := l.svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
