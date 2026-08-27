@@ -377,8 +377,8 @@ networks:
 	return resp, nil
 }
 
-// ReadFile 读取指定路径的文件内容。
-func (l *ComposeLogic) ReadFile(req *types.ComposeReadFileReq) (resp *types.Resp, err error) {
+// ReadFileByPath 读取指定路径的文件内容（文件管理器用）。
+func (l *ComposeLogic) ReadFileByPath(req *types.ComposeReadFileReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{Code: 200, Msg: "success"}
 
 	// 清理路径
@@ -411,8 +411,8 @@ func (l *ComposeLogic) ReadFile(req *types.ComposeReadFileReq) (resp *types.Resp
 	return resp, nil
 }
 
-// SaveFile 保存文件内容到指定路径。
-func (l *ComposeLogic) SaveFile(req *types.ComposeSaveFileReq) (resp *types.Resp, err error) {
+// SaveFileByPath 保存文件内容到指定路径（文件管理器用）。
+func (l *ComposeLogic) SaveFileByPath(req *types.ComposeSaveFileReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{Code: 200, Msg: "success"}
 
 	// 清理路径

@@ -162,8 +162,8 @@ func CreateComposeFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// ReadFileHandler 读取文件内容。
-func ReadFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+// ReadFileByPathHandler 读取指定路径的文件内容（用于文件管理器）。
+func ReadFileByPathHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ComposeReadFileReq
 		if err := httpx.Parse(r, &req); err != nil {
@@ -171,13 +171,13 @@ func ReadFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 		l := compose.NewComposeLogic(r.Context(), svcCtx)
-		resp, err := l.ReadFile(&req)
+		resp, err := l.ReadFileByPath(&req)
 		writeResp(w, r, resp, err)
 	}
 }
 
-// SaveFileHandler 保存文件内容。
-func SaveFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+// SaveFileByPathHandler 保存文件到指定路径（用于文件管理器）。
+func SaveFileByPathHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.ComposeSaveFileReq
 		if err := httpx.Parse(r, &req); err != nil {
@@ -185,7 +185,7 @@ func SaveFileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 		l := compose.NewComposeLogic(r.Context(), svcCtx)
-		resp, err := l.SaveFile(&req)
+		resp, err := l.SaveFileByPath(&req)
 		writeResp(w, r, resp, err)
 	}
 }

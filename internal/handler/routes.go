@@ -297,13 +297,13 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				// 读取任意文件内容（文件管理器用）
 				Method:  http.MethodGet,
 				Path:    "/files",
-				Handler: compose.ReadFileHandler(serverCtx),
+				Handler: compose.ReadFileByPathHandler(serverCtx),
 			},
 			{
 				// 保存文件内容（文件管理器用）
 				Method:  http.MethodPut,
 				Path:    "/files",
-				Handler: compose.SaveFileHandler(serverCtx),
+				Handler: compose.SaveFileByPathHandler(serverCtx),
 			},
 			{
 				Method:  http.MethodPost,
