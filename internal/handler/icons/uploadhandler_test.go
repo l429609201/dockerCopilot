@@ -15,31 +15,15 @@ import (
 
 func TestUploadHandlerRejectsNonImageFiles(t *testing.T) {
 	tempDir := t.TempDir()
-	jsPath := filepath.Join(tempDir, "imageLogos.js")
 	imageDir := filepath.Join(tempDir, "image")
 	testFilename := "codex-upload-vuln.json"
 
+	// 将上传目录重定向到临时目录，避免污染真实 /data/images
 	originalImageUploadDir := imageUploadDir
-	originalImageLogosPath := imageLogosPath
 	imageUploadDir = imageDir
-	imageLogosPath = jsPath
 	t.Cleanup(func() {
 		imageUploadDir = originalImageUploadDir
-		imageLogosPath = originalImageLogosPath
-	})
-
-	originalContent, readErr := os.ReadFile(jsPath)
-	hadOriginal := readErr == nil
-	if err := os.WriteFile(jsPath, []byte("// test\nexport const customImageLogos = {\n};\n"), 0o644); err != nil {
-		t.Fatalf("failed to seed imageLogos.js: %v", err)
-	}
-	t.Cleanup(func() {
 		_ = os.Remove(filepath.Join(imageDir, testFilename))
-		if hadOriginal {
-			_ = os.WriteFile(jsPath, originalContent, 0o644)
-		} else {
-			_ = os.Remove(jsPath)
-		}
 	})
 
 	body := &bytes.Buffer{}

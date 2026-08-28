@@ -46,39 +46,42 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
   const done = (url) => { onApplied?.(url); setBusy(false) }
   const fail = (e) => { setMsg(e?.response?.data?.msg || e?.message || '操作失败'); setBusy(false) }
 
-  // 本地上传
+  // 本地上传（API 统一对象入参；后端返回 data.iconUrl 为可访问路径）
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (file.size > 2 * 1024 * 1024) { setMsg('图片不能超过 2MB'); return }
     setBusy(true); setMsg('')
     try {
-      const r = await imageAPI.uploadIcon(file, imageName, container?.name)
+      const r = await imageAPI.uploadIcon({ file, imageName })
       if (r.data.code === 200 || r.data.code === 0) {
-        // 后端已统一存 /data/images，通过 /images/ 静态路由访问
-        const p = r.data.data ? `/images/${r.data.data}` : preview
+        const p = r.data.data?.iconUrl || preview
         setPreview(p); done(p)
       } else throw new Error(r.data.msg)
     } catch (err) { fail(err) } finally { if (fileRef.current) fileRef.current.value = '' }
   }
 
-  // 在线 URL
+  // 在线 URL（API 统一对象入参，字段名 url）
   const handleUrl = async () => {
     if (!urlInput.trim()) { setMsg('请输入图标 URL'); return }
     setBusy(true); setMsg('')
     try {
-      const r = await imageAPI.setIconUrl(imageName, urlInput.trim())
+      const r = await imageAPI.setIconUrl({ imageName, url: urlInput.trim() })
       if (r.data.code === 200 || r.data.code === 0) { setPreview(urlInput.trim()); done(urlInput.trim()) }
       else throw new Error(r.data.msg)
     } catch (err) { fail(err) }
   }
 
-  // 自动获取并持久化
+  // 自动获取并持久化（后端返回 data.iconUrl 为落盘后的可访问路径）
   const handleAuto = async (accessUrl) => {
     setBusy(true); setMsg('正在抓取图标...')
     try {
-      const r = await imageAPI.fetchIcon(imageName, accessUrl)
-      if (r.data.code === 200 || r.data.code === 0) { setPreview(r.data.data); setMsg(''); done(r.data.data) }
+      const r = await imageAPI.fetchIcon({ imageName, url: accessUrl })
+      if (r.data.code === 200 || r.data.code === 0) {
+        const p = r.data.data?.iconUrl
+        if (p) { setPreview(p); setMsg(''); done(p) }
+        else { setMsg('未获取到图标'); setBusy(false) }
+      }
       else { setMsg(r.data.msg || '未获取到图标'); setBusy(false) }
     } catch (err) { fail(err) }
   }

@@ -42,3 +42,4 @@ __pycache__/
 # Swagger 文档由 swag init 在构建阶段自动生成（代码即文档，不入 git）
 /swagger-ui/swagger.json
 /docs/
+重构.md

@@ -112,47 +112,38 @@ export function Containers() {
   })
 
   // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+  // 图标配置：后端返回 IconItem 数组，作为容器图标的唯一数据源
+  const { data: customIcons = [] } = useQuery({
+    queryKey: ['icons'],
     queryFn: async () => {
-      console.log('[Debug] 开始从服务器获取图标配置...')
       try {
         const response = await imageAPI.getIcons()
-        console.log('[Debug] 图标API响应:', response.data)
         if (response.data.code === 200 || response.data.code === 0) {
-          const icons = response.data.data || {}
-          console.log('[Debug] 获取到的图标数据:', icons)
-          // update localStorage
+          const icons = Array.isArray(response.data.data) ? response.data.data : []
           localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
           return icons
         }
       } catch (err) {
-        console.error('[Debug] 获取图标失败:', err)
+        console.debug('获取图标配置失败:', err.message)
       }
-      return {}
+      return []
     },
-    // 初始数据尝试从localStorage获取，避免闪烁
+    // 初始数据尝试从 localStorage 获取，避免闪烁
     initialData: () => {
       const saved = localStorage.getItem('docker_copilot_image_logos')
       if (saved) {
         try {
           const parsed = JSON.parse(saved)
-          // 只有当有实际数据时才作为初始数据
-          if (Object.keys(parsed).length > 0) {
-            return parsed
-          }
-        } catch (e) {
-          console.error('解析本地图标配置失败:', e)
-        }
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed
+        } catch { /* 忽略解析错误 */ }
       }
       return undefined
     },
-    // 即使有初始数据，也立即在后台刷新
     refetchOnMount: true,
   })
 
   // 阶段8：批量解析容器站点 favicon（运行中、有暴露端口且尚无持久化图标的容器），按容器id取图标
-  // 传入 customIcons 让已有图标的容器不再重复探测，避免多端口容器刷新时图标跳变
+  // 传入 icons 让已有图标的容器不再重复探测，避免多端口容器刷新时图标跳变
   const faviconMap = useFaviconMap(containers, customIcons)
 
   // 从容器列表提取去重后的主机列表，供主机下拉筛选使用（含本地）
@@ -1635,17 +1626,22 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     return () => { cancelled = true }
   }, [container.id])
 
-  // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+  // 获取图标配置（IconItem 数组，唯一数据源）
+  const { data: customIcons = [] } = useQuery({
+    queryKey: ['icons'],
     queryFn: async () => {
       const response = await imageAPI.getIcons()
       if (response.data.code === 200 || response.data.code === 0) {
-        return response.data.data || {}
+        return Array.isArray(response.data.data) ? response.data.data : []
       }
-      return {}
+      return []
     },
-    initialData: () => JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}'),
+    initialData: () => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '[]')
+        return Array.isArray(parsed) ? parsed : []
+      } catch { return [] }
+    },
   })
 
   // 当容器切换时，更新表单字段的值
@@ -1897,7 +1893,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               setCurrentContainer(prev => ({ ...prev, iconUrl: url }))
               window.dispatchEvent(new Event('storage'))
               queryClient.invalidateQueries(['containers'])
-              queryClient.invalidateQueries(['customIcons'])
+              queryClient.invalidateQueries(['icons'])
               setShowIconMenu(false)
             }}
           />

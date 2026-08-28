@@ -42,68 +42,6 @@ function writeCache(cache) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)) } catch { /* 忽略配额错误 */ }
 }
 
-// useFavicon：根据容器暴露端口，探测其站点 favicon。
-// 优先读缓存；未命中时用当前访问 host + 端口，调后端代理抓取。
-// 抓取成功后自动持久化到服务器 /data/images/ 目录。
-// 返回 { faviconUrl, loading }。仅对运行中且有端口的容器尝试。
-export function useFavicon(container) {
-  const [faviconUrl, setFaviconUrl] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (!container?.id) return
-    const running = (container.status || '').toLowerCase() === 'running'
-    // host 网络模式无端口映射，改用容器暴露端口（即宿主机端口）
-    const ports = pickProbePorts(container)
-    if (!running || ports.length === 0) return
-
-    // 读缓存
-    const cache = readCache()
-    const hit = cache[container.id]
-    if (hit && hit.url && Date.now() - hit.ts < TTL) {
-      setFaviconUrl(hit.url)
-      return
-    }
-
-    let cancelled = false
-
-    const tryPorts = async () => {
-      setLoading(true)
-      // 远程容器用其所属主机 IP，本地用当前访问 hostname
-      const host = await getHostIP(container.hostId)
-      if (cancelled) return
-      // 优先尝试常见 Web 端口，其次遍历全部
-      const ordered = [...ports].sort((a, b) => scorePort(b) - scorePort(a))
-      for (const port of ordered) {
-        if (cancelled) return
-        try {
-          const r = await faviconAPI.resolve(`http://${host}:${port}`)
-          const url = r.data?.data?.url
-          if (url) {
-            if (cancelled) return
-            setFaviconUrl(url)
-            const next = readCache()
-            next[container.id] = { url, ts: Date.now() }
-            writeCache(next)
-            setLoading(false)
-
-            // 成功抓取后，自动持久化到服务器 /data/images/ 目录
-            // 后台异步执行，不阻塞 UI
-            persistIconToServer(container, url, `http://${host}:${port}`)
-
-            return
-          }
-        } catch { /* 忽略单端口失败，继续下一个 */ }
-      }
-      if (!cancelled) setLoading(false)
-    }
-    tryPorts()
-    return () => { cancelled = true }
-  }, [container?.id, container?.status, (container?.ports || []).join(',')])
-
-  return { faviconUrl, loading }
-}
-
 // pickProbePorts 选择用于探测 favicon 的端口列表。
 // 优先用宿主机映射端口（ports）；若为空且是 host 网络模式，则用容器暴露端口（exposedPorts）。
 function pickProbePorts(container) {
@@ -124,48 +62,19 @@ function scorePort(port) {
 
 // useFaviconMap：对一批容器批量解析 favicon，返回 { [containerId]: iconUrl }。
 // 供列表渲染时按容器 id 取图标，避免在 .map 循环里调用 hook。
-// customIcons 传入已持久化的图标映射：已有图标的镜像不再重复探测，
+// icons 为后端 /api/icons 的图标配置数组：已有图标的镜像不再重复探测，
 // 避免多端口容器每次刷新探到不同端口导致图标跳变，同时省掉无谓的网络请求。
-export function useFaviconMap(containers, customIcons = {}) {
+export function useFaviconMap(containers, icons = []) {
   const [map, setMap] = useState({})
 
   useEffect(() => {
-    console.log('🔍 useFaviconMap: 开始过滤容器列表', {
-      totalContainers: containers?.length || 0,
-      customIconsCount: Object.keys(customIcons || {}).length
+    const list = (containers || []).filter((c) => {
+      const isRunning = (c.status || '').toLowerCase() === 'running'
+      const hasPorts = pickProbePorts(c).length > 0
+      // 已有持久化图标（含容器名/镜像名匹配）的容器直接跳过，只对"没图标"的才抓取
+      const hasLogo = !!getImageLogo(c.usingImage, icons, c.name)
+      return isRunning && hasPorts && !hasLogo
     })
-
-    const list = (containers || []).filter(
-      (c) => {
-        const isRunning = (c.status || '').toLowerCase() === 'running'
-        const ports = pickProbePorts(c)
-        const hasPorts = ports.length > 0
-        const hasLogo = c.usingImage && getImageLogo(c.usingImage, customIcons || {})
-
-        const shouldProbe = isRunning && hasPorts && !hasLogo
-
-        // 调试日志：显示每个容器的过滤结果
-        if (!shouldProbe) {
-          console.debug(`⏭️ 跳过容器 ${c.name}:`, {
-            image: c.usingImage,
-            isRunning,
-            hasPorts,
-            ports: ports.length,
-            hasLogo: !!hasLogo,
-            logoUrl: hasLogo || 'none'
-          })
-        } else {
-          console.log(`✅ 将抓取容器 ${c.name}:`, {
-            image: c.usingImage,
-            ports: ports.length
-          })
-        }
-
-        return shouldProbe
-      }
-    )
-
-    console.log('🎯 useFaviconMap: 过滤后需要抓取的容器数量:', list.length)
 
     if (list.length === 0) return
     let cancelled = false
@@ -196,7 +105,7 @@ export function useFaviconMap(containers, customIcons = {}) {
               cacheDirty = true
 
               // 批量抓取时也自动持久化到服务器
-              persistIconToServer(c, url, `http://${host}:${port}`)
+              persistIconToServer(c, `http://${host}:${port}`)
 
               break
             }
@@ -209,35 +118,27 @@ export function useFaviconMap(containers, customIcons = {}) {
     }
     run()
     return () => { cancelled = true }
-    // customIcons 变化后重新评估：新持久化的图标会让对应容器从待抓取列表中移除
-  }, [(containers || []).map((c) => c.id).join(','), Object.keys(customIcons || {}).join(',')])
+    // icons 变化后重新评估：新持久化的图标会让对应容器从待抓取列表中移除
+  }, [(containers || []).map((c) => c.id).join(','), (icons || []).length])
 
   return map
 }
 
 // persistIconToServer 将抓取到的 favicon 持久化到服务器 /data/images/ 目录。
 // 后台异步执行，失败时静默忽略（不影响前端显示）。
-async function persistIconToServer(container, iconUrl, containerUrl) {
+async function persistIconToServer(container, containerUrl) {
   try {
-    // 提取镜像名称（去掉 tag）
-    const imageName = container.image.split(':')[0]
+    // 容器对象的镜像字段为 usingImage，去掉 tag 作为绑定 key
+    const imageName = (container.usingImage || '').split(':')[0]
+    if (!imageName) return
 
-    // 调用后端接口下载并保存
-    const response = await imageAPI.fetchIcon({
-      imageName: imageName,
+    await imageAPI.fetchIcon({
+      imageName,
       url: containerUrl,
-      targetType: 'image' // 明确指定类型
+      targetType: 'image',
     })
-
-    console.log(`✅ 图标已持久化: ${imageName} -> ${iconUrl}`)
-    console.debug('持久化响应:', response)
   } catch (error) {
-    // 输出详细错误信息用于调试
-    console.error(`❌ 图标持久化失败 (${container.name}):`, {
-      imageName: container.image.split(':')[0],
-      containerUrl,
-      error: error.message,
-      response: error.response?.data
-    })
+    // 静默失败，不影响用户体验（仅调试级日志）
+    console.debug(`图标持久化失败 (${container.name}):`, error.message)
   }
 }

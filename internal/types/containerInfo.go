@@ -6,7 +6,10 @@ import (
 
 type Container struct {
 	docker.Container
-	Update bool `json:"Update"`
+	// Update 表示该容器所用镜像是否有更新。JSON 字段名为 haveUpdate，与前端一致
+	// （前端 containerState / 卡片 / 列表均读取 c.haveUpdate）。历史上后端曾输出
+	// "Update"，与前端 "haveUpdate" 不匹配，导致"有更新"统计恒为 0，此处对齐修复。
+	Update bool `json:"haveUpdate"`
 	// HostID / HostName 标记该容器所属的 Docker 主机（多 Docker 管理）。
 	// 空表示本地主机，兼容历史行为。
 	HostID   string `json:"hostId,omitempty"`

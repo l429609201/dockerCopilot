@@ -37,32 +37,29 @@ export function Images() {
   const [pruneModal, setPruneModal] = useState({ isOpen: false, type: null, images: [] })
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: '' })
 
-  // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+  // 获取图标配置（IconItem 数组，唯一数据源）
+  const { data: customIcons = [] } = useQuery({
+    queryKey: ['icons'],
     queryFn: async () => {
       try {
         const response = await imageAPI.getIcons()
         if (response.data.code === 200 || response.data.code === 0) {
-          const icons = response.data.data || {}
-          // update localStorage
+          const icons = Array.isArray(response.data.data) ? response.data.data : []
           localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
           return icons
         }
       } catch (err) {
-        console.error('获取图标失败:', err)
+        console.debug('获取图标配置失败:', err.message)
       }
-      return {}
+      return []
     },
-    // 初始数据尝试从localStorage获取
     initialData: () => {
       const saved = localStorage.getItem('docker_copilot_image_logos')
       if (saved) {
         try {
-          return JSON.parse(saved)
-        } catch (e) {
-          console.error('解析本地图标配置失败:', e)
-        }
+          const parsed = JSON.parse(saved)
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed
+        } catch { /* 忽略解析错误 */ }
       }
       return undefined
     }

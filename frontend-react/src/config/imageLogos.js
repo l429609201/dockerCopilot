@@ -1,186 +1,114 @@
-// 动态图标加载模块
-// 从后端 API 获取，支持容器名称和镜像名称匹配
-import { iconAPI } from '../api/client.js'
+﻿// 图标匹配纯函数模块（无副作用、无内部状态）。
+//
+// 设计要点（重构后）：
+// - 不再在模块内部异步加载/缓存图标配置，彻底消除"双数据源 + 首屏时序空窗"问题。
+// - 图标数据由调用方（react-query 的 ['icons'] 查询）以「IconItem 数组」形式传入。
+// - IconItem 结构与后端严格一致：
+//   { target: string, targetType: 'container'|'image', iconUrl: string, priority: number }
 
-// 图标配置项结构
-// {
-//   target: "容器名或镜像名",
-//   targetType: "container" | "image",
-//   iconUrl: "/images/xxx.png",
-//   priority: 1 (容器级) | 2 (镜像级)
-// }
-
-// 运行时图标缓存（从后端加载）
-let iconItems = [] // 扩展数组格式
-let cacheLoaded = false
-let loadingPromise = null
-
-// 从后端加载图标配置
-async function loadIconsFromBackend() {
-  if (cacheLoaded) return iconItems
-  if (loadingPromise) return loadingPromise
-
-  loadingPromise = (async () => {
-    try {
-      const response = await iconAPI.getIcons()
-      if (response.data?.code === 200 && Array.isArray(response.data?.data)) {
-        iconItems = response.data.data
-        cacheLoaded = true
-        console.log('✅ 已加载图标配置，共', iconItems.length, '项')
-      }
-    } catch (error) {
-      console.warn('⚠️ 加载图标配置失败:', error.message)
-    } finally {
-      loadingPromise = null
-    }
-    return iconItems
-  })()
-
-  return loadingPromise
+// 兼容传入非数组（防御式）：统一归一化为数组。
+function normalizeIcons(icons) {
+  if (Array.isArray(icons)) return icons
+  return []
 }
 
-// 初始化时自动加载
-loadIconsFromBackend()
+// getImageLogo 按镜像名/容器名从图标数组中匹配 iconUrl。
+// 优先级：容器名精确 > 镜像名精确 > 简化名精确 > 大小写不敏感 > 模糊(子串)。
+// @param {string} imageName 镜像名（可含 tag）
+// @param {IconItem[]} icons  图标配置数组（来自后端 /api/icons）
+// @param {string|null} containerName 容器名（可选，优先匹配）
+// @returns {string|null} 匹配到的 iconUrl，无则 null
+export const getImageLogo = (imageName, icons = [], containerName = null) => {
+  const items = normalizeIcons(icons)
+  if (!imageName && !containerName) return null
 
-// 导出空对象（向后兼容，实际不再使用）
-export const builtInImageLogos = {}
-
-// 获取镜像的logo（同步函数，使用已加载的缓存）
-// 优先级: 容器名称匹配 > 镜像名称匹配 > 用户自定义 > 默认图标
-// containerName: 容器名称（可选，如果提供则优先匹配）
-// imageName: 镜像名称
-// customLogos: 用户自定义图标（向后兼容）
-export const getImageLogo = (imageName, customLogos = {}, containerName = null) => {
-  // 直接使用已加载的缓存（不等待，避免异步问题）
-
-  // 1. 优先匹配容器名称（如果提供）
+  // 1. 容器名精确匹配（容器级优先）
   if (containerName) {
-    const containerMatch = iconItems.find(item =>
-      item.targetType === 'container' && item.target === containerName
+    const hit = items.find(
+      (it) => it.targetType === 'container' && it.target === containerName
     )
-    if (containerMatch) {
-      return containerMatch.iconUrl
-    }
+    if (hit) return hit.iconUrl
   }
 
-  // 2. 匹配镜像名称（多种匹配策略）
-  const baseImageName = imageName.split(':')[0] // 去掉tag部分
+  if (!imageName) return null
+
+  const baseImageName = imageName.split(':')[0] // 去掉 tag
   const simpleName = baseImageName.split('/').pop() // 去掉 registry/namespace
 
-  // 精确匹配（完整镜像名）
-  const exactMatch = iconItems.find(item =>
-    item.targetType === 'image' && item.target === baseImageName
+  // 2. 镜像名精确匹配（完整名）
+  const exact = items.find(
+    (it) => it.targetType === 'image' && it.target === baseImageName
   )
-  if (exactMatch) return exactMatch.iconUrl
+  if (exact) return exact.iconUrl
 
-  // 精确匹配（简化镜像名）
-  const simpleMatch = iconItems.find(item =>
-    item.targetType === 'image' && item.target === simpleName
+  // 3. 简化名精确匹配
+  const simple = items.find(
+    (it) => it.targetType === 'image' && it.target === simpleName
   )
-  if (simpleMatch) return simpleMatch.iconUrl
+  if (simple) return simple.iconUrl
 
-  // 大小写不敏感匹配
-  const lowerBaseImageName = baseImageName.toLowerCase()
-  const lowerSimpleName = simpleName.toLowerCase()
-
-  const caseInsensitiveMatch = iconItems.find(item =>
-    item.targetType === 'image' && item.target.toLowerCase() === lowerBaseImageName
+  // 4. 大小写不敏感匹配
+  const lowerBase = baseImageName.toLowerCase()
+  const lowerSimple = simpleName.toLowerCase()
+  const ci = items.find(
+    (it) => it.targetType === 'image' && it.target.toLowerCase() === lowerBase
   )
-  if (caseInsensitiveMatch) return caseInsensitiveMatch.iconUrl
-
-  const caseInsensitiveSimpleMatch = iconItems.find(item =>
-    item.targetType === 'image' && item.target.split('/').pop().toLowerCase() === lowerSimpleName
+  if (ci) return ci.iconUrl
+  const ciSimple = items.find(
+    (it) =>
+      it.targetType === 'image' &&
+      it.target.split('/').pop().toLowerCase() === lowerSimple
   )
-  if (caseInsensitiveSimpleMatch) return caseInsensitiveSimpleMatch.iconUrl
+  if (ciSimple) return ciSimple.iconUrl
 
-  // 模糊匹配（子串匹配）
-  const fuzzyMatch = iconItems.find(item => {
-    if (item.targetType !== 'image') return false
+  // 5. 模糊匹配（子串）
+  const fuzzy = items.find((it) => {
+    if (it.targetType !== 'image') return false
     try {
-      const lowerTarget = item.target.toLowerCase()
-      return lowerBaseImageName.includes(lowerTarget) || lowerSimpleName.includes(lowerTarget)
-    } catch (e) {
+      const t = it.target.toLowerCase()
+      return lowerBase.includes(t) || lowerSimple.includes(t)
+    } catch {
       return false
     }
   })
-  if (fuzzyMatch) return fuzzyMatch.iconUrl
+  if (fuzzy) return fuzzy.iconUrl
 
-  // 3. 检查用户自定义的logo（向后兼容）
-  if (customLogos[imageName]) return customLogos[imageName]
-  if (customLogos[baseImageName]) return customLogos[baseImageName]
-  if (customLogos[simpleName]) return customLogos[simpleName]
-
-  // 尝试自定义图标的模糊匹配
-  for (const [key, url] of Object.entries(customLogos)) {
-    if (!key) continue
-    try {
-      if (baseImageName === key || baseImageName.startsWith(key + ':') || baseImageName.startsWith(key + '/')) {
-        return url
-      }
-      if (key.split(':')[0] === baseImageName) {
-        return url
-      }
-    } catch (e) {
-      // 忽略异常
-    }
-  }
-
-  // 没有找到logo，返回null
   return null
 }
 
-// 获取所有支持的镜像名称列表
-export const getSupportedImageNames = () => {
-  return iconItems.filter(item => item.targetType === 'image').map(item => item.target)
-}
+// getSupportedImageNames 返回所有镜像级图标的 target 列表。
+export const getSupportedImageNames = (icons = []) =>
+  normalizeIcons(icons)
+    .filter((it) => it.targetType === 'image')
+    .map((it) => it.target)
 
-// 检查镜像是否有内置logo（同步函数）
-export const hasBuiltInLogo = (imageName, containerName = null) => {
-  if (containerName) {
-    const hasContainer = iconItems.some(item =>
-      item.targetType === 'container' && item.target === containerName
-    )
-    if (hasContainer) return true
-  }
-
-  const baseImageName = imageName.split(':')[0]
-  const simpleName = baseImageName.split('/').pop()
-
-  return iconItems.some(item => {
-    if (item.targetType !== 'image') return false
-    try {
-      return item.target === baseImageName ||
-             item.target === simpleName ||
-             baseImageName.includes(item.target) ||
-             simpleName.includes(item.target)
-    } catch (e) {
-      return false
-    }
-  })
-}
+// hasBuiltInLogo 判断某镜像/容器是否已有图标配置。
+export const hasBuiltInLogo = (imageName, icons = [], containerName = null) =>
+  getImageLogo(imageName, icons, containerName) != null
 
 /**
- * 统一解析容器图标 URL（卡片/列表/详情共用，保证优先级一致）。
- * 优先级：容器自定义 iconUrl > 容器名称匹配 > 镜像名称匹配 > 用户自定义 > 实时抓取的 favicon。
+ * resolveContainerIcon 统一解析容器图标 URL（卡片/列表/详情共用，保证优先级一致）。
+ *
+ * 优先级：容器自定义 iconUrl > 容器名匹配 > 镜像名匹配 > 实时抓取的 favicon。
  * 说明：持久化结果必须压过实时抓取，否则每次刷新 useFaviconMap 探测回来的地址
- *      会覆盖已固定的图标——多端口容器就表现为「刷新就跳」。
- *      实时 favicon 退化为兜底，仅在该镜像还没有任何图标时生效。
- *      getImageLogo 已支持容器名称优先匹配。
+ *      会覆盖已固定的图标——多端口容器就表现为「刷新就跳」。实时 favicon 退化为兜底，
+ *      仅在该镜像还没有任何持久化图标时生效。
+ *
  * @param {object} container 容器对象（需含 id / name / iconUrl / usingImage）
  * @param {object} faviconMap 由 useFaviconMap 生成的 {容器id: url} 映射
- * @param {object} customIcons 用户自定义图标配置 {镜像名: url}
- * @returns {string|null} 解析出的图标地址，无则返回 null
+ * @param {IconItem[]} icons 图标配置数组（来自后端 /api/icons）
+ * @returns {string|null} 解析出的图标地址，无则 null
  */
-export const resolveContainerIcon = (container, faviconMap = {}, customIcons = {}) => {
-  if (!container) return null;
+export const resolveContainerIcon = (container, faviconMap = {}, icons = []) => {
+  if (!container) return null
   // 1. 容器自身已设置的自定义图标优先级最高
-  if (container.iconUrl) return container.iconUrl;
-  // 2. 内置logo（容器名称优先 > 镜像名称）/ 用户自定义logo / 抓取后已持久化的图标
-  if (container.usingImage) {
-    const logo = getImageLogo(container.usingImage, customIcons || {}, container.name);
-    if (logo) return logo;
+  if (container.iconUrl) return container.iconUrl
+  // 2. 图标配置匹配（容器名优先 > 镜像名）
+  if (container.usingImage || container.name) {
+    const logo = getImageLogo(container.usingImage, icons, container.name)
+    if (logo) return logo
   }
   // 3. 兜底：本次会话实时抓取到的 favicon（尚未持久化时才会走到这里）
-  if (faviconMap && faviconMap[container.id]) return faviconMap[container.id];
-  return null;
-};
+  if (faviconMap && faviconMap[container.id]) return faviconMap[container.id]
+  return null
+}

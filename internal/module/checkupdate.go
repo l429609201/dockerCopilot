@@ -15,9 +15,27 @@ import (
 	"time"
 )
 
+// CheckStatus 单个镜像的更新检查状态。
+type CheckStatus string
+
+const (
+	// StatusLatest 已是最新（本地 digest 与远端一致）。
+	StatusLatest CheckStatus = "latest"
+	// StatusNeedUpdate 有更新（本地 digest 与远端不一致）。
+	StatusNeedUpdate CheckStatus = "needUpdate"
+	// StatusUnknown 检测未完成/失败（token 失败、网络错误、无 RepoDigests 等）。
+	// 关键：失败必须显式标记为未知，而不是留空——留空会被前端当成"最新"，
+	// 造成"检测失败却显示 0 个待更新"的假象。
+	StatusUnknown CheckStatus = "unknown"
+)
+
 // ImageCheckList 检查更新处理后的镜像列表
 type ImageCheckList struct {
 	NeedUpdate bool
+	// Status 明确区分 最新/有更新/未知，供前端与日志分级展示。
+	Status CheckStatus
+	// Reason 未知/失败时的原因（如 auth failed、no repoDigests），便于排查。
+	Reason string
 }
 
 // ImageUpdateData 保存镜像更新检查结果。
@@ -33,11 +51,21 @@ type ImageUpdateData struct {
 	// 同一轮内多个镜像可能指向同一 URL（多主机同镜像），跨轮则在 TTL 内复用，
 	// 避免对 registry 的重复 HEAD 请求（Docker Hub 有匿名速率限制）。
 	digestCache map[string]digestCacheEntry
+	// tokenCache 缓存 registry 拉取 token，key 为 registry host + repository path。
+	// 每个镜像每轮原本都要走 challenge + token 两次往返（auth.docker.io 经常慢），
+	// 同一仓库在 TTL 内复用同一 token 可显著减少往返、加快整轮检查。
+	tokenCache map[string]tokenCacheEntry
 }
 
 // digestCacheEntry 单条 digest 缓存。只缓存成功结果，失败不缓存以便下轮立即重试。
 type digestCacheEntry struct {
 	digest   string
+	cachedAt time.Time
+}
+
+// tokenCacheEntry 单条 token 缓存。只缓存成功获取的非空 token。
+type tokenCacheEntry struct {
+	token    string
 	cachedAt time.Time
 }
 
@@ -47,6 +75,9 @@ const (
 	// digestCacheTTL 远端 digest 缓存有效期。取值需明显小于最小检查周期，
 	// 保证「用户手动点检查更新」能拿到较新结果，同时挡住同一轮内的重复请求。
 	digestCacheTTL = 5 * time.Minute
+	// tokenCacheTTL registry token 缓存有效期。registry 签发的 token 通常有效期
+	// 数分钟（Docker Hub 约 5 分钟），这里取略小值，保证复用期间 token 不会过期失效。
+	tokenCacheTTL = 4 * time.Minute
 	// checkConcurrency 单轮检查的并发度。并行发起 registry 请求，
 	// 上限避免大量镜像时打爆 registry 速率限制或本地连接数。
 	checkConcurrency = 8
@@ -58,6 +89,7 @@ func NewImageCheck() *ImageUpdateData {
 	return &ImageUpdateData{
 		Data:        map[string]ImageCheckList{},
 		digestCache: map[string]digestCacheEntry{},
+		tokenCache:  map[string]tokenCacheEntry{},
 	}
 }
 
@@ -89,6 +121,36 @@ func (i *ImageUpdateData) storeDigestCache(url, digest string) {
 		}
 	}
 	i.digestCache[url] = digestCacheEntry{digest: digest, cachedAt: now}
+}
+
+// lookupTokenCache 读取未过期的 token 缓存。
+func (i *ImageUpdateData) lookupTokenCache(key string) (string, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	e, ok := i.tokenCache[key]
+	if !ok || time.Since(e.cachedAt) > tokenCacheTTL {
+		return "", false
+	}
+	return e.token, true
+}
+
+// storeTokenCache 写入 token 缓存，只缓存非空 token，并顺带清理过期条目。
+func (i *ImageUpdateData) storeTokenCache(key, token string) {
+	if token == "" {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.tokenCache == nil {
+		i.tokenCache = map[string]tokenCacheEntry{}
+	}
+	now := time.Now()
+	for k, v := range i.tokenCache {
+		if now.Sub(v.cachedAt) > tokenCacheTTL {
+			delete(i.tokenCache, k)
+		}
+	}
+	i.tokenCache[key] = tokenCacheEntry{token: token, cachedAt: now}
 }
 
 // NeedUpdate 以并发安全的方式读取指定镜像ID是否需要更新。
@@ -238,7 +300,15 @@ func (i *ImageUpdateData) CheckUpdateWithProgress(imageList []types.Image, onPro
 func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 	imageRef := image.ImageName + ":" + image.ImageTag
 
-	// ImageName/ImageTag 解析失败的镜像（悬空镜像等）无法构造 manifest URL，直接跳过
+	// markUnknown 统一记录"检测未完成/失败"结果。
+	// 关键修复：以前这些分支直接 return 不写结果，map 里没有该 imageID，
+	// 前端 NeedUpdate 读到 (false,false) 会当成"最新"，导致失败被吞成 0 个待更新。
+	// 现在显式写入 StatusUnknown，让失败可见、可区分。
+	markUnknown := func(reason string) {
+		i.setResult(image.ID, ImageCheckList{NeedUpdate: false, Status: StatusUnknown, Reason: reason})
+	}
+
+	// ImageName/ImageTag 解析失败的镜像（悬空镜像等）无法构造 manifest URL，直接跳过（不标未知，本就无意义）
 	if image.ImageName == "None" || image.ImageTag == "None" {
 		logx.Debugf("跳过无有效 tag 的镜像: %s (ID: %s)", imageRef, image.ID)
 		return
@@ -247,16 +317,26 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 	digestURL, err := BuildManifestURL(image)
 	if err != nil {
 		logx.Errorf("构造 manifest URL 失败 [%s]: %v", imageRef, err)
+		markUnknown("构造 manifest URL 失败: " + err.Error())
 		return
 	}
 
 	// 优先命中缓存，省掉 token 获取 + manifest HEAD 两次网络往返
 	remoteDigest, cached := i.lookupDigestCache(digestURL)
 	if !cached {
-		// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
-		token, errToken := GetToken(image, "")
-		if errToken != nil {
-			logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
+		// token 缓存 key 用「registry host + repository path」（不含 tag），
+		// 同一仓库不同 tag 的 pull token 通用，可跨镜像/跨轮复用。
+		tokenKey := tokenCacheKey(image)
+		token, tokenCached := i.lookupTokenCache(tokenKey)
+		if !tokenCached {
+			// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
+			var errToken error
+			token, errToken = GetToken(image, "")
+			if errToken != nil {
+				logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
+			}
+			// 只缓存成功获取的非空 token（storeTokenCache 内部已对空值忽略）
+			i.storeTokenCache(tokenKey, token)
 		}
 		remoteDigest, err = GetDigest(digestURL, token)
 		if err != nil {
@@ -268,6 +348,7 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 			} else {
 				logx.Errorf("获取远端 digest 失败 [%s] url=%s: %v", imageRef, digestURL, err)
 			}
+			markUnknown("获取远端 digest 失败: " + err.Error())
 			return
 		}
 		i.storeDigestCache(digestURL, remoteDigest)
@@ -276,10 +357,12 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 	if len(image.RepoDigests) == 0 {
 		// 本地构建、未推送过的镜像没有 RepoDigests，无法比对，属正常情况
 		logx.Debugf("本地无 repoDigest，跳过比对 [%s]", imageRef)
+		markUnknown("本地无 repoDigest，无法比对")
 		return
 	}
 	if remoteDigest == "" {
 		logx.Errorf("远端返回的 digest 为空 [%s]", imageRef)
+		markUnknown("远端返回的 digest 为空")
 		return
 	}
 
@@ -296,16 +379,30 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 			break
 		}
 	}
+	status := StatusLatest
 	if needUpdate {
 		// 有更新是需要用户关注的结论，保持 Info
 		logx.Infof("镜像有更新 [%s] remoteDigest=%s localRepoDigests=%v",
 			imageRef, remoteDigest, image.RepoDigests)
+		status = StatusNeedUpdate
 	} else {
 		// 已是最新占绝大多数，降为 Debug，避免每轮刷屏
 		logx.Debugf("镜像已是最新 [%s]", imageRef)
 	}
 	// 并发安全写入，禁止直接操作 map
-	i.setResult(image.ID, ImageCheckList{NeedUpdate: needUpdate})
+	i.setResult(image.ID, ImageCheckList{NeedUpdate: needUpdate, Status: status})
+}
+
+// tokenCacheKey 生成 token 缓存 key：registry host + repository path（不含 tag）。
+// 同一仓库不同 tag 的 pull token 通用，用此 key 可最大化复用。
+// 解析失败时回退用 ImageName，保证不同镜像不会误共享 token。
+func tokenCacheKey(image types.Image) string {
+	normalizedRef, err := ref.ParseNormalizedNamed(image.ImageName)
+	if err != nil {
+		return image.ImageName
+	}
+	host, _ := GetRegistryAddress(normalizedRef.Name())
+	return host + "/" + ref.Path(normalizedRef)
 }
 
 func BuildManifestURL(image types.Image) (string, error) {
@@ -361,10 +458,15 @@ func GetDigest(url string, token string) (string, error) {
 	if token != "" {
 		req.Header.Add("Authorization", token)
 	}
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.list.v2+json")
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+json")
+	// Accept 头顺序决定 registry 返回哪一层的 Docker-Content-Digest。
+	// 多架构镜像本地 RepoDigests 存的是「manifest list / OCI index」的 digest，
+	// 因此必须把 list/index 排在单架构 manifest 之前，否则 Docker Hub 会返回
+	// 单架构 manifest 的 digest，与本地索引 digest 永远不相等，导致误判。
 	req.Header.Add("Accept", "application/vnd.oci.image.index.v1+json")
+	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.list.v2+json")
+	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	req.Header.Add("Accept", "application/vnd.oci.image.manifest.v1+json")
+	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+json")
 
 	res, err := digestHTTPClient.Do(req)
 	if err != nil {

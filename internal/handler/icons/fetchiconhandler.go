@@ -19,8 +19,8 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
-// persistImagesDir 持久化图标存放目录（对应静态路由 /images/）。
-const persistImagesDir = "/data/images"
+// 持久化图标存放目录复用 imageUploadDir（= config.ImagesDir，见 paths.go），
+// 与手动上传、静态路由 /images/ 保持同一目录，避免路径分叉。
 
 // fetchIconReq 自动抓取并持久化图标的请求体。
 type fetchIconReq struct {
@@ -114,10 +114,10 @@ func downloadAndPersist(iconURL string) (string, error) {
 	ext := pickIconExt(iconURL, resp.Header.Get("Content-Type"))
 	sum := sha1.Sum([]byte(iconURL))
 	filename := fmt.Sprintf("%x%s", sum[:8], ext)
-	if err := os.MkdirAll(persistImagesDir, 0o755); err != nil {
+	if err := os.MkdirAll(imageUploadDir, 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(persistImagesDir, filename), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(imageUploadDir, filename), data, 0644); err != nil {
 		return "", err
 	}
 	return "/images/" + filename, nil
