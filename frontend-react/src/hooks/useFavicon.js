@@ -91,9 +91,21 @@ export function useFaviconMap(containers, icons = []) {
           // 解耦"显示缓存"与"后端持久化"：命中 localStorage 仅代表本机显示过，
           // 不代表后端 icons.json 已写入（首次持久化可能失败/被并发覆盖）。
           // 能走到这里说明该容器不在过滤时的 hasLogo 命中集（icons 里没有），
-          // 故用缓存记录的容器访问地址补写一次持久化，确保图标最终落库。
-          // 旧缓存无 src 字段时跳过（下次 TTL 过期重新抓取时会补上）。
-          if (hit.src) persistIconToServer(c, hit.src)
+          // 故补写一次持久化，确保图标最终落库。
+          // 修复死角：旧缓存无 src 字段时，用容器实时端口重建一个访问地址再补写，
+          // 而非直接跳过（否则该容器会永远进抓取队列却永不落库）。
+          let src = hit.src
+          if (!src) {
+            const host = await getHostIP(c.hostId)
+            if (cancelled) return
+            const ordered = [...pickProbePorts(c)].sort((a, b) => scorePort(b) - scorePort(a))
+            if (ordered.length > 0) {
+              src = `http://${host}:${ordered[0]}`
+              cache[c.id] = { ...hit, src } // 回填 src，下次直接可用
+              cacheDirty = true
+            }
+          }
+          if (src) persistIconToServer(c, src)
           continue
         }
         // 远程容器用其所属主机 IP，本地用当前访问 hostname

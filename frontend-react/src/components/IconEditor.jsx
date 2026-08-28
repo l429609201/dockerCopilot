@@ -43,6 +43,10 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
   const ports = (container?.ports?.length ? container.ports
     : (container?.networkMode === 'host' ? container?.exposedPorts : [])) || []
 
+  // 存储 key 统一去 tag：与自动抓取路径（useFavicon）保持一致，
+  // 避免同镜像因手动/自动存入 gitea/gitea:latest 与 gitea/gitea 两个 key 导致匹配错位。
+  const iconKey = (imageName || '').split(':')[0]
+
   const done = (url) => { onApplied?.(url); setBusy(false) }
   const fail = (e) => { setMsg(e?.response?.data?.msg || e?.message || '操作失败'); setBusy(false) }
 
@@ -53,7 +57,7 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
     if (file.size > 2 * 1024 * 1024) { setMsg('图片不能超过 2MB'); return }
     setBusy(true); setMsg('')
     try {
-      const r = await imageAPI.uploadIcon({ file, imageName })
+      const r = await imageAPI.uploadIcon({ file, imageName: iconKey })
       if (r.data.code === 200 || r.data.code === 0) {
         const p = r.data.data?.iconUrl || preview
         setPreview(p); done(p)
@@ -66,7 +70,7 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
     if (!urlInput.trim()) { setMsg('请输入图标 URL'); return }
     setBusy(true); setMsg('')
     try {
-      const r = await imageAPI.setIconUrl({ imageName, url: urlInput.trim() })
+      const r = await imageAPI.setIconUrl({ imageName: iconKey, url: urlInput.trim() })
       if (r.data.code === 200 || r.data.code === 0) { setPreview(urlInput.trim()); done(urlInput.trim()) }
       else throw new Error(r.data.msg)
     } catch (err) { fail(err) }
@@ -76,7 +80,7 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
   const handleAuto = async (accessUrl) => {
     setBusy(true); setMsg('正在抓取图标...')
     try {
-      const r = await imageAPI.fetchIcon({ imageName, url: accessUrl })
+      const r = await imageAPI.fetchIcon({ imageName: iconKey, url: accessUrl })
       if (r.data.code === 200 || r.data.code === 0) {
         const p = r.data.data?.iconUrl
         if (p) { setPreview(p); setMsg(''); done(p) }

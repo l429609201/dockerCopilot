@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/types"
@@ -94,6 +95,15 @@ func ensureBuiltInIcons() error {
 // addOrUpdateIcon 添加或更新图标配置。
 // 全程持 iconsFileMu，保证并发抓取时 read-modify-write 不互相覆盖。
 func addOrUpdateIcon(target, targetType, iconURL string, priority int) error {
+	// 镜像级 key 统一去 tag：与前端匹配逻辑（getImageLogo 按去 tag 比对）对齐，
+	// 双保险防止再次写入 gitea/gitea:latest 这类带 tag 的 key 造成匹配错位。
+	// 容器级 target 是容器名，不含 tag，保持原样。
+	if targetType == "image" {
+		if idx := strings.IndexByte(target, ':'); idx >= 0 {
+			target = target[:idx]
+		}
+	}
+
 	iconsFileMu.Lock()
 	defer iconsFileMu.Unlock()
 

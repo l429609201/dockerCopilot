@@ -35,38 +35,41 @@ export const getImageLogo = (imageName, icons = [], containerName = null) => {
   const baseImageName = imageName.split(':')[0] // 去掉 tag
   const simpleName = baseImageName.split('/').pop() // 去掉 registry/namespace
 
-  // 2. 镜像名精确匹配（完整名）
-  const exact = items.find(
-    (it) => it.targetType === 'image' && it.target === baseImageName
-  )
+  // 存量兼容：历史上手动路径存过带 tag 的 target（如 gitea/gitea:latest），
+  // 这里对 target 同样去 tag 后再比对，无需手动清理 icons.json 即可匹配上。
+  const imgItems = items.filter((it) => it.targetType === 'image')
+  const targetBase = (it) => (it.target || '').split(':')[0] // target 去 tag
+
+  // 2. 镜像名精确匹配（完整名，target 去 tag）
+  const exact = imgItems.find((it) => targetBase(it) === baseImageName)
   if (exact) return exact.iconUrl
 
-  // 3. 简化名精确匹配
-  const simple = items.find(
-    (it) => it.targetType === 'image' && it.target === simpleName
-  )
+  // 3. 简化名精确匹配（target 去 tag 后取末段）
+  const simple = imgItems.find((it) => targetBase(it).split('/').pop() === simpleName)
   if (simple) return simple.iconUrl
 
   // 4. 大小写不敏感匹配
   const lowerBase = baseImageName.toLowerCase()
   const lowerSimple = simpleName.toLowerCase()
-  const ci = items.find(
-    (it) => it.targetType === 'image' && it.target.toLowerCase() === lowerBase
-  )
+  const ci = imgItems.find((it) => targetBase(it).toLowerCase() === lowerBase)
   if (ci) return ci.iconUrl
-  const ciSimple = items.find(
-    (it) =>
-      it.targetType === 'image' &&
-      it.target.split('/').pop().toLowerCase() === lowerSimple
+  const ciSimple = imgItems.find(
+    (it) => targetBase(it).split('/').pop().toLowerCase() === lowerSimple
   )
   if (ciSimple) return ciSimple.iconUrl
 
-  // 5. 模糊匹配（子串）
-  const fuzzy = items.find((it) => {
-    if (it.targetType !== 'image') return false
+  // 5. 模糊匹配（子串）：修正方向——用「配置的 target」去包含「当前镜像名」，
+  //    覆盖 target 比镜像名更长/更完整的场景；同时保留反向兜底。
+  const fuzzy = imgItems.find((it) => {
     try {
-      const t = it.target.toLowerCase()
-      return lowerBase.includes(t) || lowerSimple.includes(t)
+      const t = targetBase(it).toLowerCase()
+      if (!t) return false
+      const tSimple = t.split('/').pop()
+      return (
+        t.includes(lowerBase) ||
+        lowerBase.includes(t) ||
+        tSimple === lowerSimple
+      )
     } catch {
       return false
     }
