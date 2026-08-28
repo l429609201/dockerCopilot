@@ -69,7 +69,8 @@ func GetAllImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 	ctx.AppConfig.EnsureLocalHost()
 	hosts := ctx.AppConfig.ListDockerHosts()
 	var all []MyType.Image
-	seen := make(map[string]struct{})
+	// seen 记录镜像ID -> 在 all 中的下标，便于去重后回填 InUsed
+	seen := make(map[string]int)
 	for _, h := range hosts {
 		if !h.Enabled {
 			continue
@@ -79,12 +80,18 @@ func GetAllImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 			logx.Errorf("聚合镜像列表跳过主机[%s:%s]: %v", h.ID, h.Name, err)
 			continue
 		}
-		// 按镜像ID去重：不同主机上相同镜像 digest 相同，检查一次即可
+		// 按镜像ID去重：不同主机上相同镜像 digest 相同，检查一次即可。
+		// InUsed 取「任一主机在用即为在用」：同一镜像在 A 主机未用、B 主机有容器在用时，
+		// 去重保留的那条必须反映 B 的在用状态，否则「有容器在用的可更新镜像」统计会漏项，
+		// 与容器列表「有更新」角标对不上。
 		for _, img := range list {
-			if _, ok := seen[img.ID]; ok {
+			if idx, ok := seen[img.ID]; ok {
+				if img.InUsed {
+					all[idx].InUsed = true
+				}
 				continue
 			}
-			seen[img.ID] = struct{}{}
+			seen[img.ID] = len(all)
 			all = append(all, img)
 		}
 	}
