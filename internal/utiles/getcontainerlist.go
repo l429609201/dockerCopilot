@@ -33,11 +33,19 @@ func GetContainerListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.
 	}
 	containerList := make([]MyType.Container, 0, len(dockerContainerList))
 	for _, dockerContainerInfo := range dockerContainerList {
-		containerList = append(containerList, MyType.Container{
+		c := MyType.Container{
 			Container: dockerContainerInfo,
 			HostID:    host.ID,
 			HostName:  host.Name,
-		})
+		}
+		// 填充 CreateImage：从 inspect 获取 Config.Image（创建时的镜像名）
+		// 这样即使镜像 tag 更新后 Image 字段变空，CreateImage 仍保持稳定
+		if inspectData, err := cli.ContainerInspect(context.Background(), dockerContainerInfo.ID); err == nil {
+			if inspectData.Config != nil && inspectData.Config.Image != "" {
+				c.CreateImage = inspectData.Config.Image
+			}
+		}
+		containerList = append(containerList, c)
 	}
 	return containerList, nil
 }

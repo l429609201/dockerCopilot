@@ -19,16 +19,17 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
-// persistImagesDir 持久化图标存放目录（对应静态路由 /images/）。
-const persistImagesDir = "/data/images"
+// 持久化图标存放目录复用 imageUploadDir（= config.ImagesDir，见 paths.go），
+// 与手动上传、静态路由 /images/ 保持同一目录，避免路径分叉。
 
 // fetchIconReq 自动抓取并持久化图标的请求体。
 type fetchIconReq struct {
-	ImageName string `json:"imageName"`
-	URL       string `json:"url"` // 容器访问地址，如 http://192.168.1.2:8080
+	ImageName  string `json:"imageName"`  // 镜像名或容器名
+	URL        string `json:"url"`        // 容器访问地址，如 http://192.168.1.2:8080
+	TargetType string `json:"targetType"` // "container" 或 "image"，默认 "image"
 }
 
-// FetchIconHandler 抓取站点 favicon、下载图片持久化到 /data/images，并绑定到镜像名。
+// FetchIconHandler 抓取站点 favicon、下载图片持久化到 /data/images，并绑定到镜像名或容器名。
 // 与仅存外链不同：图片本体落盘，外链失效或跨设备也能显示。
 func FetchIconHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +42,17 @@ func FetchIconHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			writeUploadError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+
+		// 获取目标类型，默认为 "image"
+		targetType := req.TargetType
+		if targetType == "" {
+			targetType = "image"
+		}
+		if targetType != "container" && targetType != "image" {
+			writeUploadError(w, http.StatusBadRequest, "targetType must be 'container' or 'image'")
+			return
+		}
+
 		// 1. 解析出可用 favicon 外链
 		iconURL, err := faviconLogic.Resolve(r.Context(), req.URL)
 		if err != nil {
@@ -53,17 +65,29 @@ func FetchIconHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			writeUploadError(w, http.StatusOK, "下载图标失败: "+err.Error())
 			return
 		}
-		// 3. 写入 imageLogos.js 映射
-		if _, e := os.Stat(imageLogosPath); os.IsNotExist(e) {
-			_ = os.MkdirAll(imageUploadDir, 0o755)
-			_ = os.WriteFile(imageLogosPath, []byte("export const customImageLogos = {\n}\n"), 0644)
+
+		// 3. 写入图标配置（新格式）
+		priority := 2 // 镜像级
+		if targetType == "container" {
+			priority = 1 // 容器级
 		}
-		if err := writeImageLogoValue(imageLogosPath, req.ImageName, localPath); err != nil {
+
+		if err := addOrUpdateIcon(req.ImageName, targetType, localPath, priority); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "写入配置失败: "+err.Error())
 			return
 		}
-		logx.Infof("图标持久化成功: %s -> %s (源 %s)", req.ImageName, localPath, iconURL)
-		httpx.OkJsonCtx(r.Context(), w, types.Resp{Code: 200, Msg: "Success", Data: localPath})
+
+		logx.Infof("图标持久化成功: %s (%s) -> %s (源 %s)", req.ImageName, targetType, localPath, iconURL)
+		httpx.OkJsonCtx(r.Context(), w, types.Resp{
+			Code: 200,
+			Msg:  "Success",
+			Data: map[string]interface{}{
+				"target":     req.ImageName,
+				"targetType": targetType,
+				"iconUrl":    localPath,
+				"sourceUrl":  iconURL,
+			},
+		})
 	}
 }
 
@@ -90,10 +114,10 @@ func downloadAndPersist(iconURL string) (string, error) {
 	ext := pickIconExt(iconURL, resp.Header.Get("Content-Type"))
 	sum := sha1.Sum([]byte(iconURL))
 	filename := fmt.Sprintf("%x%s", sum[:8], ext)
-	if err := os.MkdirAll(persistImagesDir, 0o755); err != nil {
+	if err := os.MkdirAll(imageUploadDir, 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(persistImagesDir, filename), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(imageUploadDir, filename), data, 0644); err != nil {
 		return "", err
 	}
 	return "/images/" + filename, nil

@@ -246,16 +246,20 @@ func (l *ComposeLogic) Browse(req *types.ComposeBrowseReq) (resp *types.Resp, er
 		return bad(resp, "读取目录失败："+readErr.Error()), nil
 	}
 
-	// 仅收集子目录，忽略隐藏目录（以 . 开头）
-	dirs := make([]map[string]interface{}, 0, len(entries))
+	// 收集子目录和文件（忽略隐藏项）
+	dirs := make([]string, 0)
+	files := make([]string, 0)
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		name := e.Name()
+		// 忽略隐藏文件/目录（以 . 开头）
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		dirs = append(dirs, map[string]interface{}{
-			"name": e.Name(),
-			"path": filepath.Join(target, e.Name()),
-		})
+		if e.IsDir() {
+			dirs = append(dirs, name)
+		} else {
+			files = append(files, name)
+		}
 	}
 
 	// 父目录：已在根目录时 parent 为空，前端据此隐藏"上一级"
@@ -268,6 +272,7 @@ func (l *ComposeLogic) Browse(req *types.ComposeBrowseReq) (resp *types.Resp, er
 		"path":   target,
 		"parent": parent,
 		"dirs":   dirs,
+		"files":  files,
 	}
 	return resp, nil
 }
@@ -278,4 +283,151 @@ func bad(resp *types.Resp, msg string) *types.Resp {
 	resp.Msg = msg
 	resp.Data = map[string]interface{}{}
 	return resp
+}
+
+// CreateFolder 在指定目录下创建文件夹。
+func (l *ComposeLogic) CreateFolder(req *types.ComposeCreateFolderReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+
+	// 清理路径，防止路径穿越
+	parentPath := filepath.Clean(req.ParentPath)
+	folderName := filepath.Clean(req.FolderName)
+
+	// 校验：父路径必须是绝对路径
+	if !filepath.IsAbs(parentPath) {
+		return bad(resp, "父路径必须为绝对路径"), nil
+	}
+
+	// 校验：文件夹名不能包含路径分隔符
+	if strings.Contains(folderName, string(os.PathSeparator)) {
+		return bad(resp, "文件夹名称不能包含路径分隔符"), nil
+	}
+
+	// 拼接完整路径
+	fullPath := filepath.Join(parentPath, folderName)
+
+	// 检查是否已存在
+	if _, err := os.Stat(fullPath); err == nil {
+		return bad(resp, "文件夹已存在"), nil
+	}
+
+	// 创建文件夹
+	if err := os.MkdirAll(fullPath, 0755); err != nil {
+		return bad(resp, "创建文件夹失败："+err.Error()), nil
+	}
+
+	logx.Infof("已创建文件夹: %s", fullPath)
+	resp.Data = map[string]interface{}{"path": fullPath}
+	return resp, nil
+}
+
+// CreateComposeFile 在指定目录下创建 Compose 配置文件（带模板内容）。
+func (l *ComposeLogic) CreateComposeFile(req *types.ComposeCreateFileReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+
+	// 清理路径
+	parentPath := filepath.Clean(req.ParentPath)
+	fileName := filepath.Clean(req.FileName)
+
+	// 校验：父路径必须是绝对路径
+	if !filepath.IsAbs(parentPath) {
+		return bad(resp, "父路径必须为绝对路径"), nil
+	}
+
+	// 校验：文件名不能包含路径分隔符
+	if strings.Contains(fileName, string(os.PathSeparator)) {
+		return bad(resp, "文件名不能包含路径分隔符"), nil
+	}
+
+	// 拼接完整路径
+	fullPath := filepath.Join(parentPath, fileName)
+
+	// 检查是否已存在
+	if _, err := os.Stat(fullPath); err == nil {
+		return bad(resp, "文件已存在"), nil
+	}
+
+	// 默认模板内容
+	templateContent := `version: '3.8'
+
+services:
+  app:
+    image: nginx:latest
+    container_name: my-app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./data:/usr/share/nginx/html
+    restart: unless-stopped
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
+`
+
+	// 写入文件
+	if err := os.WriteFile(fullPath, []byte(templateContent), 0644); err != nil {
+		return bad(resp, "创建文件失败："+err.Error()), nil
+	}
+
+	logx.Infof("已创建 Compose 文件: %s", fullPath)
+	resp.Data = map[string]interface{}{"path": fullPath}
+	return resp, nil
+}
+
+// ReadFileByPath 读取指定路径的文件内容（文件管理器用）。
+func (l *ComposeLogic) ReadFileByPath(req *types.ComposeReadFileReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+
+	// 清理路径
+	filePath := filepath.Clean(req.Path)
+
+	// 校验：必须是绝对路径
+	if !filepath.IsAbs(filePath) {
+		return bad(resp, "文件路径必须为绝对路径"), nil
+	}
+
+	// 检查文件是否存在
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return bad(resp, "文件不存在："+err.Error()), nil
+	}
+	if info.IsDir() {
+		return bad(resp, "该路径是目录，不是文件"), nil
+	}
+
+	// 读取文件内容
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return bad(resp, "读取文件失败："+err.Error()), nil
+	}
+
+	resp.Data = map[string]interface{}{
+		"path":    filePath,
+		"content": string(content),
+	}
+	return resp, nil
+}
+
+// SaveFileByPath 保存文件内容到指定路径（文件管理器用）。
+func (l *ComposeLogic) SaveFileByPath(req *types.ComposeSaveFileReq) (resp *types.Resp, err error) {
+	resp = &types.Resp{Code: 200, Msg: "success"}
+
+	// 清理路径
+	filePath := filepath.Clean(req.Path)
+
+	// 校验：必须是绝对路径
+	if !filepath.IsAbs(filePath) {
+		return bad(resp, "文件路径必须为绝对路径"), nil
+	}
+
+	// 写入文件
+	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
+		return bad(resp, "保存文件失败："+err.Error()), nil
+	}
+
+	logx.Infof("已保存文件: %s", filePath)
+	return resp, nil
 }

@@ -276,10 +276,34 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: compose.SaveConfigHandler(serverCtx),
 			},
 			{
-				// 浏览 DC 自身文件系统目录（目录选择器用，只读，仅返回子目录）
+				// 浏览 DC 自身文件系统目录（目录选择器用，只读，返回子目录和文件列表）
 				Method:  http.MethodGet,
 				Path:    "/compose/browse",
 				Handler: compose.BrowseHandler(serverCtx),
+			},
+			{
+				// 在指定目录下创建文件夹
+				Method:  http.MethodPost,
+				Path:    "/compose/folder",
+				Handler: compose.CreateFolderHandler(serverCtx),
+			},
+			{
+				// 在指定目录下创建 Compose 配置文件
+				Method:  http.MethodPost,
+				Path:    "/compose/file",
+				Handler: compose.CreateComposeFileHandler(serverCtx),
+			},
+			{
+				// 读取任意文件内容（文件管理器用）
+				Method:  http.MethodGet,
+				Path:    "/files",
+				Handler: compose.ReadFileByPathHandler(serverCtx),
+			},
+			{
+				// 保存文件内容（文件管理器用）
+				Method:  http.MethodPut,
+				Path:    "/files",
+				Handler: compose.SaveFileByPathHandler(serverCtx),
 			},
 			{
 				Method:  http.MethodPost,

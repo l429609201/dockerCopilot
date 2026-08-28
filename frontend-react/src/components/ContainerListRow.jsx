@@ -13,6 +13,9 @@ export function ContainerListRow({
 }) {
   const running = container.status === 'running'
   const loading = actionState?.loading
+  // 更新进度：仅 action==='update' 且加载中时显示进度条（与卡片模式一致）
+  const updating = loading && actionState?.action === 'update'
+  const pct = Math.min(100, Math.max(0, actionState?.percentage || 0))
   const [menuOpen, setMenuOpen] = useState(false)
   // 图标加载失败标记：失败后回退到首字母占位，避免直接隐藏留空
   const [iconError, setIconError] = useState(false)
@@ -29,10 +32,23 @@ export function ContainerListRow({
         }
       }}
       className={cn(
-        "flex items-center gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 border rounded-xl cursor-pointer transition-all hover:shadow-sm",
+        "relative overflow-hidden flex items-center gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 border rounded-xl cursor-pointer transition-all hover:shadow-sm",
         selected ? "border-primary-400 dark:border-primary-600 ring-1 ring-primary-300" : "border-gray-200 dark:border-gray-700"
       )}
     >
+      {/* 整行背景进度条：更新时整行背景按百分比渐变填充 + shimmer 微光动画（与卡片模式一致） */}
+      {updating && (
+        <div className="absolute inset-0 pointer-events-none rounded-xl overflow-hidden z-0">
+          <div
+            className="absolute top-0 left-0 bottom-0 bg-gradient-to-r from-primary-500/25 via-primary-400/25 to-primary-500/25 transition-all duration-500 ease-out"
+            style={{ width: `${pct}%` }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+              style={{ backgroundSize: '200% 100%', animation: 'shimmer 2s infinite linear' }} />
+          </div>
+        </div>
+      )}
+
       {/* 批量选择框 */}
       {batchMode && (
         <input type="checkbox" checked={selected} readOnly
@@ -42,9 +58,13 @@ export function ContainerListRow({
       {/* 图标：有 url 且未加载失败时显示图片，否则回退首字母占位 */}
       <div className="flex-shrink-0">
         {iconUrl && !iconError ? (
-          <img src={iconUrl} alt={container.name}
+          <img
+            src={iconUrl}
+            alt={container.name}
             className="h-9 w-9 rounded-lg object-cover"
-            onError={() => setIconError(true)} />
+            onError={() => setIconError(true)}
+            loading="lazy"
+          />
         ) : (
           <div className="h-9 w-9 rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold">
             {(container.name || '?').charAt(0).toUpperCase()}
@@ -97,9 +117,9 @@ export function ContainerListRow({
         {running ? `运行 ${formatRunningTime(container.runningTime)}` : stateLabel(container.status)}
       </div>
 
-      {/* 操作按钮区 */}
+      {/* 操作按钮区（relative z-10 保证浮在整行背景进度条之上） */}
       {!batchMode && (
-        <div className="flex items-center gap-1 flex-shrink-0 relative" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1 flex-shrink-0 relative z-10" onClick={(e) => e.stopPropagation()}>
           {/* 大屏(md+)：显示所有按钮 */}
           <div className="hidden md:flex items-center gap-1">
             {/* 详情：打开容器详情弹窗 */}
@@ -115,14 +135,29 @@ export function ContainerListRow({
               </>
             )}
             {loading ? (
-              <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400 max-w-[220px]"
-                title={actionState.detailMsg || ''}>
-                <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                <span className="truncate">
-                  {actionState.action === 'update' && actionState.percentage ? `${Math.round(actionState.percentage)}%` : '处理中'}
-                  {actionState.detailMsg ? ` · ${actionState.detailMsg}` : ''}
+              updating ? (
+                // 更新中：细进度条 + 百分比 + 拉取明细（与卡片模式信息行同款）
+                <div className="flex flex-col gap-0.5 px-2 py-1 min-w-[200px] max-w-[260px]" title={actionState.detailMsg || ''}>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 rounded-full"
+                        style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-xs font-medium text-blue-600 dark:text-blue-400 min-w-[3ch] text-right">
+                      {Math.round(pct)}%
+                    </span>
+                  </div>
+                  {actionState.detailMsg && (
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate">{actionState.detailMsg}</span>
+                  )}
+                </div>
+              ) : (
+                // 其它操作（启动/停止/重启/删除）：保持简洁的旋转图标 + 文字
+                <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400 max-w-[220px]">
+                  <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
+                  <span className="truncate">处理中</span>
                 </span>
-              </span>
+              )
             ) : (
               <>
                 {running ? (
@@ -143,10 +178,21 @@ export function ContainerListRow({
           {/* 小屏(<md)：三点菜单 */}
           <div className="md:hidden">
             {loading ? (
-              <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400">
-                <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-                <span className="truncate">处理中</span>
-              </span>
+              updating ? (
+                // 更新中：迷你进度条 + 百分比（小屏空间有限，省略明细文字）
+                <div className="flex items-center gap-1.5 px-2 py-1 w-[92px]" title={actionState.detailMsg || ''}>
+                  <div className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 rounded-full"
+                      style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 min-w-[3ch] text-right">{Math.round(pct)}%</span>
+                </div>
+              ) : (
+                <span className="flex items-center gap-1 px-2 py-1 text-xs text-primary-600 dark:text-primary-400">
+                  <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
+                  <span className="truncate">处理中</span>
+                </span>
+              )
             ) : (
               <>
                 <button

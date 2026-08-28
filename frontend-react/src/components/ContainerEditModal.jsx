@@ -15,6 +15,19 @@ const TABS = [
   { key: 'labels', label: '标签 & 命令' },
 ]
 
+// pickContainerInitialPath 计算「容器内路径」选择器的起始目录。
+// 仅当挂载行已填的容器内路径 target 是「以 / 开头、非根、且不像文件」的路径时才作为起点，
+// 否则回退根目录 /。避免 target 为空、为文件（如 /var/run/docker.sock）或无效值时
+// 起始目录列不出子目录导致弹窗卡在「该目录下没有子目录」。
+function pickContainerInitialPath(target) {
+  const t = (target || '').trim()
+  if (!t || !t.startsWith('/') || t === '/') return '/'
+  // 末段含扩展名（如 .sock/.conf）大概率是文件，回退根目录由用户逐级进入
+  const last = t.split('/').filter(Boolean).pop() || ''
+  if (last.includes('.')) return '/'
+  return t
+}
+
 // 容器编辑弹窗：按 Tab 分区编辑端口/网络/挂载/环境/资源/标签命令（任务化重建）。
 // 后端 EditSpec 支持全部字段，未提供字段保留原容器配置。
 export function ContainerEditModal({ container, onClose, onSuccess }) {
@@ -30,7 +43,13 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   const running = container.status === 'running'
   // 是否本地 Docker 主机（hostId 空或 'local' 视为本地）。仅本地容器需把 DC 容器内挂载源 resolve 成宿主机真实路径
   const isLocalHost = !container.hostId || container.hostId === 'local'
-  const { available: resolveAvailable, resolve: resolveHostPath } = useHostPathResolve()
+  const { available: resolveAvailable, reason: resolveReason, resolve: resolveHostPath } = useHostPathResolve()
+  // 左侧「宿主机路径」浏览按钮启用条件：仅本地容器 + 宿主机路径映射可用（/compose 映射已配置）。
+  // 远程容器 DC 摸不到宿主机文件系统；映射未配置时选出的路径无法反拼成宿主机真实路径。
+  const hostBrowseEnabled = isLocalHost && resolveAvailable
+  const hostBrowseDisabledReason = !isLocalHost
+    ? '远程主机无法浏览宿主机目录，请直接输入该主机上的真实路径'
+    : (resolveReason || '宿主机路径映射不可用，请在「项目」页配置')
 
   // 宿主机目录选择回调：DirectoryPicker 选出的是 DC 容器内可见路径，
   // 需经后端映射转换为宿主机真实路径后写入 source；转换失败则提示并保留原始选择值。
@@ -314,9 +333,12 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                 <KVList items={form.binds} ops={bindOps} addLabel="添加挂载"
                   render={(b, i) => (
                     <>
-                      <input placeholder="宿主机路径" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
-                      <button type="button" onClick={() => setPicker({ type: 'host', index: i })}
-                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0" title="浏览宿主机目录">
+                      <input placeholder="宿主机路径（直接输入）" value={b.source} onChange={(e) => bindOps.update(i, 'source', e.target.value)} className="input flex-1" />
+                      <button type="button"
+                        onClick={() => hostBrowseEnabled && setPicker({ type: 'host', index: i })}
+                        disabled={!hostBrowseEnabled}
+                        className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={hostBrowseEnabled ? '浏览 /compose 目录选择宿主机路径' : hostBrowseDisabledReason}>
                         <FolderSearch className="h-4 w-4" />
                       </button>
                       <span className="text-gray-500">:</span>
@@ -324,7 +346,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                       <button type="button" onClick={() => running && setPicker({ type: 'container', index: i })}
                         disabled={!running}
                         className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={running ? '浏览容器内目录' : '容器需运行中才能浏览'}>
+                        title={running ? '浏览目标容器内目录' : '容器需运行中才能浏览'}>
                         <FolderSearch className="h-4 w-4" />
                       </button>
                       <select value={b.mode} onChange={(e) => bindOps.update(i, 'mode', e.target.value)} className="input w-20">
@@ -415,20 +437,24 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         </div>
       </div>
 
-      {/* 宿主机路径选择器：浏览 DC 自身挂载的目录，选中后经后端转换为宿主机真实路径 */}
+      {/* 宿主机路径选择器：固定从 DC 挂载的 /compose 目录开始浏览（宿主机路径由此拼接）。
+          选中如 /compose/data 后经后端 resolve 反拼成宿主机真实路径 /home/xxx/data。
+          起点用 b.source（宿主机真实路径）会因该路径在 DC 容器内不存在而落到根目录，故写死 /compose。 */}
       {picker?.type === 'host' && (
         <DirectoryPicker
-          initialPath={form.binds[picker.index]?.source || ''}
+          initialPath="/compose"
           onSelect={(p) => handleHostPathSelect(picker.index, p)}
           onClose={() => setPicker(null)}
         />
       )}
-      {/* 容器内路径选择器：浏览目标容器文件系统（需容器运行中） */}
+      {/* 容器内路径选择器：浏览目标容器文件系统（需容器运行中）。
+          起点仅在 b.target 为有效绝对目录路径时采用，否则回退根目录 /；
+          避免该行 target 是文件（如 /var/run/docker.sock）或无效值时列不出子目录而卡住。 */}
       {picker?.type === 'container' && (
         <ContainerPathPicker
           containerId={container.ID}
           hostId={container.hostId || container.HostID}
-          initialPath={form.binds[picker.index]?.target || '/'}
+          initialPath={pickContainerInitialPath(form.binds[picker.index]?.target)}
           onSelect={(p) => bindOps.update(picker.index, 'target', p)}
           onClose={() => setPicker(null)}
         />

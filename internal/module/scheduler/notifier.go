@@ -89,8 +89,9 @@ func (s *Scheduler) runUpdateCheck() {
 		muted[n] = struct{}{}
 	}
 
-	// 收集"有更新且未屏蔽"的容器
+	// 收集"有更新且未屏蔽"的容器（恢复屏蔽过滤，与详情页分离）
 	var pending []notify.UpdateItem
+	var mutedPending []notify.UpdateItem // 已屏蔽但有更新的容器
 	for _, c := range containers {
 		if !c.Update {
 			continue
@@ -99,26 +100,41 @@ func (s *Scheduler) runUpdateCheck() {
 		if name == "" {
 			continue
 		}
-		if _, ok := muted[name]; ok {
-			continue // 已屏蔽
+		// 优先使用 CreateImage，避免镜像更新后 Image 字段变空或变成 SHA256
+		imageToUse := c.CreateImage
+		if imageToUse == "" {
+			imageToUse = c.Image // 降级使用 Image 字段
 		}
-		pending = append(pending, notify.UpdateItem{ID: c.ID, Name: name, Image: c.Image})
+		item := notify.UpdateItem{ID: c.ID, Name: name, Image: imageToUse}
+		if _, ok := muted[name]; ok {
+			mutedPending = append(mutedPending, item) // 已屏蔽
+		} else {
+			pending = append(pending, item) // 未屏蔽
+		}
 	}
 
-	if len(pending) == 0 {
+	if len(pending) == 0 && len(mutedPending) == 0 {
 		return
 	}
 
-	// 优先调用带交互式键盘的通知（Telegram Bot 实现了 notify.UpdateNotifier）
+	// 优先调用带交互式键盘的通知（Telegram Bot 实现了 notify.UpdateNotifierWithMuted）
+	if kbNotifier, ok := s.notifier.(notify.UpdateNotifierWithMuted); ok {
+		kbNotifier.NotifyUpdateWithMutedInfo(pending, mutedPending)
+		return
+	}
+	// 降级：调用普通的带键盘通知（仅传未屏蔽的）
 	if kbNotifier, ok := s.notifier.(notify.UpdateNotifier); ok {
 		kbNotifier.NotifyUpdateWithKeyboard(pending)
 		return
 	}
-	// 回退到普通文本通知
+	// 回退到普通文本通知（仅通知未屏蔽的）
 	var msg strings.Builder
 	msg.WriteString(fmt.Sprintf("检测到 %d 个容器有可用更新：\n\n", len(pending)))
 	for _, c := range pending {
 		msg.WriteString(fmt.Sprintf("🔺 %s\n   %s\n", c.Name, shortImage(c.Image)))
+	}
+	if len(mutedPending) > 0 {
+		msg.WriteString(fmt.Sprintf("\n（另有 %d 个已屏蔽容器有更新）", len(mutedPending)))
 	}
 	msg.WriteString("\n💡 可在面板或发送 /update_all 进行更新")
 	if s.notifier != nil {

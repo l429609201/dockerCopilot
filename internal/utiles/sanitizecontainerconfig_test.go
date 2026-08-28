@@ -17,7 +17,7 @@ func TestSanitizeCreateConfig_补齐缺失的暴露端口(t *testing.T) {
 		},
 	}
 
-	SanitizeCreateConfig("test", config, hostConfig, nil)
+	SanitizeCreateConfig("test", "1.44", config, hostConfig, nil)
 
 	if config.ExposedPorts == nil {
 		t.Fatal("ExposedPorts 应被初始化")
@@ -39,7 +39,7 @@ func TestSanitizeCreateConfig_剔除空端口映射(t *testing.T) {
 		},
 	}
 
-	SanitizeCreateConfig("test", config, hostConfig, nil)
+	SanitizeCreateConfig("test", "1.44", config, hostConfig, nil)
 
 	if _, ok := hostConfig.PortBindings["/tcp"]; ok {
 		t.Error("空端口号的映射应被剔除")
@@ -64,7 +64,7 @@ func TestSanitizeCreateConfig_补齐设备权限(t *testing.T) {
 		},
 	}
 
-	SanitizeCreateConfig("test", config, hostConfig, nil)
+	SanitizeCreateConfig("test", "1.44", config, hostConfig, nil)
 
 	if hostConfig.Devices[0].CgroupPermissions != "rwm" {
 		t.Errorf("空权限应补为 rwm，实际: %q", hostConfig.Devices[0].CgroupPermissions)
@@ -84,7 +84,7 @@ func TestSanitizeCreateConfig_清理host模式下的MAC残留(t *testing.T) {
 		},
 	}
 
-	SanitizeCreateConfig("test", config, hostConfig, networkingConfig)
+	SanitizeCreateConfig("test", "1.44", config, hostConfig, networkingConfig)
 
 	if got := networkingConfig.EndpointsConfig["host"].MacAddress; got != "" {
 		t.Errorf("host 模式下 MAC 应被清空，实际: %q", got)
@@ -101,16 +101,50 @@ func TestSanitizeCreateConfig_保留bridge模式下的MAC(t *testing.T) {
 		},
 	}
 
-	SanitizeCreateConfig("test", config, hostConfig, networkingConfig)
+	SanitizeCreateConfig("test", "1.44", config, hostConfig, networkingConfig)
 
 	if got := networkingConfig.EndpointsConfig["bridge"].MacAddress; got != "02:42:ac:11:00:02" {
 		t.Errorf("bridge 模式下 MAC 应保留，实际: %q", got)
 	}
 }
 
+// daemon API 低于 1.44 时不支持 per-network MAC，必须清除，否则 SDK 直接拒绝创建请求。
+func TestSanitizeCreateConfig_低版本API清理bridge模式下的MAC(t *testing.T) {
+	config := &container.Config{}
+	hostConfig := &container.HostConfig{NetworkMode: "bridge"}
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"bridge": {MacAddress: "02:42:ac:11:00:02"},
+		},
+	}
+
+	SanitizeCreateConfig("test", "1.43", config, hostConfig, networkingConfig)
+
+	if got := networkingConfig.EndpointsConfig["bridge"].MacAddress; got != "" {
+		t.Errorf("API 1.43 下 MAC 应被清空，实际: %q", got)
+	}
+}
+
+// 版本未知（空串）时保守处理：不动用户的有效配置。
+func TestSanitizeCreateConfig_版本未知时保留MAC(t *testing.T) {
+	config := &container.Config{}
+	hostConfig := &container.HostConfig{NetworkMode: "bridge"}
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"bridge": {MacAddress: "02:42:ac:11:00:02"},
+		},
+	}
+
+	SanitizeCreateConfig("test", "", config, hostConfig, networkingConfig)
+
+	if got := networkingConfig.EndpointsConfig["bridge"].MacAddress; got != "02:42:ac:11:00:02" {
+		t.Errorf("版本未知时 MAC 应保留，实际: %q", got)
+	}
+}
+
 // 配置缺失时不应 panic。
 func TestSanitizeCreateConfig_空配置不panic(t *testing.T) {
-	SanitizeCreateConfig("test", nil, nil, nil)
-	SanitizeCreateConfig("test", &container.Config{}, nil, nil)
-	SanitizeCreateConfig("test", &container.Config{}, &container.HostConfig{}, nil)
+	SanitizeCreateConfig("test", "1.44", nil, nil, nil)
+	SanitizeCreateConfig("test", "1.44", &container.Config{}, nil, nil)
+	SanitizeCreateConfig("test", "1.44", &container.Config{}, &container.HostConfig{}, nil)
 }

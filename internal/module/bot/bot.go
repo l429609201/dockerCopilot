@@ -118,7 +118,7 @@ func (b *Bot) Notify(title string, text string) {
 	}
 }
 
-// NotifyUpdateWithKeyboard 推送带交互式键盘的更新通知（每个容器一行操作按钮）。
+// NotifyUpdateWithKeyboard 推送带交互式键盘的容器更新通知（仅未屏蔽）。
 // containers 为需要更新的容器列表；参数类型为 notify.UpdateItem，使本方法满足
 // notify.UpdateNotifier 接口，让 scheduler 的周期检测能命中带键盘的推送而非纯文本。
 func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
@@ -131,7 +131,24 @@ func (b *Bot) NotifyUpdateWithKeyboard(containers []UpdateContainer) {
 	}
 
 	for _, chatID := range cfg.AllowedChatIDs {
-		b.sendUpdateNotificationToChat(chatID, containers)
+		b.sendUpdateNotificationToChat(chatID, containers, nil)
+	}
+}
+
+// NotifyUpdateWithMutedInfo 推送带屏蔽信息的更新通知（扩展版）。
+// active: 未屏蔽且有更新的容器；muted: 已屏蔽但有更新的容器。
+// 实现 notify.UpdateNotifierWithMuted 接口，让 scheduler 能传递屏蔽信息。
+func (b *Bot) NotifyUpdateWithMutedInfo(active, muted []UpdateContainer) {
+	b.mu.Lock()
+	client := b.client
+	cfg := b.cfg
+	b.mu.Unlock()
+	if client == nil || !cfg.Enabled || !cfg.NotifyUpdate {
+		return
+	}
+
+	for _, chatID := range cfg.AllowedChatIDs {
+		b.sendUpdateNotificationToChat(chatID, active, muted)
 	}
 }
 

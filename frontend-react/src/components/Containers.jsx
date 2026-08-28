@@ -112,47 +112,38 @@ export function Containers() {
   })
 
   // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+  // 图标配置：后端返回 IconItem 数组，作为容器图标的唯一数据源
+  const { data: customIcons = [] } = useQuery({
+    queryKey: ['icons'],
     queryFn: async () => {
-      console.log('[Debug] 开始从服务器获取图标配置...')
       try {
         const response = await imageAPI.getIcons()
-        console.log('[Debug] 图标API响应:', response.data)
         if (response.data.code === 200 || response.data.code === 0) {
-          const icons = response.data.data || {}
-          console.log('[Debug] 获取到的图标数据:', icons)
-          // update localStorage
+          const icons = Array.isArray(response.data.data) ? response.data.data : []
           localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
           return icons
         }
       } catch (err) {
-        console.error('[Debug] 获取图标失败:', err)
+        console.debug('获取图标配置失败:', err.message)
       }
-      return {}
+      return []
     },
-    // 初始数据尝试从localStorage获取，避免闪烁
+    // 初始数据尝试从 localStorage 获取，避免闪烁
     initialData: () => {
       const saved = localStorage.getItem('docker_copilot_image_logos')
       if (saved) {
         try {
           const parsed = JSON.parse(saved)
-          // 只有当有实际数据时才作为初始数据
-          if (Object.keys(parsed).length > 0) {
-            return parsed
-          }
-        } catch (e) {
-          console.error('解析本地图标配置失败:', e)
-        }
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed
+        } catch { /* 忽略解析错误 */ }
       }
       return undefined
     },
-    // 即使有初始数据，也立即在后台刷新
     refetchOnMount: true,
   })
 
   // 阶段8：批量解析容器站点 favicon（运行中、有暴露端口且尚无持久化图标的容器），按容器id取图标
-  // 传入 customIcons 让已有图标的容器不再重复探测，避免多端口容器刷新时图标跳变
+  // 传入 icons 让已有图标的容器不再重复探测，避免多端口容器刷新时图标跳变
   const faviconMap = useFaviconMap(containers, customIcons)
 
   // 从容器列表提取去重后的主机列表，供主机下拉筛选使用（含本地）
@@ -1162,7 +1153,10 @@ export function Containers() {
                       onToggleSelect={toggleContainerSelection}
                       onAction={handleContainerAction}
                       onUpdate={handleUpdateContainer}
-                      onOps={(tab) => setOpsTarget({ container, tab })}
+                      onOps={(tab) => {
+                        if (tab === 'logs') setLogsTarget(container)
+                        else if (tab === 'exec') setConsoleTarget(container)
+                      }}
                       onFiles={() => setFileTarget(container)}
                       onEdit={(c) => setEditTarget(c)}
                       onProcess={(c) => setProcessTarget(c)}
@@ -1237,15 +1231,30 @@ export function Containers() {
                                   alt={container.name}
                                   className="h-12 w-12 rounded-xl object-cover shadow-sm flex-shrink-0"
                                   onError={(e) => {
+                                    // 图标加载失败时静默降级到默认图标，避免404影响用户体验
+                                    // 防止重复触发：只处理一次
+                                    if (e.target.dataset.errorHandled) return;
+                                    e.target.dataset.errorHandled = 'true';
                                     e.target.style.display = 'none';
-                                    e.target.parentElement.innerHTML = `
-                                    <div class="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm">
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white">
-                                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+
+                                    // 检查是否已经有降级图标，避免重复添加
+                                    const parent = e.target.parentElement;
+                                    const existingFallback = parent.querySelector('.fallback-icon');
+                                    if (existingFallback) return;
+
+                                    const fallback = document.createElement('div');
+                                    fallback.className = 'fallback-icon h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0';
+                                    fallback.innerHTML = `
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-white">
+                                        <path d="m7.5 4.27 9 5.15"></path>
+                                        <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path>
+                                        <path d="m3.3 7 8.7 5 8.7-5"></path>
+                                        <path d="M12 22V12"></path>
                                       </svg>
-                                    </div>
-                                  `;
+                                    `;
+                                    parent.appendChild(fallback);
                                   }}
+                                  loading="lazy"
                                 />
                               );
                             } else {
@@ -1617,17 +1626,22 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     return () => { cancelled = true }
   }, [container.id])
 
-  // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+  // 获取图标配置（IconItem 数组，唯一数据源）
+  const { data: customIcons = [] } = useQuery({
+    queryKey: ['icons'],
     queryFn: async () => {
       const response = await imageAPI.getIcons()
       if (response.data.code === 200 || response.data.code === 0) {
-        return response.data.data || {}
+        return Array.isArray(response.data.data) ? response.data.data : []
       }
-      return {}
+      return []
     },
-    initialData: () => JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}'),
+    initialData: () => {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '[]')
+        return Array.isArray(parsed) ? parsed : []
+      } catch { return [] }
+    },
   })
 
   // 当容器切换时，更新表单字段的值
@@ -1823,9 +1837,12 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             alt={currentContainer.name}
             className="h-12 w-12 rounded-xl object-cover"
             onError={(e) => {
+              // 图标加载失败时静默降级，不影响用户体验
               e.target.style.display = 'none';
-              e.target.nextSibling.style.display = 'flex';
+              const fallback = e.target.nextElementSibling;
+              if (fallback) fallback.style.display = 'flex';
             }}
+            loading="lazy"
           />
         );
       }
@@ -1876,7 +1893,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               setCurrentContainer(prev => ({ ...prev, iconUrl: url }))
               window.dispatchEvent(new Event('storage'))
               queryClient.invalidateQueries(['containers'])
-              queryClient.invalidateQueries(['customIcons'])
+              queryClient.invalidateQueries(['icons'])
               setShowIconMenu(false)
             }}
           />

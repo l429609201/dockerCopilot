@@ -16,6 +16,7 @@ type ContainerUpdateReq struct {
 	IdReq
 	ImageNameAndTag string `form:"imageNameAndTag"`
 	ContainerName   string `form:"containerName"`
+	DelOldContainer string `form:"delOldContainer,default=true"` // "true" 或 "false"，默认删除旧容器
 }
 
 // CreateContainerReq 从零创建新容器的请求（Portainer 风格）。

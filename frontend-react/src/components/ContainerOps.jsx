@@ -55,24 +55,24 @@ export function ContainerLogs({ container, onClose }) {
   const [fullscreen, setFullscreen] = useState(false)
   return (
     <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
-      fullscreen ? 'p-0' : 'p-4')}>
+      fullscreen ? 'p-0' : 'p-2 sm:p-4')}>
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
-          ? 'w-screen h-screen max-w-none max-h-none rounded-none p-4'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl p-5')}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
-            <FileText className="h-5 w-5 text-sky-600 dark:text-sky-400" />
-            日志 · {container.name}
+          ? 'w-screen h-screen max-w-none max-h-none rounded-none'
+          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+        <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
+            <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-sky-600 dark:text-sky-400 flex-shrink-0" />
+            <span className="truncate">日志 · {container.name}</span>
           </h3>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}
               className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
-              {fullscreen ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
+              {fullscreen ? <Minimize2 className="h-4 w-4 sm:h-4.5 sm:w-4.5" /> : <Maximize2 className="h-4 w-4 sm:h-4.5 sm:w-4.5" />}
             </button>
             <button onClick={onClose} title="关闭"
               className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4 sm:h-5 sm:w-5" />
             </button>
           </div>
         </div>
@@ -87,24 +87,24 @@ export function ContainerConsole({ container, onClose }) {
   const [fullscreen, setFullscreen] = useState(false)
   return (
     <div className={cn('fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
-      fullscreen ? 'p-0' : 'p-4')}>
+      fullscreen ? 'p-0' : 'p-2 sm:p-4')}>
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
-          ? 'w-screen h-screen max-w-none max-h-none rounded-none p-4'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl p-5')}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
-            <TerminalIcon className="h-5 w-5 text-teal-600 dark:text-teal-400" />
-            终端 · {container.name}
+          ? 'w-screen h-screen max-w-none max-h-none rounded-none'
+          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+        <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
+            <TerminalIcon className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600 dark:text-teal-400 flex-shrink-0" />
+            <span className="truncate">终端 · {container.name}</span>
           </h3>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <button onClick={() => setFullscreen(v => !v)} title={fullscreen ? '还原' : '全屏'}
               className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
-              {fullscreen ? <Minimize2 className="h-4.5 w-4.5" /> : <Maximize2 className="h-4.5 w-4.5" />}
+              {fullscreen ? <Minimize2 className="h-4 w-4 sm:h-4.5 sm:w-4.5" /> : <Maximize2 className="h-4 w-4 sm:h-4.5 sm:w-4.5" />}
             </button>
             <button onClick={onClose} title="关闭"
               className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4 sm:h-5 sm:w-5" />
             </button>
           </div>
         </div>

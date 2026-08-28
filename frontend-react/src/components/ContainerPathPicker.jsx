@@ -20,8 +20,10 @@ export function ContainerPathPicker({ containerId, hostId, initialPath = '/', on
   // 拼接子目录完整路径
   const joinPath = (dir, name) => (dir === '/' ? `/${name}` : `${dir}/${name}`)
 
-  // 加载指定目录，仅保留其中的子目录
-  const load = useCallback(async (path) => {
+  // 加载指定目录，仅保留其中的子目录。
+  // allowFallback=true 时（首次加载），若指定路径不可访问或列不出子目录，
+  // 自动回退到根目录 /，避免起始 target 是文件/无效路径时弹窗卡死。
+  const load = useCallback(async (path, allowFallback = false) => {
     const p = path || '/'
     setLoading(true)
     setError('')
@@ -30,19 +32,32 @@ export function ContainerPathPicker({ containerId, hostId, initialPath = '/', on
       const r = await filesAPI.list(containerId, p, hostId)
       if (r.data?.code === 200) {
         const entries = r.data.data?.entries || []
-        setDirs(entries.filter((e) => e.isDir))
+        const dirEntries = entries.filter((e) => e.isDir)
+        // 起始路径不是根、且无任何子目录时回退根目录（大概率 target 指向文件或叶子目录）
+        if (allowFallback && p !== '/' && dirEntries.length === 0) {
+          return load('/', false)
+        }
+        setDirs(dirEntries)
         setCurrent(p)
       } else {
+        // 列目录失败：首次加载可回退根目录，否则展示错误
+        if (allowFallback && p !== '/') {
+          return load('/', false)
+        }
         setError(r.data?.msg || '列目录失败')
       }
     } catch (e) {
+      if (allowFallback && p !== '/') {
+        return load('/', false)
+      }
       setError('读取目录失败：' + (e.response?.data?.msg || e.message))
     } finally {
       setLoading(false)
     }
   }, [containerId, hostId])
 
-  useEffect(() => { load(initialPath) }, [load, initialPath])
+  // 首次加载允许回退：initialPath 不可访问/无子目录时自动落到根目录
+  useEffect(() => { load(initialPath, true) }, [load, initialPath])
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
@@ -50,7 +65,7 @@ export function ContainerPathPicker({ containerId, hostId, initialPath = '/', on
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Folder className="h-5 w-5 text-primary-600" /> 选择容器内目录
+            <Folder className="h-5 w-5 text-primary-600" /> 浏览目标容器内目录
           </h3>
           <button onClick={onClose} className="p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             <X className="h-4 w-4" />

@@ -58,7 +58,8 @@ func (l *ComposeLogic) Action(req *types.ComposeActionReq) (resp *types.Resp, er
 			Percentage: 10, Message: "正在执行 " + action, DetailMsg: "正在执行 docker compose " + action,
 			TaskType: svc.TaskTypeComposeAction, ResourceID: req.ID,
 		})
-		result := composeMod.RunAction(taskCtx, resolvedDir, composeFile, action, timeoutSec)
+		// 使用带进度更新的版本，实时推送日志到前端
+		result := composeMod.RunActionWithProgress(taskCtx, resolvedDir, composeFile, action, timeoutSec, l.svcCtx, taskID)
 		progress := svc.TaskProgress{
 			TaskID: taskID, Name: "Compose " + action + " " + projectName,
 			Percentage: 100, IsDone: true, TaskType: svc.TaskTypeComposeAction, ResourceID: req.ID,

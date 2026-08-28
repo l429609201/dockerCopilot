@@ -212,7 +212,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败。
 	// 必须放在停止/删除旧容器之前，保证配置有问题时旧容器仍然完好。
-	SanitizeCreateConfig(name, config, hostConfig, networkingConfig)
+	SanitizeCreateConfig(name, cli.ClientVersion(), config, hostConfig, networkingConfig)
 
 	oldTaskProgress.Percentage = 40
 	oldTaskProgress.Message = "正在停止旧容器"
@@ -307,6 +307,7 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	serviceContext.UpdateProgress(taskID, oldTaskProgress)
 
 	// 启动新容器
+	logx.Infof("开始启动新容器: ID=%s, Name=%s, Image=%s", newContainerID, name, imageNameAndTag)
 	err = cli.ContainerStart(context.Background(), newContainerID, container.StartOptions{})
 	if err != nil {
 		// 【修复】启动失败时回滚：删除失败的新容器 + 恢复旧容器
@@ -325,6 +326,29 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 		}
 		markTaskFailed(serviceContext, taskID, &oldTaskProgress, "启动新容器失败（已尝试回滚旧容器）", err)
 		return err
+	}
+
+	// 【增强】启动后检查容器状态，确认是否真正运行
+	logx.Infof("新容器已调用启动命令，正在检查运行状态...")
+	time.Sleep(2 * time.Second) // 等待 2 秒让容器启动
+	newContainerInspect, inspectErr := cli.ContainerInspect(context.Background(), newContainerID)
+	if inspectErr != nil {
+		logx.Errorf("检查新容器状态失败: %v", inspectErr)
+	} else {
+		logx.Infof("新容器状态: Running=%v, Status=%s, ExitCode=%d",
+			newContainerInspect.State.Running,
+			newContainerInspect.State.Status,
+			newContainerInspect.State.ExitCode)
+
+		// 如果容器已退出，记录退出原因
+		if !newContainerInspect.State.Running {
+			exitMsg := fmt.Sprintf("容器启动后立即退出 (ExitCode: %d)", newContainerInspect.State.ExitCode)
+			if newContainerInspect.State.Error != "" {
+				exitMsg += fmt.Sprintf(", 错误: %s", newContainerInspect.State.Error)
+			}
+			logx.Errorf("⚠️ %s", exitMsg)
+			oldTaskProgress.DetailMsg = exitMsg
+		}
 	}
 
 	// 【增强】补充收集新镜像信息（仅当拉取后未成功收集时）

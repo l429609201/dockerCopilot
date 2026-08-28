@@ -147,5 +147,5 @@ func (b *Bot) toggleMute(chatID int64, name string, page int, messageID int64) {
 // 让被屏蔽的容器按钮就地变为 🔕、可再次点击恢复。
 func (b *Bot) toggleMuteInPlace(chatID int64, name string, page int, messageID int64) {
 	b.setMuteState(name)
-	b.resendUpdateNotification(chatID, page, messageID)
+	b.resendUpdateNotification(chatID, page, messageID, false) // 始终回到未屏蔽列表
 }

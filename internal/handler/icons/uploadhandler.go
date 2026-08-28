@@ -24,6 +24,14 @@ var allowedImageTypes = map[string]string{
 	".jpeg": "image/jpeg",
 	".webp": "image/webp",
 	".gif":  "image/gif",
+	".ico":  "image/x-icon",
+	".svg":  "image/svg+xml",
+}
+
+// UploadRequest 上传图标请求
+type UploadRequest struct {
+	ImageName  string `json:"imageName"`  // 镜像名或容器名
+	TargetType string `json:"targetType"` // "container" 或 "image"，默认 "image"
 }
 
 func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
@@ -35,7 +43,7 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 2. 获取文件和 Key
+		// 2. 获取文件和参数
 		file, handler, err := r.FormFile("file")
 		if err != nil {
 			writeUploadError(w, http.StatusBadRequest, "failed to get file")
@@ -49,8 +57,18 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 3. 确保目录存在 (防御性编程)。统一持久化到 /data/images
-		dataPath := persistImagesDir
+		// 获取目标类型，默认为 "image"
+		targetType := r.FormValue("targetType")
+		if targetType == "" {
+			targetType = "image"
+		}
+		if targetType != "container" && targetType != "image" {
+			writeUploadError(w, http.StatusBadRequest, "targetType must be 'container' or 'image'")
+			return
+		}
+
+		// 3. 确保目录存在（统一使用绝对路径常量，与抓取/静态服务保持一致）
+		dataPath := imageUploadDir
 		if err := os.MkdirAll(dataPath, 0o755); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "failed to prepare upload dir")
 			return
@@ -76,9 +94,14 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 5. 更新 imageLogos.js
-		jsPath := imageLogosPath
-		if err := updateImageLogosJS(jsPath, imageNameKey, filename); err != nil {
+		// 5. 更新图标配置（新格式）
+		iconURL := fmt.Sprintf("/images/%s", filename)
+		priority := 2 // 镜像级
+		if targetType == "container" {
+			priority = 1 // 容器级
+		}
+
+		if err := addOrUpdateIcon(imageNameKey, targetType, iconURL, priority); err != nil {
 			_ = os.Remove(dstPath)
 			writeUploadError(w, http.StatusInternalServerError, "failed to update config")
 			return
@@ -87,7 +110,10 @@ func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJsonCtx(r.Context(), w, types.Resp{
 			Code: 200,
 			Msg:  "Success",
-			Data: filename,
+			Data: map[string]interface{}{
+				"filename": filename,
+				"iconUrl":  iconURL,
+			},
 		})
 	}
 }
@@ -115,11 +141,12 @@ func generateStoredFilename(file multipart.File, handler *multipart.FileHeader) 
 	ext := strings.ToLower(filepath.Ext(handler.Filename))
 	expectedType, ok := allowedImageTypes[ext]
 	if !ok {
-		return "", fmt.Errorf("only png, jpg, jpeg, webp and gif files are allowed")
+		return "", fmt.Errorf("only png, jpg, jpeg, webp, gif, ico, svg files are allowed")
 	}
 
 	detectedType := http.DetectContentType(header[:n])
-	if detectedType != expectedType {
+	// SVG 和 ICO 文件的 MIME 类型检测不准确，跳过检测
+	if ext != ".svg" && ext != ".ico" && detectedType != expectedType {
 		return "", fmt.Errorf("uploaded file content does not match its extension")
 	}
 
@@ -132,48 +159,4 @@ func writeUploadError(w http.ResponseWriter, statusCode int, msg string) {
 		Msg:  msg,
 		Data: map[string]interface{}{},
 	})
-}
-
-func updateImageLogosJS(filePath, imageName, filename string) error {
-	// 上传文件场景：统一存 /data/images，前端通过 /images/ 静态路由访问
-	containerPath := fmt.Sprintf("/images/%s", filename)
-	return writeImageLogoValue(filePath, imageName, containerPath)
-}
-
-// writeImageLogoValue 将 imageName -> value 映射写入 imageLogos.js。
-// value 可以是本地图标路径，也可以是外部图标 URL（http/https）。
-func writeImageLogoValue(filePath, imageName, value string) error {
-	// 读取文件
-	contentBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-	content := string(contentBytes)
-
-	containerPath := value
-
-	if strings.Contains(content, fmt.Sprintf(`"%s"`, imageName)) {
-		// 更新现有行
-		re := regexp.MustCompile(fmt.Sprintf(`"%s"\s*:\s*".*"`, regexp.QuoteMeta(imageName)))
-		content = re.ReplaceAllString(content, fmt.Sprintf(`"%s": "%s"`, imageName, containerPath))
-	} else {
-		// 插入新行
-		// 查找 `export const customImageLogos = {`
-		startIdx := strings.Index(content, "export const customImageLogos = {")
-		if startIdx == -1 {
-			return fmt.Errorf("invalid config format")
-		}
-		// 尝试查找右大括号。这里假设它是最后一个右大括号逻辑或者是文件末尾。
-		// 一个简单的启发式方法：插入到最后一个 `}` 或 `};` 之前。
-		lastBraceIdx := strings.LastIndex(content, "}")
-		if lastBraceIdx == -1 || lastBraceIdx < startIdx {
-			return fmt.Errorf("invalid config format, no closing brace")
-		}
-
-		newLine := fmt.Sprintf(`  "%s": "%s",`, imageName, containerPath)
-		// 插入到最后一个大括号之前
-		content = content[:lastBraceIdx] + newLine + "\n" + content[lastBraceIdx:]
-	}
-
-	return os.WriteFile(filePath, []byte(content), 0644)
 }

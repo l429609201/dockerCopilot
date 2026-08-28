@@ -26,6 +26,16 @@ type UpdateNotifier interface {
 	NotifyUpdateWithKeyboard(items []UpdateItem)
 }
 
+// UpdateNotifierWithMuted 是"带屏蔽信息的更新通知"能力接口（扩展版）。
+// 在 UpdateNotifier 基础上，额外传递已屏蔽但有更新的容器列表，
+// 供通知渠道提供"查看被屏蔽的"入口。
+type UpdateNotifierWithMuted interface {
+	// NotifyUpdateWithMutedInfo 推送更新通知，区分未屏蔽和已屏蔽的容器。
+	// active: 未屏蔽且有更新的容器（主要展示）
+	// muted: 已屏蔽但有更新的容器（提供查看入口）
+	NotifyUpdateWithMutedInfo(active, muted []UpdateItem)
+}
+
 // RuleResultNotifier 是"带交互式键盘的定时更新完成通知"能力接口。
 // 通知渠道（如 Telegram Bot）实现它后，完成消息正文只展示统计+已更新列表，
 // 跳过/失败改由内联按钮按需查看，并支持一键重试全部失败；

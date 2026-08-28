@@ -199,17 +199,19 @@ export const imageAPI = {
   pruneImages: (ids, force = false, hostId = '') => apiClient.post('/api/images/prune', { ids, force, hostId }),
   // 手动触发检测所有镜像更新（异步执行，立即返回）
   checkUpdate: () => apiClient.post('/api/images/check-update'),
-  // 通过 URL 绑定图标到镜像名（无需上传图片）
-  setIconUrl: (imageName, url) => apiClient.post('/api/icons/url', { imageName, url }),
+  // 以下图标方法统一为「对象入参」，字段与后端 struct tag 严格对齐（imageName/url/targetType）。
+  // 通过 URL 绑定图标（无需上传图片）
+  setIconUrl: ({ imageName, url, targetType = 'image' }) =>
+    apiClient.post('/api/icons/url', { imageName, url, targetType }),
   // 自动抓取站点 favicon 并下载持久化到 /data/images，url 为容器访问地址
-  fetchIcon: (imageName, url) => apiClient.post('/api/icons/fetch', { imageName, url }),
-  uploadIcon: (file, imageName, containerName) => {
+  fetchIcon: ({ imageName, url, targetType = 'image' }) =>
+    apiClient.post('/api/icons/fetch', { imageName, url, targetType }),
+  // 上传图标文件：后端读取 formData 字段名固定为 file / imageName / targetType
+  uploadIcon: ({ file, imageName, targetType = 'image' }) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('imageName', imageName)
-    if (containerName) {
-      formData.append('containerName', containerName)
-    }
+    formData.append('targetType', targetType)
     return apiClient.post('/api/icons', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
@@ -264,6 +266,12 @@ export const composeAPI = {
   saveConfig: (cfg) => apiClient.put('/api/compose/config', cfg),
   // 浏览 DC 自身文件系统目录（目录选择器用）；path 为空返回起始目录
   browse: (path = '') => apiClient.get('/api/compose/browse', { params: { path } }),
+  // 创建文件夹
+  createFolder: (parentPath, folderName) =>
+    apiClient.post('/api/compose/folder', { parentPath, folderName }),
+  // 创建 Compose 配置文件
+  createFile: (parentPath, fileName) =>
+    apiClient.post('/api/compose/file', { parentPath, fileName }),
 }
 
 // 阶段8：favicon 抓取API（按容器暴露端口解析站点图标）
@@ -352,4 +360,9 @@ export const githubAPI = {
   },
 }
 
+// 说明：原重复的 iconAPI 已删除，图标相关接口统一收敛到上方 imageAPI
+// （getIcons / setIconUrl / fetchIcon / uploadIcon），字段与后端严格对齐。
+
+// 导出 apiClient 供其他组件使用
+export { apiClient }
 export default apiClient

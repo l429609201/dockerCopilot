@@ -96,25 +96,17 @@ func main() {
 	sched.Start()
 	defer sched.Stop()
 
-	// Ensure data directory and config exist (Auto-init)
-	dataDir := "/data/config/image"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	// Ensure data directory and config exist (Auto-init)，路径统一引用 config 常量
+	if err := os.MkdirAll(config.LegacyImageDir, 0755); err != nil {
 		logx.Errorf("Failed to create data directory: %v", err)
 	}
 	// 持久化图标目录：favicon 自动抓取下载与手动上传统一存放
-	if err := os.MkdirAll("/data/images", 0755); err != nil {
+	if err := os.MkdirAll(config.ImagesDir, 0755); err != nil {
 		logx.Errorf("Failed to create images directory: %v", err)
 	}
-
-	imageLogosPath := "/data/config/imageLogos.js"
-	if _, err := os.Stat(imageLogosPath); os.IsNotExist(err) {
-		defaultConfig := []byte(`// 自定义镜像logo配置
-export const customImageLogos = {
-};
-`)
-		if err := os.WriteFile(imageLogosPath, defaultConfig, 0644); err != nil {
-			logx.Errorf("Failed to create default imageLogos.js: %v", err)
-		}
+	// 图标配置目录（用于 icons.json）
+	if err := os.MkdirAll(config.ConfigDir, 0755); err != nil {
+		logx.Errorf("Failed to create config directory: %v", err)
 	}
 
 	// 首轮镜像更新检查放到后台执行：镜像列表获取和加速器域名探测都可能较慢，
@@ -178,6 +170,22 @@ export const customImageLogos = {
 	logx.Info("程序版本" + config.Version)
 	server.Start()
 }
+
+// serveEmbeddedFavicon 返回 DockerCopilot 自身图标。
+// 复用前端 logo.png：embed 目录为 front/（见 //go:embed front/*），
+// Dockerfile 将前端 dist/ 内容拷入 front/，故 logo.png 的 embed 路径为 front/logo.png。
+func serveEmbeddedFavicon(w http.ResponseWriter, r *http.Request) {
+	data, err := embeddedFront.ReadFile("front/logo.png")
+	if err != nil {
+		logx.Errorf("无法读取嵌入的 favicon(front/logo.png): %v", err)
+		http.Error(w, "Icon not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
+}
+
 func RegisterHandlers(engine *rest.Server) {
 	frontFS, err := fs.Sub(embeddedFront, "front")
 	if err != nil {
@@ -189,9 +197,9 @@ func RegisterHandlers(engine *rest.Server) {
 	assetsHandler := http.FileServer(http.FS(frontFS))
 
 	// Serve custom icons（历史目录，保持兼容）
-	iconFileServer := http.StripPrefix("/src/config/image/", http.FileServer(http.Dir("/data/config/image")))
+	iconFileServer := http.StripPrefix("/src/config/image/", http.FileServer(http.Dir(config.LegacyImageDir)))
 	// 持久化图标目录 /data/images（favicon 自动抓取下载 + 手动上传统一存放）
-	imagesFileServer := http.StripPrefix("/images/", http.FileServer(http.Dir("/data/images")))
+	imagesFileServer := http.StripPrefix("/images/", http.FileServer(http.Dir(config.ImagesDir)))
 	engine.AddRoutes(
 		[]rest.Route{
 			{
@@ -208,6 +216,19 @@ func RegisterHandlers(engine *rest.Server) {
 				Handler: func(w http.ResponseWriter, r *http.Request) {
 					imagesFileServer.ServeHTTP(w, r)
 				},
+			},
+			{
+				// DockerCopilot 自身的 favicon（浏览器标签页图标）。
+				// 复用前端 logo.png（embed 路径 front/logo.png，由 Dockerfile 从 dist/ 拷入）。
+				Method:  http.MethodGet,
+				Path:    "/favicon.png",
+				Handler: serveEmbeddedFavicon,
+			},
+			{
+				// 兼容 /favicon.ico 请求，同样返回 logo.png。
+				Method:  http.MethodGet,
+				Path:    "/favicon.ico",
+				Handler: serveEmbeddedFavicon,
 			},
 		},
 	)

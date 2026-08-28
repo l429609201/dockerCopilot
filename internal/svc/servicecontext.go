@@ -87,6 +87,15 @@ type TaskProgress struct {
 	// Layers 镜像拉取时各分层(layer)的实时进度，供前端任务中心展开显示。
 	// 仅拉取类任务有值，其它任务为空（omitempty 向后兼容）。
 	Layers []LayerProgress `json:"layers,omitempty"`
+	// UpdatableImages 「检查镜像更新」任务完成时，可更新的镜像清单，供任务中心展开显示。
+	// 仅镜像检查任务有值，其它任务为空（omitempty 向后兼容）。
+	UpdatableImages []UpdatableImage `json:"updatableImages,omitempty"`
+}
+
+// UpdatableImage 一条可更新的镜像记录，供任务中心「可更新列表」展开显示。
+type UpdatableImage struct {
+	ImageName string `json:"imageName"` // 镜像名（不含 tag）
+	ImageTag  string `json:"imageTag"`  // 镜像标签
 }
 
 // LayerProgress 单个镜像分层(layer)的拉取进度。

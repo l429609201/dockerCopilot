@@ -78,7 +78,7 @@ func RestoreContainer(ctx *svc.ServiceContext, filename string, taskID string) e
 			continue
 		}
 		// 备份文件可能来自群晖等非标准环境，创建前先修正不兼容字段
-		SanitizeCreateConfig(containerInfo.Name, containerInfo.Config, containerInfo.HostConfig, containerInfo.NetworkingConfig)
+		SanitizeCreateConfig(containerInfo.Name, ctx.DockerClient.ClientVersion(), containerInfo.Config, containerInfo.HostConfig, containerInfo.NetworkingConfig)
 		_, err = ctx.DockerClient.ContainerCreate(context.TODO(), containerInfo.Config, containerInfo.HostConfig, containerInfo.NetworkingConfig, nil, containerInfo.Name)
 		if err != nil {
 			logx.Errorf("Failed to create container: %v", err)

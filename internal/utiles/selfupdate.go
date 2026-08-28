@@ -170,10 +170,16 @@ func StartHelperContainer(svcCtx *svc.ServiceContext, targetID, targetName, newI
 		Image: newImage,
 		Env:   env,
 	}
-	// 挂载宿主 docker.sock，让辅助容器能操作 Docker
+	// 配置 helper 容器：只需挂载 Docker socket，无需复制主程序的其他配置。
+	// 绑定 /var/run/docker.sock 让 helper 能调用 Docker API 操作本机容器。
+	//
+	// AutoRemove 策略变更（兼容性改进）：
+	//   旧：AutoRemove=true，helper 退出即删除，失败时日志立即消失无法排查。
+	//   新：AutoRemove=false，失败时保留容器供用户查看日志（docker logs <name>-selfupdate-helper）；
+	//       成功时由 helper 在完成所有操作后主动删除自己（见 helper.go 的 doHelperUpdate 末尾）。
 	hostCfg := &container.HostConfig{
 		Binds:      []string{"/var/run/docker.sock:/var/run/docker.sock"},
-		AutoRemove: true,
+		AutoRemove: false, // 改为手动清理，失败时保留日志
 	}
 	name := targetName + "-selfupdate-helper"
 	created, err := cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)

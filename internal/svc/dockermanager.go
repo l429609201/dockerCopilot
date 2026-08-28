@@ -243,6 +243,22 @@ func (m *DockerManager) sortedRemoteIDs() []string {
 	return ids
 }
 
+// APIVersion 返回指定主机协商后的 Docker API 版本（如 "1.43"）。
+// hostID 为空视为本地；主机无可用连接时返回空串。
+//
+// 用途：部分请求字段有最低 API 版本要求（如 per-network MacAddress 需 1.44），
+// 面对低版本 daemon 必须提前剔除，否则 SDK 会在本地直接拒绝请求。
+//
+// 注意 WithAPIVersionNegotiation 是惰性协商：首次真实请求之前返回的是 SDK 默认上限。
+// 调用方应在已发生过 inspect 等请求之后取用，此时值才反映 daemon 真实能力。
+func (m *DockerManager) APIVersion(hostID string) string {
+	cli, ok := m.GetClient(hostID)
+	if !ok || cli == nil {
+		return ""
+	}
+	return cli.ClientVersion()
+}
+
 // Ping 测试指定主机连通性；hostID 为空测试本地。
 func (m *DockerManager) Ping(ctx context.Context, hostID string) error {
 	cli, ok := m.GetClient(hostID)
