@@ -47,8 +47,12 @@ func writeIconsConfig(icons []IconItem) error {
 	return os.WriteFile(iconsConfigPath, data, 0644)
 }
 
-// ensureBuiltInIcons 确保内置图标配置存在（DockerCopilot 自身的图标）
+// ensureBuiltInIcons 确保内置图标配置存在（DockerCopilot 自身的图标）。
+// 全程持 iconsFileMu，与 addOrUpdateIcon 互斥，避免与并发抓取写入相互覆盖。
 func ensureBuiltInIcons() error {
+	iconsFileMu.Lock()
+	defer iconsFileMu.Unlock()
+
 	icons, err := readIconsConfig()
 	if err != nil {
 		return err
@@ -87,8 +91,12 @@ func ensureBuiltInIcons() error {
 	return nil
 }
 
-// addOrUpdateIcon 添加或更新图标配置
+// addOrUpdateIcon 添加或更新图标配置。
+// 全程持 iconsFileMu，保证并发抓取时 read-modify-write 不互相覆盖。
 func addOrUpdateIcon(target, targetType, iconURL string, priority int) error {
+	iconsFileMu.Lock()
+	defer iconsFileMu.Unlock()
+
 	icons, err := readIconsConfig()
 	if err != nil {
 		return err

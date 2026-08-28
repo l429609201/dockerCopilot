@@ -88,6 +88,12 @@ export function useFaviconMap(containers, icons = []) {
         const hit = cache[c.id]
         if (hit && hit.url && Date.now() - hit.ts < TTL) {
           result[c.id] = hit.url
+          // 解耦"显示缓存"与"后端持久化"：命中 localStorage 仅代表本机显示过，
+          // 不代表后端 icons.json 已写入（首次持久化可能失败/被并发覆盖）。
+          // 能走到这里说明该容器不在过滤时的 hasLogo 命中集（icons 里没有），
+          // 故用缓存记录的容器访问地址补写一次持久化，确保图标最终落库。
+          // 旧缓存无 src 字段时跳过（下次 TTL 过期重新抓取时会补上）。
+          if (hit.src) persistIconToServer(c, hit.src)
           continue
         }
         // 远程容器用其所属主机 IP，本地用当前访问 hostname
@@ -97,15 +103,18 @@ export function useFaviconMap(containers, icons = []) {
         for (const port of ordered) {
           if (cancelled) return
           try {
-            const r = await faviconAPI.resolve(`http://${host}:${port}`)
+            const src = `http://${host}:${port}`
+            const r = await faviconAPI.resolve(src)
             const url = r.data?.data?.url
             if (url) {
               result[c.id] = url
-              cache[c.id] = { url, ts: Date.now() }
+              // 缓存额外记录容器访问地址 src：命中缓存补写持久化时，
+              // 后端 fetchIcon 需要容器地址去 resolve+落盘，仅有 favicon url 不够。
+              cache[c.id] = { url, src, ts: Date.now() }
               cacheDirty = true
 
               // 批量抓取时也自动持久化到服务器
-              persistIconToServer(c, `http://${host}:${port}`)
+              persistIconToServer(c, src)
 
               break
             }
