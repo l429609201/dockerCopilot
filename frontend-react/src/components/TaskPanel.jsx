@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity, ChevronRight, ChevronDown, Layers } from 'lucide-react'
+import { Loader2, CheckCircle, XCircle, X, Ban, Trash2, ListTodo, Activity, ChevronRight, ChevronDown, Layers, ArrowUpCircle } from 'lucide-react'
 import { useTasks } from '../hooks/useTasks.jsx'
 import { progressAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
@@ -173,18 +173,25 @@ function TaskGroup({ title, count, children }) {
 }
 
 function TaskRow({ task, onRemove, onCancel }) {
-  const { percentage = 0, message, detailMsg, isDone, failed, canceled, title, layers = [] } = task
+  const { percentage = 0, message, detailMsg, isDone, failed, canceled, title, layers = [], updatableImages = [] } = task
   // 分层子进度展开状态（有分层数据时才可展开）
   const [expanded, setExpanded] = useState(false)
+  // 可更新镜像列表展开状态（「检查镜像更新」任务完成且有可更新项时可展开）
+  const [updExpanded, setUpdExpanded] = useState(false)
   const hasLayers = Array.isArray(layers) && layers.length > 0
+  const hasUpdatable = Array.isArray(updatableImages) && updatableImages.length > 0
+  // 展开/折叠按钮：分层任务用 expanded，可更新列表任务用 updExpanded（两者互斥，不会同时出现）
+  const canExpand = hasLayers || hasUpdatable
+  const isExpanded = hasLayers ? expanded : updExpanded
+  const toggleExpand = () => (hasLayers ? setExpanded(v => !v) : setUpdExpanded(v => !v))
   return (
     <div className="px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex items-center gap-2 min-w-0">
-          {/* 展开/折叠按钮：仅有分层数据时显示 */}
-          {hasLayers && (
-            <button onClick={() => setExpanded(v => !v)} className="p-0.5 -ml-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0" title={expanded ? '收起分层' : '展开分层'}>
-              {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          {/* 展开/折叠按钮：有分层数据或可更新列表时显示 */}
+          {canExpand && (
+            <button onClick={toggleExpand} className="p-0.5 -ml-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0" title={isExpanded ? '收起' : '展开'}>
+              {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
             </button>
           )}
           {!isDone && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary-500 flex-shrink-0" />}
@@ -195,6 +202,12 @@ function TaskRow({ task, onRemove, onCancel }) {
           {hasLayers && (
             <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] text-gray-500 bg-gray-100 dark:bg-gray-700 flex-shrink-0">
               <Layers className="h-2.5 w-2.5" />{layers.length}
+            </span>
+          )}
+          {/* 可更新数量徽标：X 个镜像可更新 */}
+          {hasUpdatable && (
+            <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 flex-shrink-0">
+              <ArrowUpCircle className="h-2.5 w-2.5" />{updatableImages.length} 可更新
             </span>
           )}
         </div>
@@ -236,6 +249,18 @@ function TaskRow({ task, onRemove, onCancel }) {
         <div className="mt-2 pl-4 border-l-2 border-gray-100 dark:border-gray-700 space-y-1.5">
           {layers.map((ly) => (
             <LayerRow key={ly.id} layer={ly} />
+          ))}
+        </div>
+      )}
+
+      {/* 可更新镜像列表：展开后逐行显示 镜像名:tag */}
+      {hasUpdatable && updExpanded && (
+        <div className="mt-2 pl-4 border-l-2 border-amber-100 dark:border-amber-900/40 space-y-1">
+          {updatableImages.map((img, idx) => (
+            <div key={`${img.imageName}:${img.imageTag}:${idx}`} className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-300">
+              <ArrowUpCircle className="h-3 w-3 text-amber-500 flex-shrink-0" />
+              <span className="font-mono break-all">{img.imageName}:{img.imageTag}</span>
+            </div>
           ))}
         </div>
       )}

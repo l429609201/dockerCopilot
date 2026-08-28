@@ -54,6 +54,8 @@ export function TaskProvider({ children }) {
           endedAt: d.endedAt || 0,
           // 镜像分层进度（仅拉取类任务有值），供任务中心展开显示
           layers: Array.isArray(d.layers) ? d.layers : [],
+          // 可更新镜像清单（仅「检查镜像更新」任务完成时有值），供任务中心展开显示
+          updatableImages: Array.isArray(d.updatableImages) ? d.updatableImages : [],
         }))
         for (const t of mapped) {
           if (t.isDone && prevDoneRef.current[t.id] === false) {

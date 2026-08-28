@@ -115,14 +115,45 @@ func (l *CheckUpdateLogic) runCheck(taskID string, images []types.Image) {
 		return
 	}
 
+	// 从内存检查结果中收集本轮「可更新」的镜像清单（多主机同名镜像去重），
+	// 随完成态一并下发，供任务中心展开显示，无需前端再刷列表逐个比对。
+	updatable := l.collectUpdatableImages(images)
+	detail := fmt.Sprintf("已检测 %d 个镜像，%d 个可更新", len(images), len(updatable))
+	if len(updatable) == 0 {
+		detail = fmt.Sprintf("已检测 %d 个镜像，均为最新", len(images))
+	}
+
 	l.finishCheck(taskID, svc.TaskProgress{
-		TaskID:     taskID,
-		Percentage: 100,
-		Name:       "检查镜像更新",
-		Message:    "检测完成",
-		DetailMsg:  fmt.Sprintf("已检测 %d 个镜像，可刷新列表查看结果", len(images)),
-		TaskType:   svc.TaskTypeImageCheck,
+		TaskID:          taskID,
+		Percentage:      100,
+		Name:            "检查镜像更新",
+		Message:         "检测完成",
+		DetailMsg:       detail,
+		TaskType:        svc.TaskTypeImageCheck,
+		UpdatableImages: updatable,
 	})
+}
+
+// collectUpdatableImages 遍历本轮检测的镜像，按 image.ID 查内存检查结果，
+// 收集 NeedUpdate=true 的镜像为可更新清单。多主机同名同 tag 镜像去重，
+// 只关心「哪些镜像可更新」，不区分所属主机。
+func (l *CheckUpdateLogic) collectUpdatableImages(images []types.Image) []svc.UpdatableImage {
+	snapshot := l.svcCtx.HubImageInfo.Snapshot()
+	seen := make(map[string]struct{})
+	result := make([]svc.UpdatableImage, 0)
+	for _, img := range images {
+		r, ok := snapshot[img.ID]
+		if !ok || !r.NeedUpdate {
+			continue
+		}
+		key := img.ImageName + ":" + img.ImageTag
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, svc.UpdatableImage{ImageName: img.ImageName, ImageTag: img.ImageTag})
+	}
+	return result
 }
 
 // finishCheck 统一收尾，避免各分支重复写 IsDone。
