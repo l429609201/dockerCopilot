@@ -93,16 +93,23 @@ export function DirectoryPicker({ initialPath = '', onSelect, onClose }) {
           {!loading && !error && dirs.length === 0 && (
             <div className="text-center py-10 text-gray-400 text-sm">该目录下没有子目录</div>
           )}
-          {dirs.map((d) => (
-            <button
-              key={d.path}
-              onClick={() => load(d.path)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 text-sm text-gray-700 dark:text-gray-200"
-            >
-              <Folder className="h-4 w-4 text-amber-500 flex-shrink-0" />
-              <span className="truncate">{d.name}</span>
-            </button>
-          ))}
+          {dirs.map((name) => {
+            // 后端 /compose/browse 返回的 dirs 是「目录名字符串数组」（非对象），
+            // 需用当前目录 current 拼出完整子路径再进入。
+            const childPath = (current === '/' || current === '')
+              ? `/${name}`
+              : `${current.replace(/\/$/, '')}/${name}`
+            return (
+              <button
+                key={name}
+                onClick={() => load(childPath)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 text-sm text-gray-700 dark:text-gray-200"
+              >
+                <Folder className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                <span className="truncate">{name}</span>
+              </button>
+            )
+          })}
         </div>
 
         {/* 底部：选择当前目录 */}
