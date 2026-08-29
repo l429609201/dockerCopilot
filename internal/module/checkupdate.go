@@ -82,7 +82,9 @@ const (
 	// 上限避免大量镜像时打爆 registry 速率限制或本地连接数。
 	checkConcurrency = 8
 	// digestHTTPTimeout 单次 manifest HEAD 请求超时。
-	digestHTTPTimeout = 20 * time.Second
+	// 直连 Docker Hub 网络较慢、多架构镜像 manifest 拉取偏慢时，20s 易误超时，
+	// 故放宽至 60s，减少 context deadline exceeded 类误报。
+	digestHTTPTimeout = 60 * time.Second
 )
 
 func NewImageCheck() *ImageUpdateData {
