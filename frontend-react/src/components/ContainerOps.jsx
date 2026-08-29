@@ -59,7 +59,9 @@ export function ContainerLogs({ container, onClose }) {
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
           ? 'w-screen h-screen max-w-none max-h-none rounded-none'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+          // 日志是等宽宽内容（HTTP 行含长 UA + 三列布局），max-w-3xl(768px) 过窄导致大量截断贴边，
+          // 放宽到 max-w-6xl(1152px)，宽屏下有充足横向空间，窄屏仍由 w-full 自适应。
+          : 'w-full max-w-6xl max-h-[90vh] rounded-xl')}>
         <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
             <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-sky-600 dark:text-sky-400 flex-shrink-0" />
@@ -91,7 +93,8 @@ export function ContainerConsole({ container, onClose }) {
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
           ? 'w-screen h-screen max-w-none max-h-none rounded-none'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+          // 终端输出同为等宽宽内容，与日志弹窗保持一致放宽到 max-w-6xl(1152px)。
+          : 'w-full max-w-6xl max-h-[90vh] rounded-xl')}>
         <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
             <TerminalIcon className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600 dark:text-teal-400 flex-shrink-0" />
