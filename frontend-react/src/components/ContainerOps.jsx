@@ -232,17 +232,17 @@ function StructuredLogRow({ obj, kw }) {
   return (
     <div
       onClick={() => setExpanded((v) => !v)}
-      className="group flex gap-3 px-3 py-1 border-l-2 border-transparent hover:border-sky-500/60 hover:bg-gray-800/50 cursor-pointer transition-colors"
+      className="group flex items-baseline gap-x-4 px-4 py-1.5 border-l-2 border-transparent hover:border-sky-500/60 hover:bg-gray-800/50 cursor-pointer transition-colors"
       title={expanded ? '点击收起' : '点击展开完整内容'}
     >
       {/* 时间列：固定宽度 + 等宽数字，保证纵向对齐 */}
       <span className="shrink-0 w-[74px] text-gray-500 tabular-nums" title={obj.time}>
         {formatLogTime(obj.time)}
       </span>
-      {/* 位置列：缩窄并弱化，默认极淡，hover 时才提亮，避免抢占正文视线 */}
+      {/* 位置列：左对齐（尾部溢出才省略）+ 弱化配色，默认极淡、hover 提亮，避免抢占正文视线 */}
       <span
         className={cn(
-          'shrink-0 w-40 truncate text-right transition-colors',
+          'shrink-0 w-44 truncate transition-colors',
           obj.caller ? 'text-gray-600 group-hover:text-violet-400' : 'text-gray-700'
         )}
         title={obj.caller || '无调用位置信息'}
@@ -377,16 +377,16 @@ function LogsPanel({ id, name, hostId }) {
         <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
       )}
       <div ref={scrollRef} onScroll={onScroll}
-        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono py-1 bg-gray-900 text-gray-100 rounded-lg leading-relaxed">
+        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono py-2 bg-gray-900 text-gray-100 rounded-lg leading-relaxed">
         {loading
-          ? <div className="p-3">加载中...</div>
+          ? <div className="px-4 py-2">加载中...</div>
           : (kw && shownLines.length === 0)
-            ? <div className="p-3">(无匹配行)</div>
+            ? <div className="px-4 py-2">(无匹配行)</div>
             : rows.map(({ raw, obj }, i) => (
                 (structured && pretty && obj) ? (
                   <StructuredLogRow key={i} obj={obj} kw={kw} />
                 ) : (
-                  <div key={i} className="whitespace-pre-wrap break-all px-3 py-0.5 hover:bg-gray-800/50">{highlightLine(raw, kw)}</div>
+                  <div key={i} className="whitespace-pre-wrap break-all px-4 py-1 hover:bg-gray-800/50">{highlightLine(raw, kw)}</div>
                 )
               ))}
       </div>
