@@ -338,7 +338,8 @@ function LogsPanel({ id, name, hostId }) {
   const kw = search.trim()
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    // 补横向 + 底部内边距，与 header 的 p-3 sm:p-5 对齐，避免工具栏和深色日志区直接贴弹窗外框边缘。
+    <div className="flex-1 flex flex-col min-h-0 px-3 sm:px-5 pb-3 sm:pb-5">
       <div className="flex flex-wrap items-center gap-3 mb-2 text-sm">
         <label className="flex items-center gap-1">行数
           <input type="number" value={tail} onChange={(e) => setTail(Number(e.target.value))}
@@ -415,7 +416,8 @@ function ExecPanel({ id, fullscreen, hostId }) {
   const disconnect = () => setConnected(false)
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    // 与 header 的 p-3 sm:p-5 对齐补内边距，避免配置栏和终端区贴弹窗外框边缘。
+    <div className="flex-1 flex flex-col min-h-0 px-3 sm:px-5 pb-3 sm:pb-5">
       {/* 连接配置栏 */}
       <div className="flex flex-wrap items-end gap-3 mb-3">
         <div>
