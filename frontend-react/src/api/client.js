@@ -299,6 +299,8 @@ export const dockerHostAPI = {
   remove: (id) => apiClient.delete(`/api/docker/hosts/${id}`),
   // 测试指定主机连通性
   ping: (id) => apiClient.post(`/api/docker/hosts/${id}/ping`),
+  // 获取指定主机的 Docker 详细信息（docker info + version）
+  info: (id) => apiClient.get(`/api/docker/hosts/${id}/info`),
 }
 
 // GitHub API - 用于检查前端更新

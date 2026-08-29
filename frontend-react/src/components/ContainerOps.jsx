@@ -225,6 +225,44 @@ const LEVEL_COLOR = {
   debug: 'text-gray-500',
 }
 
+// 单行结构化日志：时间 | 位置 | 内容 三列对齐
+// 正文默认单行截断避免超长 User-Agent 刷屏，点击整行可展开/收起完整内容
+function StructuredLogRow({ obj, kw }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div
+      onClick={() => setExpanded((v) => !v)}
+      className="group flex gap-3 px-3 py-1 border-l-2 border-transparent hover:border-sky-500/60 hover:bg-gray-800/50 cursor-pointer transition-colors"
+      title={expanded ? '点击收起' : '点击展开完整内容'}
+    >
+      {/* 时间列：固定宽度 + 等宽数字，保证纵向对齐 */}
+      <span className="shrink-0 w-[74px] text-gray-500 tabular-nums" title={obj.time}>
+        {formatLogTime(obj.time)}
+      </span>
+      {/* 位置列：缩窄并弱化，默认极淡，hover 时才提亮，避免抢占正文视线 */}
+      <span
+        className={cn(
+          'shrink-0 w-40 truncate text-right transition-colors',
+          obj.caller ? 'text-gray-600 group-hover:text-violet-400' : 'text-gray-700'
+        )}
+        title={obj.caller || '无调用位置信息'}
+      >
+        {obj.caller ? highlightLine(obj.caller, kw) : '—'}
+      </span>
+      {/* 内容列：默认单行截断，展开后完整换行显示 */}
+      <span
+        className={cn(
+          'flex-1 min-w-0',
+          expanded ? 'whitespace-pre-wrap break-all' : 'truncate',
+          LEVEL_COLOR[obj.level] || 'text-gray-100'
+        )}
+      >
+        {highlightLine(obj.content, kw)}
+      </span>
+    </div>
+  )
+}
+
 // 日志面板：支持行数/时间戳、关键词搜索过滤+高亮、日志下载
 function LogsPanel({ id, name, hostId }) {
   const [logs, setLogs] = useState('')
@@ -339,31 +377,16 @@ function LogsPanel({ id, name, hostId }) {
         <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
       )}
       <div ref={scrollRef} onScroll={onScroll}
-        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg">
+        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono py-1 bg-gray-900 text-gray-100 rounded-lg leading-relaxed">
         {loading
-          ? '加载中...'
+          ? <div className="p-3">加载中...</div>
           : (kw && shownLines.length === 0)
-            ? '(无匹配行)'
+            ? <div className="p-3">(无匹配行)</div>
             : rows.map(({ raw, obj }, i) => (
                 (structured && pretty && obj) ? (
-                  // 三列布局：时间 | 位置 | 内容，行间用细分隔线区分
-                  <div key={i} className="flex gap-3 py-0.5 border-b border-gray-800/60 last:border-0">
-                    <span className="shrink-0 text-gray-500 tabular-nums" title={obj.time}>
-                      {formatLogTime(obj.time)}
-                    </span>
-                    {/* 无 caller 的行（如标准库 log 输出）用占位符保持三列对齐 */}
-                    <span className={cn('shrink-0 w-52 truncate',
-                      obj.caller ? 'text-violet-400' : 'text-gray-600')}
-                      title={obj.caller || '无调用位置信息'}>
-                      {obj.caller ? highlightLine(obj.caller, kw) : '—'}
-                    </span>
-                    <span className={cn('flex-1 break-all whitespace-pre-wrap',
-                      LEVEL_COLOR[obj.level] || 'text-gray-100')}>
-                      {highlightLine(obj.content, kw)}
-                    </span>
-                  </div>
+                  <StructuredLogRow key={i} obj={obj} kw={kw} />
                 ) : (
-                  <div key={i} className="whitespace-pre-wrap break-all">{highlightLine(raw, kw)}</div>
+                  <div key={i} className="whitespace-pre-wrap break-all px-3 py-0.5 hover:bg-gray-800/50">{highlightLine(raw, kw)}</div>
                 )
               ))}
       </div>

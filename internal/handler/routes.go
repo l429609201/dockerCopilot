@@ -389,6 +389,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/docker/hosts/:id/ping",
 				Handler: ops.DockerHostPingHandler(serverCtx),
 			},
+			{
+				// 获取指定 Docker 主机的详细信息（docker info + version）
+				Method:  http.MethodGet,
+				Path:    "/docker/hosts/:id/info",
+				Handler: ops.DockerHostInfoHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),

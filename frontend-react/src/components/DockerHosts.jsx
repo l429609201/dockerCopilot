@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { dockerHostAPI } from '../api/client.js'
-import { Server, Plus, Trash2, RefreshCw, Wifi, WifiOff, Loader2, Save, X, HardDrive, AlertCircle } from 'lucide-react'
+import { Server, Plus, Trash2, RefreshCw, Wifi, WifiOff, Loader2, Save, X, HardDrive, AlertCircle, Info } from 'lucide-react'
 
 // 多 Docker 管理页面：第一个恒为本地主机（不可删、地址固定），其余为远程 tcp:// 主机。
 export function DockerHosts() {
@@ -8,6 +8,7 @@ export function DockerHosts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [editing, setEditing] = useState(null) // 正在编辑/新建的主机对象
+  const [detailHost, setDetailHost] = useState(null) // 正在查看详情的主机
   const [pingState, setPingState] = useState({}) // { [id]: 'testing'|'ok'|'fail' }
 
   const load = useCallback(async () => {
@@ -71,13 +72,17 @@ export function DockerHosts() {
         <div className="space-y-3">
           {hosts.map((h) => (
             <HostRow key={h.id} host={h} pingState={pingState[h.id]}
-              onEdit={() => setEditing({ ...h })} onDelete={() => remove(h)} onPing={() => testPing(h.id)} />
+              onEdit={() => setEditing({ ...h })} onDelete={() => remove(h)} onPing={() => testPing(h.id)}
+              onInfo={() => setDetailHost(h)} />
           ))}
         </div>
       )}
       {editing && (
         <HostEditModal host={editing} onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load() }} />
+      )}
+      {detailHost && (
+        <HostInfoModal host={detailHost} onClose={() => setDetailHost(null)} />
       )}
     </div>
   )
@@ -110,7 +115,7 @@ function HostsHeader({ onAdd, onRefresh }) {
 }
 
 // 单个主机行
-function HostRow({ host, pingState, onEdit, onDelete, onPing }) {
+function HostRow({ host, pingState, onEdit, onDelete, onPing, onInfo }) {
   const isLocal = host.local || host.type === 'local'
   const online = pingState ? pingState === 'ok' : host.online
   return (
@@ -133,6 +138,10 @@ function HostRow({ host, pingState, onEdit, onDelete, onPing }) {
           {pingState === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
           {pingState === 'testing' ? '测试中' : online ? '在线' : '离线'}
         </span>
+        <button onClick={onInfo} title="查看详细信息"
+          className="rounded-lg border border-gray-200 dark:border-gray-700 p-1.5 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20">
+          <Info className="h-4 w-4" />
+        </button>
         <button onClick={onPing} title="连通性测试"
           className="rounded-lg border border-gray-200 dark:border-gray-700 p-1.5 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700">
           <RefreshCw className="h-4 w-4" />
@@ -148,6 +157,135 @@ function HostRow({ host, pingState, onEdit, onDelete, onPing }) {
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+// 字节格式化为人类可读大小（用于总内存展示）
+function fmtBytes(bytes) {
+  if (!bytes || bytes < 0) return '-'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let n = bytes, i = 0
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+// 主机详细信息弹窗：打开时实时请求 docker info + version，分组展示。
+// 离线/无连接主机显示错误原因。
+function HostInfoModal({ host, onClose }) {
+  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      setLoading(true); setErr('')
+      try {
+        const resp = await dockerHostAPI.info(host.id)
+        if (!alive) return
+        if (resp.data?.code === 200) {
+          const d = resp.data.data || {}
+          if (d.online === false) setErr(d.reason || '无法连接到该主机')
+          else setData(d)
+        } else {
+          setErr(resp.data?.msg || '获取信息失败')
+        }
+      } catch (e) {
+        if (alive) setErr(e.response?.data?.msg || e.message || '获取信息失败')
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => { alive = false }
+  }, [host.id])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-800 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Server className="h-5 w-5 text-blue-500 flex-shrink-0" />
+            <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{host.name} · 详细信息</span>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12 text-gray-400">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" /> 加载中...
+            </div>
+          ) : err ? (
+            <div className="flex items-center gap-2 rounded-lg bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-600 dark:text-red-400">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" /> {err}
+            </div>
+          ) : data ? (
+            <HostInfoBody d={data} />
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 详情正文：按「版本 / 运行时 / 资源 / Registry / 其它」分组展示
+function HostInfoBody({ d }) {
+  return (
+    <div className="space-y-4">
+      <InfoSection title="版本" rows={[
+        ['Docker 版本', d.dockerVersion], ['API 版本', d.apiVersion],
+        ['Go 版本', d.goVersion], ['Git Commit', d.gitCommit],
+        ['系统/架构', [d.osType, d.architecture].filter(Boolean).join(' / ')],
+        ['内核版本', d.kernelVersion], ['操作系统', d.operatingSystem],
+      ]} />
+      <InfoSection title="运行时" rows={[
+        ['容器总数', `${d.containers}（运行 ${d.containersRunning} · 暂停 ${d.containersPaused} · 停止 ${d.containersStopped}）`],
+        ['镜像数', d.images], ['Containerd', d.containerdCommit], ['Runc', d.runcCommit],
+        ['Cgroup', [d.cgroupVersion && `v${d.cgroupVersion}`, d.cgroupDriver].filter(Boolean).join(' · ')],
+        ['默认运行时', d.defaultRuntime], ['Swarm', d.swarmActive ? '已启用' : '未启用'],
+      ]} />
+      <InfoSection title="资源" rows={[
+        ['CPU 核数', d.ncpu], ['总内存', fmtBytes(d.memTotal)],
+        ['存储驱动', d.storageDriver], ['Docker 根目录', d.dockerRootDir],
+      ]} />
+      <InfoSection title="镜像加速器 (Registry Mirrors)" list={d.mirrors} emptyText="未配置镜像加速器" />
+      {Array.isArray(d.insecureRegistries) && d.insecureRegistries.length > 0 && (
+        <InfoSection title="Insecure Registries" list={d.insecureRegistries} />
+      )}
+    </div>
+  )
+}
+
+// 信息分组：rows 为键值对表格；list 为纯列表（如 Mirrors）
+function InfoSection({ title, rows, list, emptyText }) {
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">{title}</h4>
+      {rows && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 rounded-lg bg-gray-50 dark:bg-gray-900/40 p-3">
+          {rows.filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => (
+            <div key={k} className="flex items-start gap-2 text-sm">
+              <span className="text-gray-500 dark:text-gray-400 flex-shrink-0 min-w-[84px]">{k}</span>
+              <span className="text-gray-900 dark:text-gray-100 break-all font-mono text-xs pt-0.5">{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {list !== undefined && (
+        <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 p-3">
+          {Array.isArray(list) && list.length > 0 ? (
+            <ul className="space-y-1">
+              {list.map((item, i) => (
+                <li key={i} className="text-xs font-mono text-gray-900 dark:text-gray-100 break-all">{item}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-gray-400">{emptyText || '无'}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
