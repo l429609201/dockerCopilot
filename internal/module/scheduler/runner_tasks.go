@@ -112,7 +112,17 @@ func runBackup(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appcon
 			continue
 		}
 		okCount++
-		perHostSummary = append(perHostSummary, fmt.Sprintf("%s：成功", hostName))
+		hostMsg := fmt.Sprintf("%s：成功", hostName)
+		// 备份成功后，按规则的最大保留数清理该主机的旧备份（0/负数=不限制）。
+		// 清理失败不影响备份本身，仅记录日志与摘要。
+		if rule.MaxBackups > 0 {
+			if deleted, cErr := utiles.CleanupBackupsForHost(hostID, rule.MaxBackups); cErr != nil {
+				logx.Errorf("定时备份规则[%s]主机[%s]清理旧备份失败: %v", rule.Name, hostName, cErr)
+			} else if deleted > 0 {
+				hostMsg = fmt.Sprintf("%s：成功（清理旧备份 %d 个，保留最近 %d 个）", hostName, deleted, rule.MaxBackups)
+			}
+		}
+		perHostSummary = append(perHostSummary, hostMsg)
 	}
 
 	summary := fmt.Sprintf("备份完成 %d/%d 个主机（%s）", okCount, len(hosts), time.Now().Format("2006-01-02 15:04:05"))

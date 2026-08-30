@@ -46,6 +46,8 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     type: rule.type || 'update',
     // 镜像清理范围，默认 dangling
     pruneMode: rule.pruneMode || 'dangling',
+    // 自动备份最大保留数（0=不限制，按主机计数）；默认 0
+    maxBackups: rule.maxBackups || 0,
     // 已选容器名集合（数组），从规则初始化（历史字段，仍用于兼容展示）
     containerNames: rule.containerNames || [],
     // 精确到「主机+容器名」的更新目标；历史规则无此字段时由 containerNames 兜底转换（视为本地）
@@ -283,11 +285,22 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
           </Field>
         )}
 
-        {/* 自动备份：说明 */}
+        {/* 自动备份：说明 + 最大保留数 */}
         {form.type === 'backup' && (
-          <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-sm text-blue-700 dark:text-blue-300">
-            💾 备份将导出所选主机<b>所有容器</b>的配置为 JSON 文件，保存到备份目录，无需选择容器。
-          </div>
+          <>
+            <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-sm text-blue-700 dark:text-blue-300">
+              💾 备份将导出所选主机<b>所有容器</b>的配置为 JSON 文件，保存到备份目录，无需选择容器。
+            </div>
+            <Field label="最大保留数量">
+              <input type="number" min="0" value={form.maxBackups}
+                onChange={(e) => set('maxBackups', Math.max(0, Number(e.target.value) || 0))}
+                className="input w-32" placeholder="0" />
+              <p className="text-xs text-gray-400 mt-1.5">
+                备份完成后自动清理旧备份，仅保留最近 N 个（<b>按每个主机分别计数</b>）。
+                填 <b>0</b> 表示不限制。注意：备份文件按日期命名，同一天多次备份会覆盖同一文件，故 N 约等于保留天数。
+              </p>
+            </Field>
+          </>
         )}
 
         {/* 自动更新：容器选择 + 拉取凭据 */}

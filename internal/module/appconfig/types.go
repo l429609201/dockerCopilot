@@ -108,6 +108,10 @@ type ScheduledUpdateRule struct {
 	Cron string `json:"cron"`
 	// PruneMode 镜像清理范围（仅 prune 类型使用）：dangling(无tag) / unused(未使用)。
 	PruneMode string `json:"pruneMode,omitempty"`
+	// MaxBackups 自动备份保留的最大文件数（仅 backup 类型使用）。
+	// 备份完成后，同一主机的 backup-*.json 超出该数量时按修改时间删除最旧的；
+	// 0 或负数表示不限制（保留全部）。按主机分别计数，互不挤占。
+	MaxBackups int `json:"maxBackups,omitempty"`
 	// ContainerNames 需要纳入本规则的容器名列表（历史字段，视为本地主机的容器，用于向后兼容）。
 	ContainerNames []string `json:"containerNames"`
 	// ContainerTargets 精确到「主机+容器名」的更新目标（多 Docker 管理）。
