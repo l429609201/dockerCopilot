@@ -566,6 +566,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: ops.StatsStreamHandler(serverCtx),
 			},
 			{
+				// 容器日志 SSE 流式推送（边读边下发，支持后端 grep 过滤与实时跟随 -f，用 query token）
+				Method:  http.MethodGet,
+				Path:    "/container/:id/logs/stream",
+				Handler: ops.LogsStreamHandler(serverCtx),
+			},
+			{
 				// 全部后台任务列表 SSE 推送（供任务中心实时展示所有任务）
 				Method:  http.MethodGet,
 				Path:    "/progress/stream",

@@ -141,8 +141,30 @@ export const containerAPI = {
   removeContainer: (id, force = false, removeVolumes = false, hostId) =>
     apiClient.delete(`/api/container/${id}?force=${force}&removeVolumes=${removeVolumes}${hostQ(hostId, '&')}`),
   inspectContainer: (id, hostId) => apiClient.get(`/api/container/${id}/inspect${hostQ(hostId)}`),
+  // 日志请求单独放宽超时到 60s：日志量大时后端从日志文件末尾回扫定位 tail 行 + 解复用流较慢，
+  // 全局 10s 会在“读取头部”阶段就超时。此处按请求覆盖 timeout，不影响其他快接口。
+  // 说明：此一次性接口现仅用于「下载完整日志」，页面查看已改走下方 SSE 流式接口。
   getContainerLogs: (id, { tail = 200, timestamps = false, since = '' } = {}, hostId) =>
-    apiClient.get(`/api/container/${id}/logs?tail=${tail}&timestamps=${timestamps}&since=${encodeURIComponent(since)}${hostQ(hostId, '&')}`),
+    apiClient.get(`/api/container/${id}/logs?tail=${tail}&timestamps=${timestamps}&since=${encodeURIComponent(since)}${hostQ(hostId, '&')}`, { timeout: 60000 }),
+  // 构造 SSE 流式日志的完整 URL（EventSource 无法带 Authorization 头，token 走 query）。
+  // 边读边推：首行秒级到达；search 交给后端 grep，follow 为实时跟随(-f)。
+  buildLogsStreamURL: (id, { tail = 200, timestamps = false, since = '', follow = false, search = '' } = {}, hostId) => {
+    const token = localStorage.getItem('docker_copilot_token') || ''
+    const base =
+      (typeof window !== 'undefined' && window.__API_BASE_URL) ||
+      localStorage.getItem('api_base_url') ||
+      (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : '')
+    const p = new URLSearchParams({
+      tail: String(tail),
+      timestamps: String(timestamps),
+      follow: String(follow),
+      token,
+    })
+    if (since) p.set('since', since)
+    if (search) p.set('search', search)
+    if (hostId) p.set('hostId', hostId)
+    return `${base}/api/container/${id}/logs/stream?${p.toString()}`
+  },
   execContainer: (id, cmd, workDir = '', user = '', hostId) =>
     apiClient.post(`/api/container/${id}/exec`, { cmd, workDir, user, hostId }),
   topContainer: (id, hostId) => apiClient.get(`/api/container/${id}/top${hostQ(hostId)}`),
