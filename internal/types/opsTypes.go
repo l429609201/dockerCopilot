@@ -33,6 +33,19 @@ type ContainerLogsReq struct {
 	HostID     string `form:"hostId,optional"`
 }
 
+// ContainerLogsStreamReq SSE 流式日志请求。
+// EventSource 无法自定义头，故 token 走 query；follow 为实时跟随，search 为后端关键词过滤。
+type ContainerLogsStreamReq struct {
+	Id         string `path:"id"`
+	Tail       int    `form:"tail,default=200"`
+	Timestamps bool   `form:"timestamps,default=false"`
+	Since      string `form:"since,optional"`
+	Follow     bool   `form:"follow,default=false"`
+	Search     string `form:"search,optional"`
+	HostID     string `form:"hostId,optional"`
+	Token      string `form:"token,optional"`
+}
+
 // ContainerExecReq 容器内命令执行请求。
 type ContainerExecReq struct {
 	Id      string   `path:"id"`

@@ -59,7 +59,9 @@ export function ContainerLogs({ container, onClose }) {
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
           ? 'w-screen h-screen max-w-none max-h-none rounded-none'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+          // 日志是等宽宽内容（HTTP 行含长 UA + 三列布局），max-w-3xl(768px) 过窄导致大量截断贴边，
+          // 放宽到 max-w-6xl(1152px)，宽屏下有充足横向空间，窄屏仍由 w-full 自适应。
+          : 'w-full max-w-6xl max-h-[90vh] rounded-xl')}>
         <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
             <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-sky-600 dark:text-sky-400 flex-shrink-0" />
@@ -91,7 +93,8 @@ export function ContainerConsole({ container, onClose }) {
       <div className={cn('bg-white dark:bg-gray-800 flex flex-col',
         fullscreen
           ? 'w-screen h-screen max-w-none max-h-none rounded-none'
-          : 'w-full max-w-3xl max-h-[90vh] rounded-xl')}>
+          // 终端输出同为等宽宽内容，与日志弹窗保持一致放宽到 max-w-6xl(1152px)。
+          : 'w-full max-w-6xl max-h-[90vh] rounded-xl')}>
         <div className="flex items-center justify-between p-3 sm:p-5 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
             <TerminalIcon className="h-4 w-4 sm:h-5 sm:w-5 text-teal-600 dark:text-teal-400 flex-shrink-0" />
@@ -225,28 +228,143 @@ const LEVEL_COLOR = {
   debug: 'text-gray-500',
 }
 
-// 日志面板：支持行数/时间戳、关键词搜索过滤+高亮、日志下载
+// 单行结构化日志：时间 | 位置 | 内容 三列对齐
+// 正文默认单行截断避免超长 User-Agent 刷屏，点击整行可展开/收起完整内容
+function StructuredLogRow({ obj, kw }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div
+      onClick={() => setExpanded((v) => !v)}
+      className="group flex items-baseline gap-x-4 px-4 py-1.5 border-l-2 border-transparent hover:border-sky-500/60 hover:bg-gray-800/50 cursor-pointer transition-colors"
+      title={expanded ? '点击收起' : '点击展开完整内容'}
+    >
+      {/* 时间列：固定宽度 + 等宽数字，保证纵向对齐 */}
+      <span className="shrink-0 w-[74px] text-gray-500 tabular-nums" title={obj.time}>
+        {formatLogTime(obj.time)}
+      </span>
+      {/* 位置列：左对齐（尾部溢出才省略）+ 弱化配色，默认极淡、hover 提亮，避免抢占正文视线 */}
+      <span
+        className={cn(
+          'shrink-0 w-44 truncate transition-colors',
+          obj.caller ? 'text-gray-600 group-hover:text-violet-400' : 'text-gray-700'
+        )}
+        title={obj.caller || '无调用位置信息'}
+      >
+        {obj.caller ? highlightLine(obj.caller, kw) : '—'}
+      </span>
+      {/* 内容列：默认单行截断，展开后完整换行显示 */}
+      <span
+        className={cn(
+          'flex-1 min-w-0',
+          expanded ? 'whitespace-pre-wrap break-all' : 'truncate',
+          LEVEL_COLOR[obj.level] || 'text-gray-100'
+        )}
+      >
+        {highlightLine(obj.content, kw)}
+      </span>
+    </div>
+  )
+}
+
+// 日志面板：SSE 流式读取（边收边渲染，首行秒级到达），支持行数/时间戳、
+// 后端关键词过滤(grep)、实时跟随(-f)、日志下载。
 function LogsPanel({ id, name, hostId }) {
   const [logs, setLogs] = useState('')
   const [tail, setTail] = useState(200)
   const [timestamps, setTimestamps] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('') // 搜索关键词
-  const [pretty, setPretty] = useState(true) // 是否结构化展示（仅对 JSON 日志生效）
+  const [streaming, setStreaming] = useState(false) // 是否正在接收流（follow 模式下持续为 true）
+  const [errMsg, setErrMsg] = useState('')          // 流错误提示
+  const [search, setSearch] = useState('')          // 搜索关键词（提交后交后端 grep）
+  const [appliedSearch, setAppliedSearch] = useState('') // 已应用到后端的关键词（防抖后）
+  const [follow, setFollow] = useState(true)        // 实时跟随(-f)，默认开启：打开即持续接收新日志
+  const [pretty, setPretty] = useState(true)        // 是否结构化展示（仅对 JSON 日志生效）
   const [autoScroll, setAutoScroll] = useState(true) // 自动滚动到最新一行，默认开启
-  const scrollRef = React.useRef(null) // 日志滚动容器
+  const [reloadKey, setReloadKey] = useState(0) // 手动刷新触发重连
+  const scrollRef = React.useRef(null)  // 日志滚动容器
+  const esRef = React.useRef(null)      // 当前 EventSource 实例
+  const bufRef = React.useRef([])       // 行缓冲，批量 flush 到 state，避免高频 setState 卡顿
 
-  const load = useCallback(async () => {
+  // 建立 SSE 流式连接：tail/timestamps/follow/appliedSearch/主机/reloadKey 变化都重连。
+  // 边收边渲染，行先入 bufRef 缓冲，再由定时器批量刷入 state（降低重渲染频率）。
+  React.useEffect(() => {
+    // 关闭旧连接
+    if (esRef.current) { esRef.current.close(); esRef.current = null }
+    bufRef.current = []
+    setLogs('')
+    setErrMsg('')
     setLoading(true)
-    try {
-      const r = await containerAPI.getContainerLogs(id, { tail, timestamps }, hostId)
-      setLogs(r.data?.data?.logs || '(无日志)')
-    } catch (e) {
-      setLogs('读取失败：' + e.message)
-    } finally { setLoading(false) }
-  }, [id, tail, timestamps, hostId])
+    setStreaming(true)
 
-  React.useEffect(() => { load() }, [load])
+    const url = containerAPI.buildLogsStreamURL(
+      id, { tail, timestamps, follow, search: appliedSearch }, hostId,
+    )
+    const es = new EventSource(url)
+    esRef.current = es
+
+    // 批量 flush：每 120ms 把缓冲行拼接追加到 logs，兼顾实时性与性能
+    const flush = () => {
+      if (bufRef.current.length === 0) return
+      const chunk = bufRef.current.join('\n')
+      bufRef.current = []
+      setLogs((prev) => (prev ? prev + '\n' + chunk : chunk))
+    }
+    const timer = setInterval(flush, 120)
+
+    es.addEventListener('open', () => {
+      // 连接建立/自动重连成功：清除“连接中断”类错误，恢复 streaming 标记
+      setStreaming(true)
+      setErrMsg('')
+    })
+    es.addEventListener('log', (ev) => {
+      bufRef.current.push(ev.data)
+      setLoading(false)
+    })
+    es.addEventListener('end', () => {
+      // 后端“读完历史日志”事件（仅非 follow 模式会发）：正常收尾并关闭连接
+      flush()
+      setLoading(false)
+      setStreaming(false)
+      es.close(); esRef.current = null
+    })
+    // 后端主动下发的业务错误事件（named event: "error" 且带 data）：展示错误并关闭
+    es.addEventListener('error', (ev) => {
+      if (ev && ev.data) {
+        flush()
+        setLoading(false)
+        setStreaming(false)
+        setErrMsg(ev.data)
+        es.close(); esRef.current = null
+      }
+      // 无 data 的情况交给下面的 onerror（连接层错误）统一处理
+    })
+    // 连接层错误（网络抖动/服务端关闭）：EventSource 会自动重连，
+    // 这里【不能】主动 close，否则会掐死正在重连的连接（表现为“跟随”消失、要重开才看得到）。
+    // 仅在 readyState 为 CLOSED（浏览器放弃重连）时才收尾。
+    es.onerror = () => {
+      flush()
+      setLoading(false)
+      if (es.readyState === EventSource.CLOSED) {
+        // 浏览器已放弃重连，标记流结束
+        setStreaming(false)
+        esRef.current = null
+      } else {
+        // CONNECTING：正在自动重连，保持连接，仅暂时置为非活跃提示
+        setStreaming(false)
+      }
+    }
+
+    return () => { clearInterval(timer); flush(); es.close(); esRef.current = null }
+  }, [id, tail, timestamps, follow, appliedSearch, hostId, reloadKey])
+
+  // 搜索防抖：输入停止 400ms 后作为关键词提交给后端 grep（触发上面的重连）
+  React.useEffect(() => {
+    const t = setTimeout(() => setAppliedSearch(search.trim()), 400)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // 手动刷新：bump reloadKey 触发上面的 effect 重连（复用同一套连接逻辑，避免重复代码）
+  const load = useCallback(() => { setReloadKey((k) => k + 1) }, [])
 
   // 用户手动向上滚动时自动关闭跟随，滚回底部（20px 容差）时重新开启
   const onScroll = useCallback(() => {
@@ -256,14 +374,8 @@ function LogsPanel({ id, name, hostId }) {
     setAutoScroll(atBottom)
   }, [])
 
-  // 按关键词过滤出需要展示的行（不区分大小写），空关键词时展示全部
-  const shownLines = useMemo(() => {
-    const lines = logs.split('\n')
-    const kw = search.trim()
-    if (!kw) return lines
-    const lower = kw.toLowerCase()
-    return lines.filter((l) => l.toLowerCase().includes(lower))
-  }, [logs, search])
+  // 后端已按 appliedSearch 过滤，这里直接展示全部行；搜索为空时也是全部
+  const shownLines = useMemo(() => logs.split('\n'), [logs])
 
   // 逐行解析，并判断整体是否为结构化日志（过半行可解析才启用三列视图）
   const { rows, structured } = useMemo(() => {
@@ -280,24 +392,35 @@ function LogsPanel({ id, name, hostId }) {
     if (el) el.scrollTop = el.scrollHeight
   }, [rows, autoScroll, loading])
 
-  // 下载当前完整日志为 .log 文件（不受搜索过滤影响，导出全部内容）
-  const download = () => {
-    const blob = new Blob([logs], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const ts = new Date().toISOString().replace(/[:.]/g, '-')
-    a.href = url
-    a.download = `${(name || id).slice(0, 40)}_${ts}.log`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+  // 下载完整日志为 .log：走一次性接口按当前行数拉取完整内容（不受搜索/跟随影响），
+  // 避免只导出流式已过滤/已渲染的片段。
+  const [downloading, setDownloading] = useState(false)
+  const download = async () => {
+    setDownloading(true)
+    try {
+      const r = await containerAPI.getContainerLogs(id, { tail, timestamps }, hostId)
+      const text = r.data?.data?.logs || ''
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      a.href = url
+      a.download = `${(name || id).slice(0, 40)}_${ts}.log`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setErrMsg('下载失败：' + (e.message || '未知错误'))
+    } finally { setDownloading(false) }
   }
 
-  const kw = search.trim()
+  // 高亮用已应用到后端的关键词（appliedSearch），避免输入过程中闪烁
+  const kw = appliedSearch
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    // 补横向 + 底部内边距，与 header 的 p-3 sm:p-5 对齐，避免工具栏和深色日志区直接贴弹窗外框边缘。
+    <div className="flex-1 flex flex-col min-h-0 px-3 sm:px-5 pb-3 sm:pb-5">
       <div className="flex flex-wrap items-center gap-3 mb-2 text-sm">
         <label className="flex items-center gap-1">行数
           <input type="number" value={tail} onChange={(e) => setTail(Number(e.target.value))}
@@ -312,12 +435,22 @@ function LogsPanel({ id, name, hostId }) {
             <input type="checkbox" checked={pretty} onChange={(e) => setPretty(e.target.checked)} /> 解析
           </label>
         )}
-        {/* 搜索框：实时过滤并高亮匹配行 */}
+        {/* 搜索框：输入后交后端 grep 过滤（防抖 400ms），可扫描远超前端承载的日志量 */}
         <div className="relative flex-1 min-w-[160px]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索日志…"
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索日志（后端过滤）…"
             className="w-full pl-7 pr-2 py-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900" />
         </div>
+        {/* 实时跟随(-f)：开启后持续接收容器新产生的日志 */}
+        <button onClick={() => setFollow(v => !v)}
+          title={follow ? '实时跟随已开启，点击停止' : '开启实时跟随（持续接收新日志）'}
+          className={cn('flex items-center gap-1 px-2 py-1 rounded',
+            follow
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+              : 'bg-gray-100 dark:bg-gray-700')}>
+          <span className={cn('inline-block h-2 w-2 rounded-full', follow ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400')} />
+          跟随
+        </button>
         {/* 自动滚动：开启后每次日志更新都跟随到最新一行 */}
         <button onClick={() => setAutoScroll(v => !v)}
           title={autoScroll ? '自动滚动已开启，点击关闭' : '自动滚动已关闭，点击开启'}
@@ -330,40 +463,28 @@ function LogsPanel({ id, name, hostId }) {
         <button onClick={load} className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
           <RefreshCw className="h-3.5 w-3.5" /> 刷新
         </button>
-        <button onClick={download} title="下载日志"
-          className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
-          <Download className="h-3.5 w-3.5" /> 下载
+        <button onClick={download} disabled={downloading} title="下载完整日志"
+          className="flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50">
+          <Download className={cn('h-3.5 w-3.5', downloading && 'animate-pulse')} /> {downloading ? '下载中…' : '下载'}
         </button>
       </div>
-      {kw && (
-        <div className="text-xs text-gray-500 mb-1">匹配 {shownLines.length} 行</div>
-      )}
+      {/* 状态行：后端过滤中 / 匹配行数 / 跟随中 / 错误 */}
+      <div className="flex items-center gap-3 text-xs mb-1 min-h-[16px]">
+        {kw && <span className="text-gray-500">已按“{kw}”后端过滤，{shownLines.filter(l => l.trim()).length} 行</span>}
+        {streaming && follow && <span className="text-emerald-500">● 实时跟随中</span>}
+        {errMsg && <span className="text-red-400 break-all">{errMsg}</span>}
+      </div>
       <div ref={scrollRef} onScroll={onScroll}
-        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono p-3 bg-gray-900 text-gray-100 rounded-lg">
-        {loading
-          ? '加载中...'
-          : (kw && shownLines.length === 0)
-            ? '(无匹配行)'
+        className="flex-1 min-h-[300px] overflow-auto text-xs font-mono py-2 bg-gray-900 text-gray-100 rounded-lg leading-relaxed">
+        {loading && !logs
+          ? <div className="px-4 py-2">加载中...</div>
+          : (logs === '' || shownLines.every(l => !l.trim()))
+            ? <div className="px-4 py-2">{kw ? '(无匹配行)' : '(无日志)'}</div>
             : rows.map(({ raw, obj }, i) => (
                 (structured && pretty && obj) ? (
-                  // 三列布局：时间 | 位置 | 内容，行间用细分隔线区分
-                  <div key={i} className="flex gap-3 py-0.5 border-b border-gray-800/60 last:border-0">
-                    <span className="shrink-0 text-gray-500 tabular-nums" title={obj.time}>
-                      {formatLogTime(obj.time)}
-                    </span>
-                    {/* 无 caller 的行（如标准库 log 输出）用占位符保持三列对齐 */}
-                    <span className={cn('shrink-0 w-52 truncate',
-                      obj.caller ? 'text-violet-400' : 'text-gray-600')}
-                      title={obj.caller || '无调用位置信息'}>
-                      {obj.caller ? highlightLine(obj.caller, kw) : '—'}
-                    </span>
-                    <span className={cn('flex-1 break-all whitespace-pre-wrap',
-                      LEVEL_COLOR[obj.level] || 'text-gray-100')}>
-                      {highlightLine(obj.content, kw)}
-                    </span>
-                  </div>
+                  <StructuredLogRow key={i} obj={obj} kw={kw} />
                 ) : (
-                  <div key={i} className="whitespace-pre-wrap break-all">{highlightLine(raw, kw)}</div>
+                  <div key={i} className="whitespace-pre-wrap break-all px-4 py-1 hover:bg-gray-800/50">{highlightLine(raw, kw)}</div>
                 )
               ))}
       </div>
@@ -389,7 +510,8 @@ function ExecPanel({ id, fullscreen, hostId }) {
   const disconnect = () => setConnected(false)
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    // 与 header 的 p-3 sm:p-5 对齐补内边距，避免配置栏和终端区贴弹窗外框边缘。
+    <div className="flex-1 flex flex-col min-h-0 px-3 sm:px-5 pb-3 sm:pb-5">
       {/* 连接配置栏 */}
       <div className="flex flex-wrap items-end gap-3 mb-3">
         <div>

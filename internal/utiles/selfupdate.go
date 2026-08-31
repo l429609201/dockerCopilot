@@ -118,33 +118,62 @@ func InspectSelfContainer(svcCtx *svc.ServiceContext) (types.ContainerJSON, erro
 	if selfID := GetSelfContainerID(); selfID != "" {
 		candidates = append(candidates, selfID)
 	}
-	if h, err := os.Hostname(); err == nil && h != "" {
-		candidates = append(candidates, h)
+	// 单独保留 hostname：既作为 inspect 候选，也用于后续 Config.Hostname 精确比对
+	selfHostname, _ := os.Hostname()
+	if selfHostname != "" {
+		candidates = append(candidates, selfHostname)
 	}
-	// 逐个直接 inspect
+	// 逐个直接 inspect（候选恰为容器ID或容器名时命中）
 	for _, c := range candidates {
 		if insp, err := cli.ContainerInspect(context.Background(), c); err == nil {
 			return insp, nil
 		}
 	}
-	// 兜底：遍历本地容器列表，按 ID 前缀或 hostname 匹配后再 inspect
+	// 需要遍历列表的兜底：先取一次容器列表
 	list, err := cli.ContainerList(context.Background(), container.ListOptions{All: true})
-	if err == nil {
-		for _, cand := range candidates {
-			for _, item := range list {
-				short := item.ID
-				if len(short) >= 12 {
-					short = short[:12]
-				}
-				if strings.HasPrefix(item.ID, cand) || strings.HasPrefix(cand, short) {
-					if insp, e := cli.ContainerInspect(context.Background(), item.ID); e == nil {
-						return insp, nil
-					}
+	if err != nil {
+		return types.ContainerJSON{}, fmt.Errorf("无法定位当前所在容器且列出容器失败：%v", err)
+	}
+	// 兜底1：按 ID 前缀 / hostname 前缀匹配后再 inspect
+	for _, cand := range candidates {
+		for _, item := range list {
+			short := item.ID
+			if len(short) >= 12 {
+				short = short[:12]
+			}
+			if strings.HasPrefix(item.ID, cand) || strings.HasPrefix(cand, short) {
+				if insp, e := cli.ContainerInspect(context.Background(), item.ID); e == nil {
+					return insp, nil
 				}
 			}
 		}
 	}
-	return types.ContainerJSON{}, fmt.Errorf("无法定位当前所在容器（尝试的标识：%v）", candidates)
+	// 兜底2+3：一次遍历逐个 inspect，覆盖 cgroup 提取失败 + 自定义 hostname/container_name/host 网络的场景：
+	//   - Config.Hostname == 本进程 hostname → 立即命中（Docker 默认把短ID写进 Config.Hostname，
+	//     用户显式设 hostname 时该字段同样等于 os.Hostname()，故精确可靠）
+	//   - 同时收集挂载了 docker.sock 的容器，全局唯一时作为最终兜底（DC 必挂 docker.sock 才能工作）
+	var sockMatches []types.ContainerJSON
+	for _, item := range list {
+		insp, e := cli.ContainerInspect(context.Background(), item.ID)
+		if e != nil {
+			continue
+		}
+		if selfHostname != "" && insp.Config != nil && insp.Config.Hostname == selfHostname {
+			logx.Infof("📍 通过 Config.Hostname 匹配定位到自身容器: %s", insp.ID)
+			return insp, nil
+		}
+		for _, m := range insp.Mounts {
+			if strings.HasSuffix(m.Destination, "docker.sock") {
+				sockMatches = append(sockMatches, insp)
+				break
+			}
+		}
+	}
+	if len(sockMatches) == 1 {
+		logx.Infof("📍 通过唯一 docker.sock 挂载定位到自身容器: %s", sockMatches[0].ID)
+		return sockMatches[0], nil
+	}
+	return types.ContainerJSON{}, fmt.Errorf("无法定位当前所在容器（尝试的标识：%v，docker.sock 候选数：%d）", candidates, len(sockMatches))
 }
 
 // StartHelperContainer 用新镜像启动一个一次性辅助容器，接管主容器的更新收尾。

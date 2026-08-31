@@ -315,9 +315,8 @@ func (b *Bot) handleCallback(chatID int64, cb *telegram.CallbackQuery) {
 	}
 	// Compose 危险动作确认：cmpaconf|<projectID>|<action>
 	if parts[0] == "cmpaconf" && len(parts) == 3 {
-		// 重新扫描找到项目并执行
-		scanPaths := b.svcCtx.Config.Compose.ScanPaths
-		maxDepth := b.svcCtx.Config.Compose.MaxDepth
+		// 重新扫描找到项目并执行（走 AppConfig 优先的配置）
+		scanPaths, maxDepth := b.composeScanConfig()
 		scanner := compose.NewScanner(scanPaths, maxDepth)
 		projects := scanner.Scan()
 		var target *compose.Project
@@ -1162,12 +1161,29 @@ func (b *Bot) executeBatchUpdate(chatID int64, messageID int64) {
 // composePageSize Compose 项目列表每页展示条数（每项占一个按钮）。
 const composePageSize = 8
 
+// composeScanConfig 读取生效的 Compose 扫描配置：优先动态配置(AppConfig)，为空回退静态 yaml。
+// 与 Web 端 ComposeLogic.scanPaths()/maxDepth() 保持一致，避免 Bot 只读静态 yaml 导致
+// 用户在前端保存后 Bot 仍报“未配置扫描路径”。
+func (b *Bot) composeScanConfig() (scanPaths []string, maxDepth int) {
+	dyn := b.svcCtx.AppConfig.Get().Compose
+	if len(dyn.ScanPaths) > 0 {
+		scanPaths = dyn.ScanPaths
+	} else {
+		scanPaths = b.svcCtx.Config.Compose.ScanPaths
+	}
+	if dyn.MaxDepth > 0 {
+		maxDepth = dyn.MaxDepth
+	} else {
+		maxDepth = b.svcCtx.Config.Compose.MaxDepth
+	}
+	return scanPaths, maxDepth
+}
+
 // listComposeProjects 分页列出扫描到的 Compose 项目，每个项目一个按钮进入管理面板。
 // page 从 0 开始；messageID > 0 时编辑原消息（翻页），否则发送新消息。
 func (b *Bot) listComposeProjects(chatID int64, messageID int64, page int) {
-	// 从配置获取扫描路径和深度
-	scanPaths := b.svcCtx.Config.Compose.ScanPaths
-	maxDepth := b.svcCtx.Config.Compose.MaxDepth
+	// 从配置获取扫描路径和深度（走 AppConfig 优先的配置）
+	scanPaths, maxDepth := b.composeScanConfig()
 	// 返回主菜单按钮：错误提示与空列表也带上，避免用户卡在无按钮的独立消息里
 	backHomeKb := &telegram.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telegram.InlineKeyboardButton{{
@@ -1225,9 +1241,8 @@ func (b *Bot) listComposeProjects(chatID int64, messageID int64, page int) {
 // showComposeProjectPanel 展示单个 Compose 项目的操作面板，提供 up/down/restart/pull/stop/start 按钮。
 // messageID > 0 时编辑原消息，否则发送新消息。
 func (b *Bot) showComposeProjectPanel(chatID int64, projectID string, messageID int64) {
-	// 重新扫描找到该项目
-	scanPaths := b.svcCtx.Config.Compose.ScanPaths
-	maxDepth := b.svcCtx.Config.Compose.MaxDepth
+	// 重新扫描找到该项目（走 AppConfig 优先的配置）
+	scanPaths, maxDepth := b.composeScanConfig()
 	scanner := compose.NewScanner(scanPaths, maxDepth)
 	projects := scanner.Scan()
 
@@ -1283,9 +1298,8 @@ func (b *Bot) showComposeProjectPanel(chatID int64, projectID string, messageID 
 
 // executeComposeAction 执行 Compose 动作（危险操作如 down 需二次确认）。
 func (b *Bot) executeComposeAction(chatID int64, projectID, action string, messageID int64) {
-	// 重新扫描找到项目
-	scanPaths := b.svcCtx.Config.Compose.ScanPaths
-	maxDepth := b.svcCtx.Config.Compose.MaxDepth
+	// 重新扫描找到项目（走 AppConfig 优先的配置）
+	scanPaths, maxDepth := b.composeScanConfig()
 	scanner := compose.NewScanner(scanPaths, maxDepth)
 	projects := scanner.Scan()
 

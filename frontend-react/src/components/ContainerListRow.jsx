@@ -32,7 +32,11 @@ export function ContainerListRow({
         }
       }}
       className={cn(
-        "relative overflow-hidden flex items-center gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 border rounded-xl cursor-pointer transition-all hover:shadow-sm",
+        // 注意：这里不能加 overflow-hidden，否则会裁剪小屏三点下拉菜单（absolute top-full 向下溢出行边界）。
+        // 整行更新进度条的圆角裁剪由其自身容器（下方 rounded-xl overflow-hidden）负责，无需行级 overflow。
+        // menuOpen 时提升行层级(z-30)，确保展开的菜单浮于相邻列表行之上。
+        "relative flex items-center gap-3 px-3 py-2.5 bg-white dark:bg-gray-800 border rounded-xl cursor-pointer transition-all hover:shadow-sm",
+        menuOpen && "z-30",
         selected ? "border-primary-400 dark:border-primary-600 ring-1 ring-primary-300" : "border-gray-200 dark:border-gray-700"
       )}
     >
@@ -202,10 +206,10 @@ export function ContainerListRow({
                 </button>
                 {menuOpen && (
                   <>
-                    {/* 遮罩：点击关闭菜单 */}
-                    <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                    {/* 下拉菜单 */}
-                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-20 min-w-[140px]">
+                    {/* 遮罩：全屏铺满、点击关闭菜单。z-40 高于被提升的行(z-30)，保证任意点击都能命中遮罩 */}
+                    <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }} />
+                    {/* 下拉菜单：z-50 浮于遮罩之上，为最上层 */}
+                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[140px]">
                       <MenuItem onClick={() => { onOpen(container); setMenuOpen(false) }} icon={Info} text="详情" />
                       <div className="h-px bg-gray-200 dark:bg-gray-700 my-1" />
                       {running ? (

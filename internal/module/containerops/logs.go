@@ -19,6 +19,11 @@ func (s *Service) Logs(ctx context.Context, id string, tail int, since string, t
 	if tail <= 0 {
 		tail = 200
 	}
+	// tail 上限保护：日志文件很大时，Docker daemon 需从文件末尾回扫定位到第 N 行，
+	// N 越大回扫越慢。限制上限避免用户填超大值把 daemon 拖垮、拉取超时。
+	if tail > 5000 {
+		tail = 5000
+	}
 	if maxOutput <= 0 {
 		maxOutput = 512 * 1024
 	}

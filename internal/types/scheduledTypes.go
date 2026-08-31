@@ -9,6 +9,7 @@ type ScheduledRuleReq struct {
 	Name             string   `json:"name"`
 	Type             string   `json:"type,optional"`      // 任务类型：update/prune/backup，空按 update
 	PruneMode        string   `json:"pruneMode,optional"` // 清理范围：dangling/unused（仅 prune）
+	MaxBackups       int      `json:"maxBackups,optional"` // 备份最大保留数（仅 backup，0/负=不限制，按主机计数）
 	Enabled          bool     `json:"enabled,optional"`
 	Cron             string   `json:"cron,optional"` // 该规则独立的定时表达式（五段式cron或简化写法daily/hourly/interval）
 	ContainerNames   []string `json:"containerNames,optional"`

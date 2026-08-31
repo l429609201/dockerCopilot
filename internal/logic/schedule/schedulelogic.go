@@ -55,6 +55,7 @@ func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err
 		Name:             req.Name,
 		Type:             req.Type,
 		PruneMode:        req.PruneMode,
+		MaxBackups:       req.MaxBackups,
 		Enabled:          req.Enabled,
 		Cron:             req.Cron,
 		ContainerNames:   req.ContainerNames,

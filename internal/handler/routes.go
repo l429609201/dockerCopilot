@@ -389,6 +389,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/docker/hosts/:id/ping",
 				Handler: ops.DockerHostPingHandler(serverCtx),
 			},
+			{
+				// 获取指定 Docker 主机的详细信息（docker info + version）
+				Method:  http.MethodGet,
+				Path:    "/docker/hosts/:id/info",
+				Handler: ops.DockerHostInfoHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
@@ -558,6 +564,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/container/stats/stream",
 				Handler: ops.StatsStreamHandler(serverCtx),
+			},
+			{
+				// 容器日志 SSE 流式推送（边读边下发，支持后端 grep 过滤与实时跟随 -f，用 query token）
+				Method:  http.MethodGet,
+				Path:    "/container/:id/logs/stream",
+				Handler: ops.LogsStreamHandler(serverCtx),
 			},
 			{
 				// 全部后台任务列表 SSE 推送（供任务中心实时展示所有任务）
