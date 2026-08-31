@@ -41,6 +41,23 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		notifier.Notify("定时更新开始", fmt.Sprintf("规则「%s」开始执行，容器数：%d", rule.Name, len(targets)))
 	}
 
+	// 汇总任务：在任务中心落一条“规则维度”的任务，展示本轮更新了哪些容器/镜像及结果。
+	// 与各容器自身的更新任务并存（后者是单容器进度，前者是整轮汇总）。
+	summaryTaskID := "sched-update-" + rule.ID
+	summaryName := "定时更新·" + rule.Name
+	// 显式传本次开始时间：同一规则复用固定 taskID，多次执行会覆盖同一条记录，
+	// 若不显式覆盖 StartedAt，UpdateProgress 会沿用上一轮的开始时间导致排序错乱。
+	nowMs := time.Now().UnixNano() / int64(time.Millisecond)
+	svcCtx.UpdateProgress(summaryTaskID, svc.TaskProgress{
+		TaskID:     summaryTaskID,
+		Name:       summaryName,
+		Percentage: 0,
+		Message:    fmt.Sprintf("开始执行，目标容器 %d 个", len(targets)),
+		DetailMsg:  "正在获取容器列表…",
+		TaskType:   svc.TaskTypeScheduledUpdate,
+		StartedAt:  nowMs,
+	})
+
 	// 聚合所有主机的容器，保证远程主机的目标也能被匹配到
 	containers, err := utiles.GetAllContainers(svcCtx)
 	if err != nil {
@@ -49,6 +66,12 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 			notifier.Notify("定时更新失败", fmt.Sprintf("规则「%s」获取容器列表失败：%s", rule.Name, err.Error()))
 		}
 		recordResult(svcCtx, rule.ID, "获取容器列表失败："+err.Error())
+		// 汇总任务标记失败结束
+		svcCtx.UpdateProgress(summaryTaskID, svc.TaskProgress{
+			TaskID:   summaryTaskID, Name: summaryName, Percentage: 100,
+			Message:  "获取容器列表失败", DetailMsg: err.Error(),
+			TaskType: svc.TaskTypeScheduledUpdate, IsDone: true, Failed: true,
+		})
 		return
 	}
 	containers = utiles.CheckImageUpdate(svcCtx, containers)
@@ -139,6 +162,19 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	recordResult(svcCtx, rule.ID, summary)
 	logx.Infof("定时更新规则[%s]执行完成：%s", rule.Name, summary)
 
+	// 汇总任务收尾：把本轮更新/跳过/失败的容器明细铺进 DetailMsg（前端任务中心
+	// 完整换行显示），failed>0 且无成功时标红为失败态。前端零改动即可查看。
+	svcCtx.UpdateProgress(summaryTaskID, svc.TaskProgress{
+		TaskID:     summaryTaskID,
+		Name:       summaryName,
+		Percentage: 100,
+		Message:    summary,
+		DetailMsg:  buildUpdateDetail(updatedList, skippedList, failedList),
+		TaskType:   svc.TaskTypeScheduledUpdate,
+		IsDone:     true,
+		Failed:     failed > 0 && updated == 0,
+	})
+
 	// 保存本次执行明细到公共 result store：供 Bot 端「查看跳过/失败明细」和「重试全部失败」取用。
 	result := &notify.RuleUpdateResult{
 		RuleID:   rule.ID,
@@ -183,6 +219,35 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		}
 	}
 	notifier.Notify("定时更新完成", msg.String())
+}
+
+// buildUpdateDetail 把本轮更新/跳过/失败的容器明细拼成多行文本，
+// 供任务中心汇总任务的 DetailMsg 完整展示（前端按 whitespace-pre-wrap 换行渲染）。
+// 每类最多列出 30 条，超出用省略提示，避免超长文本拖慢渲染。
+func buildUpdateDetail(updated, skipped, failed []notify.ResultItem) string {
+	const maxPerGroup = 30
+	writeGroup := func(sb *strings.Builder, title string, items []notify.ResultItem) {
+		if len(items) == 0 {
+			return
+		}
+		sb.WriteString(title)
+		sb.WriteString("\n")
+		for i, it := range items {
+			if i >= maxPerGroup {
+				sb.WriteString(fmt.Sprintf("  … 及其余 %d 个\n", len(items)-maxPerGroup))
+				break
+			}
+			sb.WriteString(fmt.Sprintf("  • %s（%s）\n", it.Name, it.Reason))
+		}
+	}
+	var sb strings.Builder
+	writeGroup(&sb, "✅ 已更新：", updated)
+	writeGroup(&sb, "⏭️ 已跳过：", skipped)
+	writeGroup(&sb, "❌ 更新失败：", failed)
+	if sb.Len() == 0 {
+		return "本轮无匹配容器"
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // moveSelfToEnd 将 DC 自身所在容器移动到列表末尾，保证它最后一个更新。
