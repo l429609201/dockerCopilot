@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/svc"
@@ -38,9 +40,14 @@ func LogsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		ctx := r.Context()
 
+		// 心跳与日志推送会并发写同一个 ResponseWriter，用互斥锁串行化，避免数据竞争。
+		var writeMu sync.Mutex
+
 		// sendEvent 按 SSE 规范下发一条事件。日志行可能含换行，
 		// 需把内部换行拆成多条 data: 行（SSE 规定多行 data 以 \n 拼接为一条消息）。
 		sendEvent := func(event, payload string) {
+			writeMu.Lock()
+			defer writeMu.Unlock()
 			if event != "" {
 				fmt.Fprintf(w, "event: %s\n", event)
 			}
@@ -49,6 +56,27 @@ func LogsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			}
 			fmt.Fprint(w, "\n")
 			flusher.Flush()
+		}
+
+		// follow 模式下开心跳：每 15s 发一条 SSE 注释行（": ping"），
+		// 用途有二：①穿透反向代理/浏览器的空闲连接回收，保活长连接；
+		// ②在日志静默期也持续有字节下发，避免中间层把连接判定为“已结束”。
+		if req.Follow {
+			go func() {
+				ticker := time.NewTicker(15 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						writeMu.Lock()
+						fmt.Fprint(w, ": ping\n\n")
+						flusher.Flush()
+						writeMu.Unlock()
+					}
+				}
+			}()
 		}
 
 		svc := containerops.NewForHost(svcCtx, req.HostID)
@@ -60,7 +88,9 @@ func LogsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Search:     req.Search,
 		}
 
+		logx.Infof("📜 日志流开始 container=%s follow=%v tail=%d search=%q", req.Id, req.Follow, req.Tail, req.Search)
 		// 每收到一行就以 SSE "log" 事件下发；ctx 取消（客户端断连）时终止。
+		var lineCount int
 		err := svc.LogsStream(ctx, req.Id, opts, func(line string) bool {
 			select {
 			case <-ctx.Done():
@@ -68,8 +98,10 @@ func LogsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			default:
 			}
 			sendEvent("log", line)
+			lineCount++
 			return true
 		})
+		logx.Infof("📜 日志流结束 container=%s follow=%v 已推送 %d 行 err=%v ctxErr=%v", req.Id, req.Follow, lineCount, err, ctx.Err())
 
 		if err != nil && ctx.Err() == nil {
 			// 非客户端主动断开的错误，作为 SSE "error" 事件告知前端

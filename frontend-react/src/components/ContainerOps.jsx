@@ -277,7 +277,7 @@ function LogsPanel({ id, name, hostId }) {
   const [errMsg, setErrMsg] = useState('')          // 流错误提示
   const [search, setSearch] = useState('')          // 搜索关键词（提交后交后端 grep）
   const [appliedSearch, setAppliedSearch] = useState('') // 已应用到后端的关键词（防抖后）
-  const [follow, setFollow] = useState(false)       // 实时跟随(-f)
+  const [follow, setFollow] = useState(true)        // 实时跟随(-f)，默认开启：打开即持续接收新日志
   const [pretty, setPretty] = useState(true)        // 是否结构化展示（仅对 JSON 日志生效）
   const [autoScroll, setAutoScroll] = useState(true) // 自动滚动到最新一行，默认开启
   const [reloadKey, setReloadKey] = useState(0) // 手动刷新触发重连
@@ -311,25 +311,48 @@ function LogsPanel({ id, name, hostId }) {
     }
     const timer = setInterval(flush, 120)
 
+    es.addEventListener('open', () => {
+      // 连接建立/自动重连成功：清除“连接中断”类错误，恢复 streaming 标记
+      setStreaming(true)
+      setErrMsg('')
+    })
     es.addEventListener('log', (ev) => {
       bufRef.current.push(ev.data)
       setLoading(false)
     })
     es.addEventListener('end', () => {
+      // 后端“读完历史日志”事件（仅非 follow 模式会发）：正常收尾并关闭连接
       flush()
       setLoading(false)
       setStreaming(false)
       es.close(); esRef.current = null
     })
+    // 后端主动下发的业务错误事件（named event: "error" 且带 data）：展示错误并关闭
     es.addEventListener('error', (ev) => {
-      // 后端主动下发的错误事件带 data；EventSource 网络错误则 data 为空
+      if (ev && ev.data) {
+        flush()
+        setLoading(false)
+        setStreaming(false)
+        setErrMsg(ev.data)
+        es.close(); esRef.current = null
+      }
+      // 无 data 的情况交给下面的 onerror（连接层错误）统一处理
+    })
+    // 连接层错误（网络抖动/服务端关闭）：EventSource 会自动重连，
+    // 这里【不能】主动 close，否则会掐死正在重连的连接（表现为“跟随”消失、要重开才看得到）。
+    // 仅在 readyState 为 CLOSED（浏览器放弃重连）时才收尾。
+    es.onerror = () => {
       flush()
       setLoading(false)
-      setStreaming(false)
-      if (ev.data) setErrMsg(ev.data)
-      else if (!follow) setErrMsg('日志流连接中断')
-      es.close(); esRef.current = null
-    })
+      if (es.readyState === EventSource.CLOSED) {
+        // 浏览器已放弃重连，标记流结束
+        setStreaming(false)
+        esRef.current = null
+      } else {
+        // CONNECTING：正在自动重连，保持连接，仅暂时置为非活跃提示
+        setStreaming(false)
+      }
+    }
 
     return () => { clearInterval(timer); flush(); es.close(); esRef.current = null }
   }, [id, tail, timestamps, follow, appliedSearch, hostId, reloadKey])
