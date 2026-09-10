@@ -1393,9 +1393,9 @@ export function Containers() {
                                 <Info className="h-4 w-4" />
                                 <span>详情</span>
                               </button>
+                              {/* 第一行：控制按钮（停止/启动/重启） */}
                               {container.status === 'running' ? (
                                 <>
-                                  {/* 第一行：详情 / 停止 / 编辑 / 重启 / 更新 */}
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'stop') }}
                                     className="flex items-center justify-center gap-1 px-1 py-1.5 text-red-600 dark:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 border border-gray-200 dark:border-gray-700 hover:border-red-200 dark:hover:border-red-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
@@ -1403,14 +1403,6 @@ export function Containers() {
                                   >
                                     <Square className="h-4 w-4" />
                                     <span>停止</span>
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); setEditTarget({ ...container, ID: container.id }) }}
-                                    className="flex items-center justify-center gap-1 px-1 py-1.5 text-orange-600 dark:text-orange-400 bg-white dark:bg-gray-800 hover:bg-orange-50 dark:hover:bg-orange-900/20 border border-gray-200 dark:border-gray-700 hover:border-orange-200 dark:hover:border-orange-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
-                                    title="编辑"
-                                  >
-                                    <Edit3 className="h-4 w-4" />
-                                    <span>编辑</span>
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleContainerAction(container.id, 'restart') }}
@@ -1431,7 +1423,15 @@ export function Containers() {
                                   <span>启动</span>
                                 </button>
                               )}
-
+                              {/* 编辑按钮：所有状态容器都可编辑（编辑时会自动重建容器） */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setEditTarget({ ...container, ID: container.id }) }}
+                                className="flex items-center justify-center gap-1 px-1 py-1.5 text-orange-600 dark:text-orange-400 bg-white dark:bg-gray-800 hover:bg-orange-50 dark:hover:bg-orange-900/20 border border-gray-200 dark:border-gray-700 hover:border-orange-200 dark:hover:border-orange-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"
+                                title="编辑"
+                              >
+                                <Edit3 className="h-4 w-4" />
+                                <span>编辑</span>
+                              </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleUpdateContainer(container.id) }}
                                 className={cn(
@@ -2206,19 +2206,18 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 <>
                   <ActionBtn onClick={() => handleContainerAction('stop')} disabled={isActionProcessing || isUpdating}
                     loading={isActionProcessing && currentAction === 'stop'} icon={Square} label="停止" color="red" />
-                  <ActionBtn onClick={() => onEdit({ ...currentContainer, ID: currentContainer.id })} disabled={isActionProcessing || isUpdating}
-                    icon={Edit3} label="编辑" color="orange" />
                   <ActionBtn onClick={() => handleContainerAction('restart')} disabled={isActionProcessing || isUpdating}
                     loading={isActionProcessing && currentAction === 'restart'} icon={RotateCcw} label="重启" color="yellow" />
-                  <ActionBtn onClick={() => onUpdate(container.id)} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'update'} icon={Upload} label="更新" color="purple" />
                 </>
               ) : (
-                <div className="col-span-4">
-                  <ActionBtn onClick={() => handleContainerAction('start')} disabled={isActionProcessing || isUpdating}
-                    loading={isActionProcessing && currentAction === 'start'} icon={Play} label="启动" color="green" fullWidth />
-                </div>
+                <ActionBtn onClick={() => handleContainerAction('start')} disabled={isActionProcessing || isUpdating}
+                  loading={isActionProcessing && currentAction === 'start'} icon={Play} label="启动" color="green" />
               )}
+              {/* 编辑和更新按钮：所有状态都可用（编辑会重建容器） */}
+              <ActionBtn onClick={() => onEdit({ ...currentContainer, ID: currentContainer.id })} disabled={isActionProcessing || isUpdating}
+                icon={Edit3} label="编辑" color="orange" />
+              <ActionBtn onClick={() => onUpdate(container.id)} disabled={isActionProcessing || isUpdating}
+                loading={isActionProcessing && currentAction === 'update'} icon={Upload} label="更新" color="purple" />
 
               {/* 第二行：日志/进程/控制台/文件（仅运行中容器显示） */}
               {currentContainer.status === 'running' && (

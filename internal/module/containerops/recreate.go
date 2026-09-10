@@ -69,7 +69,8 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	if spec.Image != "" {
 		newConfig.Image = spec.Image
 	}
-	if spec.Env != nil {
+	// 环境变量：非 nil 且非空时才覆盖，避免前端传空数组误清空所有环境变量
+	if spec.Env != nil && len(spec.Env) > 0 {
 		newConfig.Env = spec.Env
 	}
 	// 启动命令 / 入口点：非 nil 时整体覆盖
