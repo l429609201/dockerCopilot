@@ -128,7 +128,7 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	if spec.NetworkMode != "" {
 		networkingConfig = &network.NetworkingConfig{}
 	}
-
+ 
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败
 	utiles.SanitizeCreateConfig(name, cli.ClientVersion(), &newConfig, &newHostConfig, networkingConfig)
 
