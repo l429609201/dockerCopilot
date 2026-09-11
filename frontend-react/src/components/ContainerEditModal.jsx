@@ -168,10 +168,68 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   }, [container.ID, isLocalHost, resolveAvailable, resolveHostPath])
 
   // 提交编辑（转为后端 EditSpec 格式）
+  // 检查镜像是否存在于本地
+  const checkImageExists = async (imageName) => {
+    try {
+      const hostId = container.hostId || container.HostID
+      const res = await imageAPI.getImages()
+      const images = res.data?.data || []
+
+      // 解析镜像名称和标签
+      const [nameWithoutTag, tag] = imageName.includes(':')
+        ? imageName.split(':')
+        : [imageName, 'latest']
+
+      // 检查是否存在匹配的镜像（需要考虑 hostId）
+      const exists = images.some(img => {
+        // 如果有 hostId，必须匹配主机
+        if (hostId && img.hostId !== hostId) {
+          return false
+        }
+        // 检查镜像名称和标签是否匹配
+        const imgFullName = `${img.imageName}:${img.imageTag}`
+        const imgNameWithLatest = img.imageName.includes(':') ? img.imageName : `${img.imageName}:latest`
+        return imgFullName === imageName ||
+               imgNameWithLatest === imageName ||
+               img.imageName === nameWithoutTag && img.imageTag === tag
+      })
+
+      return exists
+    } catch (e) {
+      console.error('检查镜像失败:', e)
+      return true // 检查失败时默认认为存在，避免误报（让后端重建时自然处理）
+    }
+  }
+
   const submit = async () => {
     setSaving(true)
     setError('')
     try {
+      // 【新增】如果镜像被修改，检查本地是否存在
+      const originalImage = container.image || container.Image || ''
+      const currentImage = form.image?.trim() || ''
+
+      if (currentImage && currentImage !== originalImage) {
+        const exists = await checkImageExists(currentImage)
+        if (!exists) {
+          // 镜像不存在，弹窗询问用户
+          const userChoice = window.confirm(
+            `⚠️ 镜像 "${currentImage}" 在本地不存在！\n\n` +
+            `如果继续保存，容器重建时会自动拉取该镜像。\n` +
+            `如果拉取失败（网络问题/镜像不存在），重建会失败并自动回滚到旧容器。\n\n` +
+            `点击"确定"继续保存（自动拉取镜像）\n` +
+            `点击"取消"返回重新编辑镜像名称`
+          )
+
+          if (!userChoice) {
+            // 用户选择返回编辑
+            setSaving(false)
+            return
+          }
+          // 用户选择继续，后端会自动拉取镜像
+        }
+      }
+
       // 端口："hostPort:containerPort/proto"
       const portBindings = form.ports.filter((p) => p.host && p.container)
         .map((p) => `${p.host}:${p.container}/${p.proto}`)
@@ -191,7 +249,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
       const nanoCpus = form.cpus > 0 ? Math.round(form.cpus * 1e9) : 0
 
       const spec = {
-        image: form.image || undefined,
+        image: currentImage || undefined,
         restartPolicy: form.restartPolicy,
         keepOld: form.keepOld,
         env,
@@ -287,8 +345,15 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           {tab === 'general' && (
             <>
               <Field label="镜像">
-                <input value={form.image} readOnly className="input bg-gray-50 dark:bg-gray-900 cursor-not-allowed" />
-                <p className="text-xs text-gray-500 mt-1">💡 镜像修改请使用"更新"功能，此处仅供查看</p>
+                <input
+                  value={form.image}
+                  onChange={(e) => set('image', e.target.value)}
+                  placeholder="例如：nginx:latest 或 mysql:8.0"
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 修改镜像后保存会重建容器。如本地不存在该镜像，系统会提示是否拉取。
+                </p>
               </Field>
               <Field label="重启策略">
                 <select value={form.restartPolicy} onChange={(e) => set('restartPolicy', e.target.value)} className="input">
