@@ -143,6 +143,8 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	// Docker 限制：只有已停止的容器才能重命名
 	if currentState.Restarting {
 		report(28, "容器正在重启中，强制停止")
+		// 【修复】restarting 状态说明容器配置可能有问题，强制保留旧容器避免数据丢失
+		spec.KeepOld = true
 		// restarting 状态需要用 Force kill，普通 stop 可能不生效
 		if err := cli.ContainerKill(ctx, id, "SIGKILL"); err != nil {
 			return fmt.Errorf("强制停止重启中的容器失败: %w", err)

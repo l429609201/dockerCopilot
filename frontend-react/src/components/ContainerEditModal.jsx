@@ -135,7 +135,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         setForm({
           image: cc.Image || '',
           restartPolicy: hc.RestartPolicy?.Name || 'unless-stopped',
-          keepOld: false,
+          keepOld: true, // 【修复】默认保留旧容器，避免编辑失败时数据丢失
           env: envs,
           ports,
           binds,
@@ -235,9 +235,33 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         .map((p) => `${p.host}:${p.container}/${p.proto}`)
       // 环境变量："KEY=VALUE"
       const env = form.env.filter((e) => e.key).map((e) => `${e.key}=${e.value}`)
+
       // 挂载："source:target:mode"
-      const binds = form.binds.filter((b) => b.source && b.target)
+      // 【修复】去除重复的容器内路径（target），避免 Docker 报错 "Duplicate mount point"
+      const bindsRaw = form.binds.filter((b) => b.source && b.target)
         .map((b) => `${b.source}:${b.target}:${b.mode || 'rw'}`)
+
+      // 按容器内路径（target）去重，保留最后一个
+      const targetSeen = new Map()
+      const binds = []
+      for (const bind of bindsRaw) {
+        const parts = bind.split(':')
+        const target = parts[1] // 容器内路径
+        if (target) {
+          targetSeen.set(target, bind) // 相同 target 会覆盖前面的
+        }
+      }
+      binds.push(...targetSeen.values())
+
+      // 如果发生了去重，提示用户
+      if (bindsRaw.length !== binds.length) {
+        const duplicateCount = bindsRaw.length - binds.length
+        console.warn(`检测到 ${duplicateCount} 个重复的挂载点，已自动去重`)
+        setError(`⚠️ 检测到 ${duplicateCount} 个重复的挂载点（容器内路径相同），已自动保留最后一个`)
+        // 延迟清除错误提示
+        setTimeout(() => setError(''), 3000)
+      }
+
       // 标签转对象
       const labels = {}
       form.labels.filter((l) => l.key).forEach((l) => { labels[l.key] = l.value })
