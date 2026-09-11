@@ -132,14 +132,47 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败
 	utiles.SanitizeCreateConfig(name, cli.ClientVersion(), &newConfig, &newHostConfig, networkingConfig)
 
-	report(30, "停止旧容器")
-	timeout := 10
-	_ = cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout})
+	// 【增强】检查容器当前状态，对于 restarting 等中间状态需要先确保停止
+	report(25, "检查容器状态")
+	currentState := inspected.State
+	if currentState == nil {
+		return fmt.Errorf("无法获取容器当前状态")
+	}
+
+	// restarting 状态的容器需要先强制停止，否则重命名会失败
+	// Docker 限制：只有已停止的容器才能重命名
+	if currentState.Restarting {
+		report(28, "容器正在重启中，强制停止")
+		// restarting 状态需要用 Force kill，普通 stop 可能不生效
+		if err := cli.ContainerKill(ctx, id, "SIGKILL"); err != nil {
+			return fmt.Errorf("强制停止重启中的容器失败: %w", err)
+		}
+		// 等待容器完全停止（最多3秒）
+		for i := 0; i < 6; i++ {
+			time.Sleep(500 * time.Millisecond)
+			checkState, err := cli.ContainerInspect(ctx, id)
+			if err != nil {
+				return fmt.Errorf("检查容器状态失败: %w", err)
+			}
+			if !checkState.State.Running && !checkState.State.Restarting {
+				break
+			}
+			if i == 5 {
+				return fmt.Errorf("容器在 3 秒内未能停止，请稍后重试")
+			}
+		}
+	} else if currentState.Running {
+		report(30, "停止运行中的容器")
+		timeout := 10
+		if err := cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout}); err != nil {
+			return fmt.Errorf("停止容器失败: %w", err)
+		}
+	}
 
 	report(45, "重命名旧容器")
 	backupName := name + "-old-" + time.Now().Format("20060102150405")
 	if err := cli.ContainerRename(context.Background(), id, backupName); err != nil {
-		return fmt.Errorf("重命名旧容器失败: %w", err)
+		return fmt.Errorf("重命名旧容器失败（状态：%s）: %w", currentState.Status, err)
 	}
 
 	report(60, "创建新容器")

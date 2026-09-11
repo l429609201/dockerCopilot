@@ -4,6 +4,7 @@ import { containerAPI, hostPathAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
 import { ContainerPathPicker } from './ContainerPathPicker.jsx'
 import { useHostPathResolve } from '../hooks/useHostPathResolve.jsx'
+import { useTasks } from '../hooks/useTasks.jsx'
 
 // Tab 定义：常规 / 网络 / 挂载 / 环境变量 / 资源 / 标签&命令
 const TABS = [
@@ -31,6 +32,7 @@ function pickContainerInitialPath(target) {
 // 容器编辑弹窗：按 Tab 分区编辑端口/网络/挂载/环境/资源/标签命令（任务化重建）。
 // 后端 EditSpec 支持全部字段，未提供字段保留原容器配置。
 export function ContainerEditModal({ container, onClose, onSuccess }) {
+  const { addTask } = useTasks() // 任务中心集成
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -204,8 +206,15 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         nanoCpus,
         confirmWarnings: true,
       }
-      await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
-      alert('编辑任务已提交，容器将重建')
+      const res = await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
+
+      // 【增强】将编辑任务添加到任务中心，让用户可以看到重建进度
+      const taskID = res.data?.data?.taskID
+      if (taskID) {
+        const containerName = container.name || container.Names?.[0]?.replace(/^\//, '') || container.ID?.slice(0, 12)
+        addTask(taskID, `编辑容器·${containerName}`)
+      }
+
       onSuccess?.()
       onClose()
     } catch (e) {
