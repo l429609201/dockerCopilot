@@ -2,6 +2,8 @@ package compose
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 
 	"sigs.k8s.io/yaml"
 )
@@ -12,6 +14,8 @@ type ValidationResult struct {
 	Services []string `json:"services"` // 解析到的服务名
 	Warnings []string `json:"warnings"` // 高风险配置警告
 	Error    string   `json:"error"`    // 语法错误信息
+	Line     int      `json:"line,omitempty"`   // 错误所在行，从1开始
+	Column   int      `json:"column,omitempty"` // 错误所在列，从1开始
 }
 
 // composeDoc 仅解析我们关心的字段，用于风险检查（不追求完整 schema）。
@@ -37,6 +41,7 @@ func Validate(content []byte) ValidationResult {
 	if err := yaml.Unmarshal(content, &doc); err != nil {
 		result.Valid = false
 		result.Error = "YAML 解析失败：" + err.Error()
+		result.Line, result.Column = parseYAMLErrorPosition(err.Error())
 		return result
 	}
 	if len(doc.Services) == 0 {
@@ -44,12 +49,26 @@ func Validate(content []byte) ValidationResult {
 		result.Error = "未找到任何 service 定义"
 		return result
 	}
-	result.Valid = true
 	for name, svc := range doc.Services {
 		result.Services = append(result.Services, name)
 		result.Warnings = append(result.Warnings, riskWarnings(name, svc)...)
 	}
 	return result
+}
+
+// parseYAMLErrorPosition 从 YAML 解析器错误文本中提取行列号。
+// 不同 YAML 实现的错误文案略有差异，提取失败时返回0，前端仍展示原始错误。
+func parseYAMLErrorPosition(message string) (int, int) {
+	matches := regexp.MustCompile(`line ([0-9]+)(: column ([0-9]+))?`).FindStringSubmatch(message)
+	if len(matches) == 0 {
+		return 0, 0
+	}
+	line, _ := strconv.Atoi(matches[1])
+	column := 0
+	if len(matches) > 3 && matches[3] != "" {
+		column, _ = strconv.Atoi(matches[3])
+	}
+	return line, column
 }
 
 // riskWarnings 检查单个服务的高风险配置并返回警告文案。

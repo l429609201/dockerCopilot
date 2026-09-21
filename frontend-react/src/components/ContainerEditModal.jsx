@@ -36,6 +36,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [composeMeta, setComposeMeta] = useState(null)
   const [tab, setTab] = useState('general')
   // 路径选择器状态：{ type: 'host'|'container', index } 表示正在为哪一行的哪个字段选路径
   const [picker, setPicker] = useState(null)
@@ -132,6 +133,19 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         // 资源限制换算：字节→MB、NanoCPUs→核数
         const memoryMB = hc.Memory ? Math.round(hc.Memory / 1048576) : 0
         const cpus = hc.NanoCpus ? +(hc.NanoCpus / 1e9).toFixed(2) : 0
+        const composeProject = cc.Labels?.['com.docker.compose.project'] || ''
+        const composeService = cc.Labels?.['com.docker.compose.service'] || ''
+        if (composeProject && composeService) {
+          // 仅依据 Compose 官方标签识别来源，不尝试修改 Compose 文件。
+          setComposeMeta({
+            project: composeProject,
+            service: composeService,
+            workingDir: cc.Labels?.['com.docker.compose.project.working_dir'] || '',
+            configFiles: cc.Labels?.['com.docker.compose.project.config_files'] || '',
+          })
+        } else {
+          setComposeMeta(null)
+        }
         setForm({
           image: cc.Image || '',
           restartPolicy: hc.RestartPolicy?.Name || 'unless-stopped',
@@ -359,6 +373,19 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
 
         {/* 表单区：按当前 Tab 渲染 */}
         <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto">
+          {composeMeta && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg text-sm">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium">此容器由 Docker Compose 管理</div>
+                <div className="mt-1">项目：{composeMeta.project}，服务：{composeMeta.service}</div>
+                <div className="mt-1">本次编辑只会重建当前容器，不会修改 Compose 配置文件。以后再次执行 Compose 部署时，Compose 文件中的旧配置可能覆盖本次修改，请同步手动修改对应的 YAML 文件。</div>
+                {composeMeta.workingDir && <div className="mt-1 break-all text-xs opacity-80">工作目录：{composeMeta.workingDir}</div>}
+                {composeMeta.configFiles && <div className="break-all text-xs opacity-80">配置文件：{composeMeta.configFiles}</div>}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-lg">
               {error}
