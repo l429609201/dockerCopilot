@@ -14,12 +14,34 @@ export function ComposeEditor({ project, filename, onClose }) {
   const codeRef = useRef(null)
   const gutterRef = useRef(null)
   const lines = useMemo(() => content.split('\n'), [content])
-  const errorLine = validation?.line || 0
+  const errorLine = Number(validation?.line ?? validation?.Line) || 0
+
+  useEffect(() => {
+    // 校验失败后自动滚动到错误行，避免用户还要手动寻找报错位置。
+    if (errorLine > 0 && editorRef.current) {
+      const top = Math.max(0, (errorLine - 1) * 24)
+      editorRef.current.scrollTop = top
+      if (codeRef.current) codeRef.current.scrollTop = top
+      if (gutterRef.current) gutterRef.current.scrollTop = top
+    }
+  }, [errorLine])
 
   const updateActiveLine = () => {
     const value = editorRef.current?.value || ''
     const cursor = editorRef.current?.selectionStart || 0
     setActiveLine(value.slice(0, cursor).split('\n').length)
+  }
+
+  const jumpToLine = (lineNumber) => {
+    if (!editorRef.current || lineNumber < 1) return
+    const target = lines.slice(0, lineNumber - 1).reduce((offset, line) => offset + line.length + 1, 0)
+    editorRef.current.focus()
+    editorRef.current.setSelectionRange(target, target)
+    updateActiveLine()
+    const top = Math.max(0, (lineNumber - 1) * 24)
+    editorRef.current.scrollTop = top
+    if (codeRef.current) codeRef.current.scrollTop = top
+    if (gutterRef.current) gutterRef.current.scrollTop = top
   }
 
   const syncScroll = (e) => {
@@ -46,25 +68,66 @@ export function ComposeEditor({ project, filename, onClose }) {
     })()
   }, [project.id, filename])
 
+  // 兼容不同网关/代理对响应 data 的包装方式，避免把 success 当成错误信息。
+  const getValidationResult = (response) => {
+    const root = response?.data
+    const isValidation = (value) => value && typeof value === 'object' && (
+      Object.prototype.hasOwnProperty.call(value, 'valid') ||
+      Object.prototype.hasOwnProperty.call(value, 'Valid') ||
+      Object.prototype.hasOwnProperty.call(value, 'error') ||
+      Object.prototype.hasOwnProperty.call(value, 'Error') ||
+      Object.prototype.hasOwnProperty.call(value, 'warnings') ||
+      Object.prototype.hasOwnProperty.call(value, 'Warnings')
+    )
+    const queue = [root]
+    for (let depth = 0; queue.length > 0 && depth < 3; depth += 1) {
+      const currentLevel = [...queue]
+      queue.length = 0
+      for (const value of currentLevel) {
+        if (isValidation(value)) return value
+        if (value && typeof value === 'object') {
+          Object.values(value).forEach((child) => {
+            if (child && typeof child === 'object') queue.push(child)
+          })
+        }
+      }
+    }
+    return null
+  }
+
+  const getValidationField = (result, field, fallbackField = field) => result?.[field] ?? result?.[fallbackField]
+
+  const getResponseMessage = (response, fallback) => {
+    const message = response?.data?.msg
+    return message && message.toLowerCase() !== 'success' ? message : fallback
+  }
+
+  const formatValidationMessage = (result, fallback = '未知错误') => {
+    const line = getValidationField(result, 'line', 'Line')
+    const column = getValidationField(result, 'column', 'Column')
+    const error = getValidationField(result, 'error', 'Error')
+    const location = line ? `（第 ${line} 行${column ? `，第 ${column} 列` : ''}）` : ''
+    return `${location}${error || fallback}`
+  }
+
   const validate = async () => {
     setMsg(''); setWarnings([])
     try {
       const r = await composeAPI.validate(content)
-      const d = r.data?.data
-      if (d?.valid) {
-        setWarnings(d.warnings || [])
-        setValidation(d)
-        setMsg(d.warnings?.length ? '语法正确，但有风险提示' : '校验通过')
+      const result = getValidationResult(r)
+      const valid = getValidationField(result, 'valid', 'Valid')
+      const warnings = getValidationField(result, 'warnings', 'Warnings') || []
+      setValidation(result)
+      if (valid === true) {
+        setWarnings(warnings)
+        setMsg(warnings.length ? '语法正确，但有风险提示' : '校验通过')
       } else {
-        setValidation(d || null)
-        const location = d?.line ? `（第 ${d.line} 行${d.column ? `，第 ${d.column} 列` : ''}）` : ''
-        setMsg('校验失败' + location + '：' + (d?.error || r.data?.msg || '未知'))
+        setMsg('校验失败：' + formatValidationMessage(result, getResponseMessage(r, '未返回有效校验结果')))
       }
     } catch (e) {
-      const result = e.response?.data?.data || null
+      const result = getValidationResult(e.response)
       setValidation(result)
-      const location = result?.line ? `（第 ${result.line} 行${result.column ? `，第 ${result.column} 列` : ''}）` : ''
-      setMsg('校验失败' + location + '：' + (result?.error || e.response?.data?.msg || e.message))
+      setMsg('校验失败：' + formatValidationMessage(result, getResponseMessage(e.response, e.message)))
       setWarnings([])
     }
   }
@@ -73,23 +136,21 @@ export function ComposeEditor({ project, filename, onClose }) {
     setSaving(true); setMsg('')
     try {
       const r = await composeAPI.saveFile(project.id, filename, content)
+      const result = getValidationResult(r)
       if (r.data?.code === 200) {
-        const result = r.data.data || {}
         setValidation(result)
-        setWarnings(result.warnings || [])
+        setWarnings(getValidationField(result, 'warnings', 'Warnings') || r.data?.data?.warnings || [])
         setMsg('已保存')
       } else {
-        const result = r.data?.data || null
         setValidation(result)
-        const location = result?.line ? `（第 ${result.line} 行${result.column ? `，第 ${result.column} 列` : ''}）` : ''
-        setMsg('保存失败' + location + '：' + (result?.error || r.data?.msg || '未知错误'))
+        setWarnings(getValidationField(result, 'warnings', 'Warnings') || [])
+        setMsg('保存失败：' + formatValidationMessage(result, getResponseMessage(r, '未知错误')))
       }
     } catch (e) {
-      const result = e.response?.data?.data || null
+      const result = getValidationResult(e.response)
       setValidation(result)
-      setWarnings(result?.warnings || [])
-      const location = result?.line ? `（第 ${result.line} 行${result.column ? `，第 ${result.column} 列` : ''}）` : ''
-      setMsg('保存失败' + location + '：' + (result?.error || e.response?.data?.msg || e.message))
+      setWarnings(getValidationField(result, 'warnings', 'Warnings') || [])
+      setMsg('保存失败：' + formatValidationMessage(result, getResponseMessage(e.response, e.message)))
     } finally { setSaving(false) }
   }
 
@@ -111,7 +172,7 @@ export function ComposeEditor({ project, filename, onClose }) {
               <div ref={gutterRef} className="w-12 flex-shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-right text-gray-400 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-hidden="true">
                 <div className="py-3 pr-3">
                   {lines.map((_, index) => (
-                    <div key={index} className={`h-6 ${errorLine === index + 1 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-300 font-semibold' : activeLine === index + 1 ? 'bg-blue-100/70 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' : ''}`}>
+                    <div key={index} role="button" tabIndex={0} onClick={() => jumpToLine(index + 1)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') jumpToLine(index + 1) }} title={`跳转到第 ${index + 1} 行`} aria-label={`跳转到第 ${index + 1} 行`} className={`h-6 cursor-pointer ${errorLine === index + 1 ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-300 font-semibold' : activeLine === index + 1 ? 'bg-blue-100/70 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                       {index + 1}
                     </div>
                   ))}
