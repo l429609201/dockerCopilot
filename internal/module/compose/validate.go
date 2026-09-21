@@ -53,6 +53,8 @@ func Validate(content []byte) ValidationResult {
 		result.Services = append(result.Services, name)
 		result.Warnings = append(result.Warnings, riskWarnings(name, svc)...)
 	}
+	// 仅在解析及服务检查通过后标记成功；风险警告不等于语法错误。
+	result.Valid = true
 	return result
 }
 

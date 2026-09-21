@@ -121,8 +121,14 @@ export function ComposeEditor({ project, filename, onClose }) {
       if (valid === true) {
         setWarnings(warnings)
         setMsg(warnings.length ? '语法正确，但有风险提示' : '校验通过')
+      } else if (valid === false) {
+        // 已返回明确的失败结果，不应误报为响应缺失，也不能默认视为通过。
+        setWarnings(warnings)
+        setMsg('校验失败：' + formatValidationMessage(result, getResponseMessage(r, '后端返回校验未通过，但未提供原因')))
       } else {
-        setMsg('校验失败：' + formatValidationMessage(result, getResponseMessage(r, '未返回有效校验结果')))
+        // 缺少布尔型 valid 属于接口响应异常，与 YAML 内容错误分开提示。
+        setValidation(null)
+        setMsg('校验接口异常：' + getResponseMessage(r, '响应缺少有效的 valid 字段，无法判断校验结果'))
       }
     } catch (e) {
       const result = getValidationResult(e.response)
