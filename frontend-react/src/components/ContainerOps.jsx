@@ -117,13 +117,27 @@ export function ContainerConsole({ container, onClose }) {
   )
 }
 
+// 仅清理展示文本，不修改 SSE 原始缓冲或下载内容，也不把日志作为 HTML 渲染。
+// 先消费 OSC/DCS 等字符串控制序列，再消费 CSI（颜色、光标、清屏）和短 ESC 指令。
+function cleanLogText(value) {
+  return String(value ?? '')
+    .replace(/(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c|$)/g, '')
+    .replace(/(?:\x1b[P^_X]|[\x90\x98\x9e\x9f])[^\x1b\x9c]*(?:\x1b\\|\x9c|$)/g, '')
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[ -/]*[0-~]/g, '')
+    // 保留换行和制表符；回车归一化为换行，不模拟终端的覆盖和清屏行为。
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+}
+
 // 转义正则特殊字符，避免搜索词包含 . * 等导致高亮异常
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// 将一行日志按关键词（不区分大小写）拆分并高亮匹配片段
+// 先清理再匹配，避免 ANSI 颜色码打断关键词或作为正文展示。
 function highlightLine(text, keyword) {
+  text = cleanLogText(text)
   if (!keyword) return text
   const parts = text.split(new RegExp(`(${escapeRegExp(keyword)})`, 'gi'))
   return parts.map((part, i) =>
@@ -171,11 +185,10 @@ function decodePctEscapes(text) {
   })
 }
 
-// 解析单行结构化日志（dockerCopilot 自身使用 go-zero 的 JSON 日志格式）
-// 兼容 @timestamp/ts/time、content/msg/message 等常见字段名
-// 非 JSON 行会再尝试标准库 log 与 ISO 前缀两种格式，都不匹配才返回 null 走原文展示
+// 解析前移除行外控制码；JSON.parse 后再清理字段内解码出的 ANSI 字符。
+// 不对普通文本中的字面量 \\u001b 做全局反转义，避免误改路径或示例代码。
 function parseLogLine(line) {
-  const t = line.trim()
+  const t = cleanLogText(line).trim()
   if (!t) return null
   if (!t.startsWith('{') || !t.endsWith('}')) {
     const m = STDLIB_LOG_RE.exec(t) || ISO_PREFIX_RE.exec(t)
@@ -190,9 +203,9 @@ function parseLogLine(line) {
     if (!o || typeof o !== 'object') return null
     const time = o['@timestamp'] || o.ts || o.time || o.timestamp || ''
     const raw = o.content ?? o.msg ?? o.message ?? ''
-    let content = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    let content = cleanLogText(typeof raw === 'string' ? raw : JSON.stringify(raw))
     if (!time && !o.caller && !content) return null
-    let level = String(o.level || 'info').toLowerCase()
+    let level = cleanLogText(o.level || 'info').toLowerCase()
     // go-zero 无 Warn 级别，后端以 "warn:" 前缀标注，这里还原成 warn 并剥掉前缀
     const pm = /^(warn|warning)\s*[:：]\s*/i.exec(content)
     if (pm) {
@@ -200,8 +213,8 @@ function parseLogLine(line) {
       content = content.slice(pm[0].length)
     }
     return {
-      time: String(time),
-      caller: o.caller ? String(o.caller) : '',
+      time: cleanLogText(time),
+      caller: cleanLogText(o.caller),
       content: decodePctEscapes(content),
       level,
     }
