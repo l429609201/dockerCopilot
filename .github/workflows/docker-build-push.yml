@@ -2,7 +2,7 @@
 # Docker 多架构镜像构建工作流
 # =============================================================================
 # 触发策略：
-#   - test 分支 push：仅构建 AMD64(x86)，打 :test 标签，用于测试
+#   - test 分支 push：并行构建 AMD64 + ARM64（交叉编译），打 :test 标签，用于测试
 #   - 推送 v* 标签：并行构建 AMD64 + ARM64，合并为多架构镜像，
 #                   打 :{标签号} 与 :latest 标签。版本号直接取自 Git 标签名。
 #     注意：向 main 分支 push 不再触发构建，需显式打标签才发正式版，
@@ -19,7 +19,7 @@
 #   :xxx-amd64 / :xxx-arm64 这类中间标签，只保留 :{版本号}、:latest、:test。
 #
 # 失败语义：
-#   正式版要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
+#   test 和正式版均要求 ARM64 必须构建成功，否则 manifest 阶段直接失败，
 #   不会把仅含 AMD64 的镜像伪装成多架构镜像发布出去；
 #   最后一步会逐个 inspect 最终标签，架构组成与预期不符即失败。
 # =============================================================================
@@ -105,13 +105,13 @@ jobs:
               echo "❌ 分支 ${{ github.ref_name }} 不支持直接构建；正式版请打 v* 标签"
               exit 1
             fi
-            # 测试版：仅 AMD64，版本号取自 version 文件并加 -test 后缀
+            # 测试版：双架构（AMD64 + ARM64，使用交叉编译），版本号取自 version 文件并加 -test 后缀
             VERSION="$(cat version)-test"
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
             echo "image_tag=test" >> $GITHUB_OUTPUT
             echo "extra_tags=" >> $GITHUB_OUTPUT
-            echo "build_arm=false" >> $GITHUB_OUTPUT
-            echo "✅ 测试版构建：标签 test，版本号 ${VERSION}，仅 AMD64"
+            echo "build_arm=true" >> $GITHUB_OUTPUT
+            echo "✅ 测试版构建：标签 test，版本号 ${VERSION}，双架构（AMD64 + ARM64）"
           fi
 
   # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ jobs:
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
 
   # ---------------------------------------------------------------------------
-  # Job 3: 构建 ARM64 镜像（仅标签触发的正式版，与 AMD64 并行）
+  # Job 3: 构建 ARM64 镜像（test 分支和正式版均构建，与 AMD64 并行）
   # Dockerfile 中前端与 Go 编译阶段固定在原生 amd64 上跑（--platform=$BUILDPLATFORM），
   # Go 交叉编译出 arm64 二进制；QEMU 仅用于最后一层轻量运行时镜像。
   # ---------------------------------------------------------------------------
@@ -205,14 +205,14 @@ jobs:
   # Job 4: 合并多架构 Manifest
   # ---------------------------------------------------------------------------
   # 将 AMD64 与 ARM64 镜像合并为一个多架构镜像（拉取时自动匹配架构）
-  # test 分支只有 AMD64，则合并为单架构；标签触发合并双架构并追加 latest 标签
+  # test 分支和正式版均合并双架构；标签触发时额外追加 latest 标签
   # ---------------------------------------------------------------------------
   create-manifest:
     name: 📦 合并多架构 Manifest
     needs: [prepare, build-amd64, build-arm64]
-    # always() 让 ARM 被跳过(test 分支)时仍能执行；
-    # 但正式版要求 ARM 必须成功——ARM 失败时不再静默降级为单架构发布，
-    # 具体判定在步骤内基于 build_arm 与 ARM digest 是否存在完成。
+    # always() 让 ARM 被跳过时仍能执行（理论上不会跳过，因为 test 和正式版均构建双架构）
+    # 要求 ARM64 必须成功——ARM 失败时不再静默降级为单架构发布
+    # 具体判定在步骤内基于 build_arm 与 ARM digest 是否存在完成
     if: always() && needs.build-amd64.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -254,8 +254,8 @@ jobs:
           fi
 
           # 组装参与合并的 digest 引用列表（源统一为 Docker Hub）
+          # test 分支和正式版均要求双架构，ARM64 digest 缺失时直接失败
           if [ "$BUILD_ARM" = "true" ]; then
-            # 正式版：ARM64 必须成功，缺失则直接失败，绝不降级为单架构发布
             if [ -z "$ARM_DIGEST" ]; then
               echo "❌ 需要双架构但 ARM64 digest 为空，中止发布"
               exit 1
@@ -264,8 +264,8 @@ jobs:
             SRCS="${DH}@${AMD_DIGEST} ${DH}@${ARM_DIGEST}"
             EXPECT_ARCHS="amd64 arm64"
           else
-            # test 分支：设计上只构建 AMD64，产出单架构镜像
-            echo "📦 创建单架构 manifest (仅 AMD64)"
+            # 理论上不会走到这里（test 和正式版均 build_arm=true）
+            echo "⚠️  BUILD_ARM=false，创建单架构 manifest (仅 AMD64)"
             SRCS="${DH}@${AMD_DIGEST}"
             EXPECT_ARCHS="amd64"
           fi

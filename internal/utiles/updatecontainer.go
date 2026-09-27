@@ -328,27 +328,75 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 		return err
 	}
 
-	// 【增强】启动后检查容器状态，确认是否真正运行
-	logx.Infof("新容器已调用启动命令，正在检查运行状态...")
-	time.Sleep(2 * time.Second) // 等待 2 秒让容器启动
-	newContainerInspect, inspectErr := cli.ContainerInspect(context.Background(), newContainerID)
-	if inspectErr != nil {
-		logx.Errorf("检查新容器状态失败: %v", inspectErr)
-	} else {
-		logx.Infof("新容器状态: Running=%v, Status=%s, ExitCode=%d",
+	// 【增强】启动后持续验证容器稳定性（10秒观察期），如反复重启则判定失败并回滚
+	// 这能捕获"启动API成功但容器因兼容性问题立即崩溃+RestartPolicy导致无限重启"的场景
+	logx.Infof("新容器已调用启动命令，进入稳定性验证期（10秒）...")
+	stabilityCheckPassed := false
+	restartCount := 0
+	for i := 0; i < 5; i++ { // 每2秒检查一次，共5次（10秒）
+		time.Sleep(2 * time.Second)
+		newContainerInspect, inspectErr := cli.ContainerInspect(context.Background(), newContainerID)
+		if inspectErr != nil {
+			logx.Errorf("检查新容器状态失败: %v，跳过本次检查", inspectErr)
+			continue
+		}
+
+		currentRestartCount := newContainerInspect.RestartCount
+		logx.Infof("验证轮次 %d/5 - 容器状态: Running=%v, Status=%s, ExitCode=%d, RestartCount=%d",
+			i+1,
 			newContainerInspect.State.Running,
 			newContainerInspect.State.Status,
-			newContainerInspect.State.ExitCode)
+			newContainerInspect.State.ExitCode,
+			currentRestartCount)
 
-		// 如果容器已退出，记录退出原因
-		if !newContainerInspect.State.Running {
-			exitMsg := fmt.Sprintf("容器启动后立即退出 (ExitCode: %d)", newContainerInspect.State.ExitCode)
+		// 检测到重启次数增加（说明容器崩溃后被 Docker 重新拉起）
+		if currentRestartCount > restartCount {
+			logx.Errorf("⚠️ 检测到容器重启：重启次数从 %d 增至 %d", restartCount, currentRestartCount)
+			restartCount = currentRestartCount
+			// 如果观察期内重启次数 >= 2，判定为不稳定，触发回滚
+			if restartCount >= 2 {
+				logx.Errorf("❌ 容器反复重启（%d次），判定更新失败，执行回滚", restartCount)
+				// 删除失败的新容器
+				_ = cli.ContainerRemove(context.Background(), newContainerID, container.RemoveOptions{Force: true})
+				// 如果旧容器存在，尝试恢复
+				if !delOldContainer && backupName != "" {
+					logx.Infof("尝试将备份容器 %s 恢复为原名 %s", backupName, name)
+					if renameErr := cli.ContainerRename(context.Background(), backupName, name); renameErr != nil {
+						logx.Errorf("恢复容器名失败: %v，用户需手动重命名 %s", renameErr, backupName)
+					} else if startErr := cli.ContainerStart(context.Background(), id, container.StartOptions{}); startErr != nil {
+						logx.Errorf("重启旧容器失败: %v", startErr)
+					} else {
+						logx.Info("✅ 已成功回滚并重启旧容器")
+					}
+				}
+				failMsg := fmt.Sprintf("新容器启动后反复重启（%d次），可能存在兼容性问题，已自动回滚到旧版本", restartCount)
+				markTaskFailed(serviceContext, taskID, &oldTaskProgress, failMsg, fmt.Errorf("容器不稳定"))
+				return fmt.Errorf(failMsg)
+			}
+		}
+
+		// 如果容器持续运行（未退出且无重启），标记为稳定
+		if newContainerInspect.State.Running && i >= 2 { // 至少运行4秒且未重启
+			stabilityCheckPassed = true
+			logx.Infof("✅ 容器已稳定运行 %d 秒", (i+1)*2)
+			break
+		}
+
+		// 如果容器退出且重启策略为 no，记录但不判定失败（用户可能故意运行一次性任务）
+		if !newContainerInspect.State.Running && newContainerInspect.HostConfig.RestartPolicy.Name == "no" {
+			exitMsg := fmt.Sprintf("容器已退出 (ExitCode: %d，重启策略: no)", newContainerInspect.State.ExitCode)
 			if newContainerInspect.State.Error != "" {
 				exitMsg += fmt.Sprintf(", 错误: %s", newContainerInspect.State.Error)
 			}
-			logx.Errorf("⚠️ %s", exitMsg)
+			logx.Infof("ℹ️ %s", exitMsg)
 			oldTaskProgress.DetailMsg = exitMsg
+			stabilityCheckPassed = true // 无重启策略时退出是正常行为
+			break
 		}
+	}
+
+	if !stabilityCheckPassed {
+		logx.Infof("⚠️ 容器稳定性验证未通过，但未检测到明显失败，继续标记更新成功（用户需自行检查容器日志）")
 	}
 
 	// 【增强】补充收集新镜像信息（仅当拉取后未成功收集时）

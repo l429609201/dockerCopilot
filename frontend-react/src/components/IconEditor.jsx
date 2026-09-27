@@ -71,7 +71,11 @@ export function IconEditor({ imageName, container, currentIconUrl, onClose, onAp
     setBusy(true); setMsg('')
     try {
       const r = await imageAPI.setIconUrl({ imageName: iconKey, url: urlInput.trim() })
-      if (r.data.code === 200 || r.data.code === 0) { setPreview(urlInput.trim()); done(urlInput.trim()) }
+      if (r.data.code === 200 || r.data.code === 0) {
+        const localPath = r.data.data?.iconUrl || urlInput.trim()
+        setPreview(localPath)
+        done(localPath)
+      }
       else throw new Error(r.data.msg)
     } catch (err) { fail(err) }
   }

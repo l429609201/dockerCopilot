@@ -52,8 +52,19 @@ func SetIconURLHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			priority = 1 // 容器级
 		}
 
-		// 添加或更新图标配置
-		if err := addOrUpdateIcon(req.ImageName, targetType, req.URL, priority); err != nil {
+		// 外部 URL 统一下载到本地，避免浏览器直接请求受保护的 Traefik 地址。
+		iconPath := req.URL
+		if !strings.HasPrefix(req.URL, "/") {
+			var err error
+			iconPath, err = downloadAndPersist(req.URL)
+			if err != nil {
+				writeUploadError(w, http.StatusBadRequest, "下载图标失败: "+err.Error())
+				return
+			}
+		}
+
+		// 添加或更新图标配置；无论上传、URL 还是自动抓取，配置统一指向本地路径。
+		if err := addOrUpdateIcon(req.ImageName, targetType, iconPath, priority); err != nil {
 			writeUploadError(w, http.StatusInternalServerError, "写入配置失败: "+err.Error())
 			return
 		}
@@ -64,7 +75,7 @@ func SetIconURLHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			Data: map[string]interface{}{
 				"target":     req.ImageName,
 				"targetType": targetType,
-				"iconUrl":    req.URL,
+				"iconUrl":    iconPath,
 				"priority":   priority,
 			},
 		})

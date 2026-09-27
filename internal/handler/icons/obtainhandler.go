@@ -137,6 +137,24 @@ func addOrUpdateIcon(target, targetType, iconURL string, priority int) error {
 	return writeIconsConfig(icons)
 }
 
+// migrateExternalIcons 将历史配置中的外链图标下载到本地，避免浏览器继续直接请求受保护的外部地址。
+func migrateExternalIcons(icons []IconItem) ([]IconItem, bool) {
+	changed := false
+	for i := range icons {
+		if !strings.HasPrefix(icons[i].IconURL, "http://") && !strings.HasPrefix(icons[i].IconURL, "https://") {
+			continue
+		}
+		localPath, err := downloadAndPersist(icons[i].IconURL)
+		if err != nil {
+			logx.Errorf("迁移外链图标失败（%s）：%v", icons[i].Target, err)
+			continue
+		}
+		icons[i].IconURL = localPath
+		changed = true
+	}
+	return icons, changed
+}
+// ObtainHandler 获取全部图标配置，并兼容迁移历史外链。
 func ObtainHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logx.Info("获取图标配置")
@@ -165,9 +183,20 @@ func ObtainHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		var icons []IconItem
 		if err := json.Unmarshal(data, &icons); err != nil {
-			logx.Errorf("解析配置文件失败: %v", err)
+			logx.Errorf("解析图标配置失败: %v", err)
 			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to parse config: %v", err))
 			return
+		}
+
+		// 兼容旧版本：历史上在线 URL 可能直接写入配置，首次读取时统一迁移到本地。
+		migratedIcons, changed := migrateExternalIcons(icons)
+		if changed {
+			iconsFileMu.Lock()
+			if err := writeIconsConfig(migratedIcons); err != nil {
+				logx.Errorf("保存迁移后的图标配置失败: %v", err)
+			}
+			iconsFileMu.Unlock()
+			icons = migratedIcons
 		}
 
 		logx.Infof("成功加载图标配置，共 %d 项", len(icons))

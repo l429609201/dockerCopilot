@@ -201,7 +201,10 @@ func (l *ComposeLogic) SaveFile(req *types.ComposeFileSaveReq) (resp *types.Resp
 	// 写入前做语法校验，避免写入损坏的 compose 文件
 	vr := compose.Validate([]byte(req.Content))
 	if !vr.Valid {
-		return bad(resp, "内容校验失败："+vr.Error), nil
+		resp.Code = 400
+		resp.Msg = "内容校验失败：" + vr.Error
+		resp.Data = vr
+		return resp, nil
 	}
 	// 备份原文件（若存在）
 	if old, readErr := os.ReadFile(filePath); readErr == nil {

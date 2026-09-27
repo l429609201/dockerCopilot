@@ -4,6 +4,7 @@ import { containerAPI, hostPathAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
 import { ContainerPathPicker } from './ContainerPathPicker.jsx'
 import { useHostPathResolve } from '../hooks/useHostPathResolve.jsx'
+import { useTasks } from '../hooks/useTasks.jsx'
 
 // Tab 定义：常规 / 网络 / 挂载 / 环境变量 / 资源 / 标签&命令
 const TABS = [
@@ -31,9 +32,11 @@ function pickContainerInitialPath(target) {
 // 容器编辑弹窗：按 Tab 分区编辑端口/网络/挂载/环境/资源/标签命令（任务化重建）。
 // 后端 EditSpec 支持全部字段，未提供字段保留原容器配置。
 export function ContainerEditModal({ container, onClose, onSuccess }) {
+  const { addTask } = useTasks() // 任务中心集成
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [composeMeta, setComposeMeta] = useState(null)
   const [tab, setTab] = useState('general')
   // 路径选择器状态：{ type: 'host'|'container', index } 表示正在为哪一行的哪个字段选路径
   const [picker, setPicker] = useState(null)
@@ -130,10 +133,23 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         // 资源限制换算：字节→MB、NanoCPUs→核数
         const memoryMB = hc.Memory ? Math.round(hc.Memory / 1048576) : 0
         const cpus = hc.NanoCpus ? +(hc.NanoCpus / 1e9).toFixed(2) : 0
+        const composeProject = cc.Labels?.['com.docker.compose.project'] || ''
+        const composeService = cc.Labels?.['com.docker.compose.service'] || ''
+        if (composeProject && composeService) {
+          // 仅依据 Compose 官方标签识别来源，不尝试修改 Compose 文件。
+          setComposeMeta({
+            project: composeProject,
+            service: composeService,
+            workingDir: cc.Labels?.['com.docker.compose.project.working_dir'] || '',
+            configFiles: cc.Labels?.['com.docker.compose.project.config_files'] || '',
+          })
+        } else {
+          setComposeMeta(null)
+        }
         setForm({
           image: cc.Image || '',
           restartPolicy: hc.RestartPolicy?.Name || 'unless-stopped',
-          keepOld: false,
+          keepOld: true, // 【修复】默认保留旧容器，避免编辑失败时数据丢失
           env: envs,
           ports,
           binds,
@@ -166,18 +182,100 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   }, [container.ID, isLocalHost, resolveAvailable, resolveHostPath])
 
   // 提交编辑（转为后端 EditSpec 格式）
+  // 检查镜像是否存在于本地
+  const checkImageExists = async (imageName) => {
+    try {
+      const hostId = container.hostId || container.HostID
+      const res = await imageAPI.getImages()
+      const images = res.data?.data || []
+
+      // 解析镜像名称和标签
+      const [nameWithoutTag, tag] = imageName.includes(':')
+        ? imageName.split(':')
+        : [imageName, 'latest']
+
+      // 检查是否存在匹配的镜像（需要考虑 hostId）
+      const exists = images.some(img => {
+        // 如果有 hostId，必须匹配主机
+        if (hostId && img.hostId !== hostId) {
+          return false
+        }
+        // 检查镜像名称和标签是否匹配
+        const imgFullName = `${img.imageName}:${img.imageTag}`
+        const imgNameWithLatest = img.imageName.includes(':') ? img.imageName : `${img.imageName}:latest`
+        return imgFullName === imageName ||
+               imgNameWithLatest === imageName ||
+               img.imageName === nameWithoutTag && img.imageTag === tag
+      })
+
+      return exists
+    } catch (e) {
+      console.error('检查镜像失败:', e)
+      return true // 检查失败时默认认为存在，避免误报（让后端重建时自然处理）
+    }
+  }
+
   const submit = async () => {
     setSaving(true)
     setError('')
     try {
+      // 【新增】如果镜像被修改，检查本地是否存在
+      const originalImage = container.image || container.Image || ''
+      const currentImage = form.image?.trim() || ''
+
+      if (currentImage && currentImage !== originalImage) {
+        const exists = await checkImageExists(currentImage)
+        if (!exists) {
+          // 镜像不存在，弹窗询问用户
+          const userChoice = window.confirm(
+            `⚠️ 镜像 "${currentImage}" 在本地不存在！\n\n` +
+            `如果继续保存，容器重建时会自动拉取该镜像。\n` +
+            `如果拉取失败（网络问题/镜像不存在），重建会失败并自动回滚到旧容器。\n\n` +
+            `点击"确定"继续保存（自动拉取镜像）\n` +
+            `点击"取消"返回重新编辑镜像名称`
+          )
+
+          if (!userChoice) {
+            // 用户选择返回编辑
+            setSaving(false)
+            return
+          }
+          // 用户选择继续，后端会自动拉取镜像
+        }
+      }
+
       // 端口："hostPort:containerPort/proto"
       const portBindings = form.ports.filter((p) => p.host && p.container)
         .map((p) => `${p.host}:${p.container}/${p.proto}`)
       // 环境变量："KEY=VALUE"
       const env = form.env.filter((e) => e.key).map((e) => `${e.key}=${e.value}`)
+
       // 挂载："source:target:mode"
-      const binds = form.binds.filter((b) => b.source && b.target)
+      // 【修复】去除重复的容器内路径（target），避免 Docker 报错 "Duplicate mount point"
+      const bindsRaw = form.binds.filter((b) => b.source && b.target)
         .map((b) => `${b.source}:${b.target}:${b.mode || 'rw'}`)
+
+      // 按容器内路径（target）去重，保留最后一个
+      const targetSeen = new Map()
+      const binds = []
+      for (const bind of bindsRaw) {
+        const parts = bind.split(':')
+        const target = parts[1] // 容器内路径
+        if (target) {
+          targetSeen.set(target, bind) // 相同 target 会覆盖前面的
+        }
+      }
+      binds.push(...targetSeen.values())
+
+      // 如果发生了去重，提示用户
+      if (bindsRaw.length !== binds.length) {
+        const duplicateCount = bindsRaw.length - binds.length
+        console.warn(`检测到 ${duplicateCount} 个重复的挂载点，已自动去重`)
+        setError(`⚠️ 检测到 ${duplicateCount} 个重复的挂载点（容器内路径相同），已自动保留最后一个`)
+        // 延迟清除错误提示
+        setTimeout(() => setError(''), 3000)
+      }
+
       // 标签转对象
       const labels = {}
       form.labels.filter((l) => l.key).forEach((l) => { labels[l.key] = l.value })
@@ -189,7 +287,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
       const nanoCpus = form.cpus > 0 ? Math.round(form.cpus * 1e9) : 0
 
       const spec = {
-        image: form.image || undefined,
+        image: currentImage || undefined,
         restartPolicy: form.restartPolicy,
         keepOld: form.keepOld,
         env,
@@ -204,8 +302,15 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         nanoCpus,
         confirmWarnings: true,
       }
-      await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
-      alert('编辑任务已提交，容器将重建')
+      const res = await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
+
+      // 【增强】将编辑任务添加到任务中心，让用户可以看到重建进度
+      const taskID = res.data?.data?.taskID
+      if (taskID) {
+        const containerName = container.name || container.Names?.[0]?.replace(/^\//, '') || container.ID?.slice(0, 12)
+        addTask(taskID, `编辑容器·${containerName}`)
+      }
+
       onSuccess?.()
       onClose()
     } catch (e) {
@@ -268,6 +373,19 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
 
         {/* 表单区：按当前 Tab 渲染 */}
         <div className="p-4 space-y-4 max-h-[65vh] overflow-y-auto">
+          {composeMeta && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg text-sm">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium">此容器由 Docker Compose 管理</div>
+                <div className="mt-1">项目：{composeMeta.project}，服务：{composeMeta.service}</div>
+                <div className="mt-1">本次编辑只会重建当前容器，不会修改 Compose 配置文件。以后再次执行 Compose 部署时，Compose 文件中的旧配置可能覆盖本次修改，请同步手动修改对应的 YAML 文件。</div>
+                {composeMeta.workingDir && <div className="mt-1 break-all text-xs opacity-80">工作目录：{composeMeta.workingDir}</div>}
+                {composeMeta.configFiles && <div className="break-all text-xs opacity-80">配置文件：{composeMeta.configFiles}</div>}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-lg">
               {error}
@@ -278,8 +396,15 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
           {tab === 'general' && (
             <>
               <Field label="镜像">
-                <input value={form.image} readOnly className="input bg-gray-50 dark:bg-gray-900 cursor-not-allowed" />
-                <p className="text-xs text-gray-500 mt-1">💡 镜像修改请使用"更新"功能，此处仅供查看</p>
+                <input
+                  value={form.image}
+                  onChange={(e) => set('image', e.target.value)}
+                  placeholder="例如：nginx:latest 或 mysql:8.0"
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 修改镜像后保存会重建容器。如本地不存在该镜像，系统会提示是否拉取。
+                </p>
               </Field>
               <Field label="重启策略">
                 <select value={form.restartPolicy} onChange={(e) => set('restartPolicy', e.target.value)} className="input">

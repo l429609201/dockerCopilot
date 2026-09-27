@@ -69,7 +69,8 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	if spec.Image != "" {
 		newConfig.Image = spec.Image
 	}
-	if spec.Env != nil {
+	// 环境变量：非 nil 且非空时才覆盖，避免前端传空数组误清空所有环境变量
+	if spec.Env != nil && len(spec.Env) > 0 {
 		newConfig.Env = spec.Env
 	}
 	// 启动命令 / 入口点：非 nil 时整体覆盖
@@ -127,36 +128,82 @@ func (s *Service) Recreate(ctx context.Context, id string, spec EditSpec, progre
 	if spec.NetworkMode != "" {
 		networkingConfig = &network.NetworkingConfig{}
 	}
-
+ 
 	// 修正非标准守护进程（典型为群晖 DSM）返回的配置，避免删除旧容器后创建失败
 	utiles.SanitizeCreateConfig(name, cli.ClientVersion(), &newConfig, &newHostConfig, networkingConfig)
 
-	report(30, "停止旧容器")
-	timeout := 10
-	_ = cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout})
+	// 【增强】检查容器当前状态，对于 restarting 等中间状态需要先确保停止
+	report(25, "检查容器状态")
+	currentState := inspected.State
+	if currentState == nil {
+		return fmt.Errorf("无法获取容器当前状态")
+	}
+
+	// 保留原容器的运行状态：停用容器重建后仍应保持停用，不能被无条件启动。
+	shouldStart := currentState.Running || currentState.Restarting
+
+	// restarting 状态的容器需要先强制停止，否则重命名会失败
+	// Docker 限制：只有已停止的容器才能重命名
+	if currentState.Restarting {
+		report(28, "容器正在重启中，强制停止")
+		// 【修复】restarting 状态说明容器配置可能有问题，强制保留旧容器避免数据丢失
+		spec.KeepOld = true
+		// restarting 状态需要用 Force kill，普通 stop 可能不生效
+		if err := cli.ContainerKill(ctx, id, "SIGKILL"); err != nil {
+			return fmt.Errorf("强制停止重启中的容器失败: %w", err)
+		}
+		// 等待容器完全停止（最多3秒）
+		for i := 0; i < 6; i++ {
+			time.Sleep(500 * time.Millisecond)
+			checkState, err := cli.ContainerInspect(ctx, id)
+			if err != nil {
+				return fmt.Errorf("检查容器状态失败: %w", err)
+			}
+			if !checkState.State.Running && !checkState.State.Restarting {
+				break
+			}
+			if i == 5 {
+				return fmt.Errorf("容器在 3 秒内未能停止，请稍后重试")
+			}
+		}
+	} else if currentState.Running {
+		report(30, "停止运行中的容器")
+		timeout := 10
+		if err := cli.ContainerStop(ctx, id, container.StopOptions{Signal: "SIGINT", Timeout: &timeout}); err != nil {
+			return fmt.Errorf("停止容器失败: %w", err)
+		}
+	}
 
 	report(45, "重命名旧容器")
 	backupName := name + "-old-" + time.Now().Format("20060102150405")
 	if err := cli.ContainerRename(context.Background(), id, backupName); err != nil {
-		return fmt.Errorf("重命名旧容器失败: %w", err)
+		return fmt.Errorf("重命名旧容器失败（状态：%s）: %w", currentState.Status, err)
 	}
 
 	report(60, "创建新容器")
 	created, err := cli.ContainerCreate(context.Background(), &newConfig, &newHostConfig, networkingConfig, nil, name)
 	if err != nil {
-		// 回滚：恢复旧容器名并重启
+		// 回滚：恢复旧容器名；只有原容器运行时才重新启动。
 		_ = cli.ContainerRename(context.Background(), id, name)
-		_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
+		if shouldStart {
+			_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
+		}
 		return fmt.Errorf("创建新容器失败，已回滚: %w", err)
 	}
 
-	report(80, "启动新容器")
-	if err := cli.ContainerStart(context.Background(), created.ID, container.StartOptions{}); err != nil {
-		// 回滚：删除新容器，恢复旧容器
-		_ = cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
-		_ = cli.ContainerRename(context.Background(), id, name)
-		_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
-		return fmt.Errorf("启动新容器失败，已回滚: %w", err)
+	if shouldStart {
+		report(80, "启动新容器")
+		if err := cli.ContainerStart(context.Background(), created.ID, container.StartOptions{}); err != nil {
+			// 回滚：删除新容器，恢复旧容器；停用容器仍保持停用。
+			_ = cli.ContainerRemove(context.Background(), created.ID, container.RemoveOptions{Force: true})
+			_ = cli.ContainerRename(context.Background(), id, name)
+			if shouldStart {
+				_ = cli.ContainerStart(context.Background(), id, container.StartOptions{})
+			}
+			return fmt.Errorf("启动新容器失败，已回滚: %w", err)
+		}
+	} else {
+		report(80, "保持容器停用状态")
 	}
 
 	if !spec.KeepOld {

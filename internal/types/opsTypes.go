@@ -73,8 +73,8 @@ type ContainerEditReq struct {
 	RestartPolicy string `json:"restartPolicy,optional"`
 	// PortBindings 端口映射（形如 "8080:80/tcp"），非 nil 时整体替换。
 	PortBindings []string `json:"portBindings,optional"`
-	// KeepOldContainer 重建后是否保留旧容器（默认删除）。
-	KeepOldContainer bool `json:"keepOldContainer,optional"`
+	// KeepOldContainer 重建后是否保留旧容器；兼容前端提交的 keepOld 字段。
+	KeepOldContainer bool `json:"keepOld,optional"`
 	// Binds 卷/绑定挂载（形如 "/host:/container:ro"），非 nil 时整体替换。
 	Binds []string `json:"binds,optional"`
 	// NetworkMode 网络模式（bridge/host/none/自定义网络名），空表示不改。
