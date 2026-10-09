@@ -8,5 +8,5 @@ if [ -f "./dockerCopilot-new" ]; then
     chmod +x ./dockerCopilot
 fi
 
-# 运行 dockerCopilot
-./dockerCopilot
+# 直接交接进程，让容器正确接收停止信号。
+exec ./dockerCopilot

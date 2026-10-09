@@ -52,8 +52,9 @@ COPY --from=backend /out/dockerCopilot ./dockerCopilot
 COPY etc/. ./etc
 COPY start.sh ./start.sh
 
-# 安装时区数据、Docker CLI 和 Compose 插件（用于执行 docker compose 命令）
+# 安装时区数据、Docker CLI 和 Compose 插件；规范化脚本换行，避免 /bin/sh\r 无法执行。
 RUN apk add --no-cache tzdata docker-cli docker-cli-compose \
+    && sed -i 's/\r$//' /app/start.sh \
     && chmod +x start.sh \
     && chmod +x dockerCopilot
 
