@@ -171,6 +171,15 @@ export const containerAPI = {
   editContainer: (id, spec, hostId) => apiClient.put(`/api/container/${id}/edit`, { ...spec, hostId }),
 }
 
+// 实际数据备份独立于旧配置快照，下载沿用认证请求，避免在 URL 暴露令牌。
+export const backupAPI = {
+  resources: (hostId) => apiClient.get(`/api/backups/resources${hostQ(hostId)}`, { timeout: 60000 }),
+  list: () => apiClient.get('/api/backups'),
+  create: (plan) => apiClient.post('/api/backups', plan, { timeout: 60000 }),
+  download: (id) => apiClient.get(`/api/backups/${encodeURIComponent(id)}/download`, { responseType: 'blob', timeout: 0 }),
+  remove: (id) => apiClient.delete(`/api/backups/${encodeURIComponent(id)}`),
+}
+
 // 容器文件管理 API（后端已统一做防路径穿越校验）
 export const filesAPI = {
   // 列目录

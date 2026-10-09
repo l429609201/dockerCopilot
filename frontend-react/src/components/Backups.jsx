@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
+import { DataBackups } from './DataBackups.jsx'
 
 export function Backups() {
   const [backups, setBackups] = useState([])
@@ -307,34 +308,10 @@ export function Backups() {
     return dateMatch ? dateMatch[1] : '未知日期'
   }
 
-  if (isLoading && backups.length === 0) {
-    return (
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
-            <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
-          </div>
-          {[1, 2, 3].map(i => (
-            <div key={i} className="card p-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-32"></div>
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-24"></div>
-                </div>
-                <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-16"></div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="w-full">
-      {/* 自定义确认弹窗 */}
+      <DataBackups />
+      {/* 旧配置快照保留兼容，和包含实际数据的归档分开展示。 */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full overflow-hidden">
@@ -381,8 +358,8 @@ export function Backups() {
       <div className="px-2 sm:px-6 py-4 pt-4 sm:pt-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">备份管理</h2>
-            <p className="text-gray-600 dark:text-gray-400">创建、恢复和删除容器备份</p>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">配置快照（旧版）</h2>
+            <p className="text-gray-600 dark:text-gray-400">仅保存容器配置，不包含持久化数据</p>
           </div>
           <div className="flex items-center gap-2">
             <button

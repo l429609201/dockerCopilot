@@ -158,7 +158,8 @@ func UpdateContainerOnHost(ctx context.Context, serviceContext *svc.ServiceConte
 	// 【特殊处理】如果是 DC 自我更新，交给辅助容器处理
 	// 检测逻辑：对比当前容器ID与要更新的容器ID
 	selfID := os.Getenv("HOSTNAME") // Docker 容器内 HOSTNAME 通常是容器ID的短格式
-	if selfID != "" && strings.HasPrefix(id, selfID) {
+	// 自更新辅助容器只连接本地 Docker，远程目标即使 ID 相同也不能转入本地流程。
+	if (hostID == "" || hostID == appconfig.DockerHostLocalID) && selfID != "" && strings.HasPrefix(id, selfID) {
 		logx.Info("检测到自我更新，启动辅助容器接管")
 		return SelfUpdate(ctx, serviceContext, id, name, imageNameAndTag, delOldContainer, taskID, registryAuth)
 	}

@@ -5,8 +5,10 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	auth "github.com/l429609201/dockerCopilot/internal/handler/auth"
+	backup "github.com/l429609201/dockerCopilot/internal/handler/backup"
 	bot "github.com/l429609201/dockerCopilot/internal/handler/bot"
 	compose "github.com/l429609201/dockerCopilot/internal/handler/compose"
 	container "github.com/l429609201/dockerCopilot/internal/handler/container"
@@ -23,6 +25,20 @@ import (
 )
 
 func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
+	// 实质备份全部通过 JWT 鉴权；不提供自动恢复接口。
+	// 资源预览会逐个读取远程容器，给出显式超时，不继承普通短请求配置。
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/backups/resources", Handler: backup.ResourcesHandler(serverCtx)},
+		{Method: http.MethodPost, Path: "/backups", Handler: backup.CreateHandler(serverCtx)},
+	}, rest.WithJwt(serverCtx.Config.Auth.AccessSecret), rest.WithPrefix("/api"), rest.WithTimeout(60*time.Second))
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/backups", Handler: backup.ListHandler(serverCtx)},
+		{Method: http.MethodDelete, Path: "/backups/:id", Handler: backup.DeleteHandler(serverCtx)},
+	}, rest.WithJwt(serverCtx.Config.Auth.AccessSecret), rest.WithPrefix("/api"))
+	// 大归档下载独立放宽超时，仍沿用 JWT，避免令牌出现在下载 URL。
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/backups/:id/download", Handler: backup.DownloadHandler(serverCtx)},
+	}, rest.WithJwt(serverCtx.Config.Auth.AccessSecret), rest.WithPrefix("/api"), rest.WithTimeout(2*time.Hour))
 	server.AddRoutes(
 		[]rest.Route{
 			{

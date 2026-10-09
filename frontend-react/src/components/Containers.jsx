@@ -159,8 +159,10 @@ export function Containers() {
 
   const handleContainerAction = async (containerId, action) => {
     try {
-      // 从列表中定位容器，取得其所属 Docker 主机（多 Docker 管理）
-      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
+      // 列表丢失目标时中止，避免失去远程 hostId 后误操作本地主机。
+      const target = containers.find(c => c.id === containerId)
+      if (!target) throw new Error('容器已不在列表中，请刷新后重试')
+      const hostId = target.hostId
       // 设置操作状态为加载中
       setContainerActions(prev => ({
         ...prev,
@@ -280,7 +282,9 @@ export function Containers() {
       for (const containerId of selectedContainers) {
         try {
           const container = containers.find(c => c.id === containerId)
-          const hostId = container?.hostId
+          // 已消失的选中项不能省略 hostId 后继续执行本地生命周期操作。
+          if (!container) throw new Error('容器已不在列表中，请刷新后重试')
+          const hostId = container.hostId
 
           switch (action) {
             case 'start':
@@ -366,7 +370,9 @@ export function Containers() {
 
   // 删除容器：二次确认后调用后端删除接口（支持远程主机 hostId），成功后刷新列表
   const handleDeleteContainer = (containerId) => {
-    const target = containers.find(c => c.id === containerId) || {}
+    const target = containers.find(c => c.id === containerId)
+    // 删除也必须先解析出目标主机，过期的选中项直接忽略，等待列表刷新。
+    if (!target) return
     const hostId = target.hostId
     const isRunning = target.status && target.status.toLowerCase() === 'running'
     setConfirmModal({
@@ -437,15 +443,21 @@ export function Containers() {
 
   const handleRenameContainer = async (containerId, newName) => {
     try {
-      const hostId = (containers.find(c => c.id === containerId) || {}).hostId
+      // 目标已不在列表时中止，不能丢失 hostId 后默认操作本地主机。
+      const target = containers.find(c => c.id === containerId)
+      if (!target) throw new Error('容器已不在列表中，请刷新后重试')
+      const hostId = target.hostId
       const response = await containerAPI.renameContainer(containerId, newName, hostId)
-      if (response.data.code === 200 || response.data.code === 0) {
-        await refetch()
-        console.log('重命名成功')
+      if (response.data.code !== 200 && response.data.code !== 0) {
+        throw new Error(response.data.msg || '重命名失败')
       }
+      await refetch()
+      console.log('重命名成功')
     } catch (error) {
       console.error('重命名容器失败:', error)
       console.error(`重命名失败: ${error.response?.data?.msg || error.message}`)
+      // 将失败交回详情弹窗，避免远程操作失败后仍显示已重命名。
+      throw error
     }
   }
 
@@ -1563,10 +1575,8 @@ export function Containers() {
         <ContainerEditModal
           container={editTarget}
           onClose={() => setEditTarget(null)}
-          onSuccess={() => {
-            setEditTarget(null)
-            refetch()
-          }}
+          // 重建完成才刷新；不关闭后来打开的另一个编辑弹窗。
+          onSuccess={() => refetch()}
         />
       )}
 

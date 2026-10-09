@@ -2,8 +2,8 @@ package container
 
 import (
 	"context"
-	"github.com/l429609201/dockerCopilot/internal/utiles"
 
+	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/types"
 
@@ -26,7 +26,8 @@ func NewRenameLogic(ctx context.Context, svcCtx *svc.ServiceContext) *RenameLogi
 
 func (l *RenameLogic) Rename(req *types.ContainerRenameReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	err = utiles.RenameContainer(l.svcCtx, req.Id, req.NewName)
+	// 旧接口也按请求中的 hostId 路由，避免远程重命名误落到本地 Docker。
+	err = containerops.NewForHost(l.svcCtx, req.HostID).Rename(req.Id, req.NewName)
 	if err != nil {
 		resp.Code = 400
 		resp.Msg = err.Error()

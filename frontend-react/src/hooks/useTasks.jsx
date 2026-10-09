@@ -11,12 +11,21 @@ export function TaskProvider({ children }) {
   const [localTasks, setLocalTasks] = useState([])   // 本地乐观占位（尚未被后端确认）
   const [hidden, setHidden] = useState(() => new Set()) // 被用户清除的任务ID
   const doneCbRef = useRef({}) // 任务完成回调
-  const prevDoneRef = useRef({}) // 上一轮各任务 isDone，用于触发 onDone
+  const remoteTasksRef = useRef([]) // 保留最新任务快照，处理 SSE 比提交响应先到的情况
 
   const addTask = useCallback(({ id, title, onDone }) => {
     if (!id) return
-    if (onDone) doneCbRef.current[id] = onDone
-    setLocalTasks(prev => prev.some(t => t.id === id) ? prev
+    if (onDone) {
+      const finished = remoteTasksRef.current.find(t => t.id === id && t.isDone)
+      if (finished) {
+        // 注册时任务已完成，立即通知调用方，不等待下一帧 SSE。
+        delete doneCbRef.current[id]
+        try { onDone(finished) } catch (e) { console.error('任务完成回调失败:', e) }
+      } else {
+        doneCbRef.current[id] = onDone
+      }
+    }
+    setLocalTasks(prev => remoteTasksRef.current.some(t => t.id === id) || prev.some(t => t.id === id) ? prev
       : [...prev, { id, title: title || '后台任务', percentage: 0, message: '排队中', isDone: false, failed: false }])
     setHidden(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
   }, [])
@@ -57,12 +66,14 @@ export function TaskProvider({ children }) {
           // 可更新镜像清单（仅「检查镜像更新」任务完成时有值），供任务中心展开显示
           updatableImages: Array.isArray(d.updatableImages) ? d.updatableImages : [],
         }))
+        remoteTasksRef.current = mapped
         for (const t of mapped) {
-          if (t.isDone && prevDoneRef.current[t.id] === false) {
-            const cb = doneCbRef.current[t.id]
-            if (cb) { try { cb(t) } catch (e) { console.error('任务完成回调失败:', e) } }
+          const cb = doneCbRef.current[t.id]
+          if (t.isDone && cb) {
+            // 首次收到就可能已完成；先删除保证后续 SSE 不会重复调用。
+            delete doneCbRef.current[t.id]
+            try { cb(t) } catch (e) { console.error('任务完成回调失败:', e) }
           }
-          prevDoneRef.current[t.id] = t.isDone
         }
         setRemoteTasks(mapped)
         setLocalTasks(prev => prev.filter(l => !mapped.some(m => m.id === l.id)))
@@ -96,6 +107,7 @@ function taskTypeLabel(type) {
     scheduled_update: '定时更新',
     image_prune: '镜像清理',
     image_check: '检查镜像更新',
+    backup: '数据备份',
   }
   return map[type] || ''
 }
