@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
@@ -44,7 +45,8 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
 		// 更新目标是本程序自身时，走辅助容器方案，避免"自己停自己"导致的半更新卡死。
-		if utiles.IsSelfContainer(l.svcCtx, req.Id) {
+		// 仅本地主机允许走自更新辅助容器；远程更新必须始终使用目标 hostId。
+		if (req.HostID == "" || req.HostID == appconfig.DockerHostLocalID) && utiles.IsSelfContainer(l.svcCtx, req.Id) {
 			if e := utiles.SelfUpdate(ctxWithTimeout, l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID, registryAuth); e != nil {
 				l.Errorf("Error in SelfUpdate: %v", e)
 			}

@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -175,7 +176,9 @@ func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
 		// 目标是本程序自身时，走辅助容器方案，避免"自己停自己"卡死。
-		if utiles.IsSelfContainer(s.svcCtx, id) {
+		// 仅本地主机允许走自更新辅助容器；远程 hostId 若误命中本地容器 ID，
+		// 不能回退本地 Docker 执行自更新流程。
+		if (s.hostID == "" || s.hostID == appconfig.DockerHostLocalID) && utiles.IsSelfContainer(s.svcCtx, id) {
 			if e := utiles.SelfUpdate(ctxWithTimeout, s.svcCtx, id, name, imageNameAndTag, delOldContainer, taskID, registryAuth); e != nil {
 				logx.Errorf("Bot 自更新失败: %v", e)
 			}

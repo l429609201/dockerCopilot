@@ -2,13 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { dockerHostAPI } from '../api/client.js'
 import { Server, Plus, Trash2, RefreshCw, Wifi, WifiOff, Loader2, Save, X, HardDrive, AlertCircle, Info } from 'lucide-react'
 
-// 多 Docker 管理页面：第一个恒为本地主机（不可删、地址固定），其余为远程 tcp:// 主机。
+// 实例 管理页面：第一个恒为本地实例（不可删、地址固定），其余为远程 tcp:// 实例。
 export function DockerHosts() {
   const [hosts, setHosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [editing, setEditing] = useState(null) // 正在编辑/新建的主机对象
-  const [detailHost, setDetailHost] = useState(null) // 正在查看详情的主机
+  const [editing, setEditing] = useState(null) // 正在编辑/新建的实例对象
+  const [detailHost, setDetailHost] = useState(null) // 正在查看详情的实例
   const [pingState, setPingState] = useState({}) // { [id]: 'testing'|'ok'|'fail' }
 
   const load = useCallback(async () => {
@@ -19,10 +19,10 @@ export function DockerHosts() {
       if (resp.data.code === 200) {
         setHosts(Array.isArray(resp.data.data) ? resp.data.data : [])
       } else {
-        setError(resp.data.msg || '加载主机列表失败')
+        setError(resp.data.msg || '加载实例列表失败')
       }
     } catch (err) {
-      setError(err.message || '加载主机列表失败')
+      setError(err.message || '加载实例列表失败')
     } finally {
       setLoading(false)
     }
@@ -43,7 +43,7 @@ export function DockerHosts() {
   }
 
   const remove = async (host) => {
-    if (!window.confirm(`确定删除远程主机「${host.name}」？该操作不影响远程主机本身。`)) return
+    if (!window.confirm(`确定删除远程实例「${host.name}」？该操作不影响远程实例本身。`)) return
     try {
       const resp = await dockerHostAPI.remove(host.id)
       if (resp.data.code === 200) {
@@ -94,10 +94,10 @@ function HostsHeader({ onAdd, onRefresh }) {
     <div className="flex items-center justify-between">
       <div>
         <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-          <Server className="h-5 w-5" /> 多 Docker 管理
+          <Server className="h-5 w-5" /> 实例 管理
         </h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          管理本地与远程 Docker 主机，容器页将按来源聚合展示
+          管理本地与远程 Docker 实例，容器页将按来源聚合展示
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -107,14 +107,14 @@ function HostsHeader({ onAdd, onRefresh }) {
         </button>
         <button onClick={onAdd}
           className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700">
-          <Plus className="h-4 w-4" /> 添加主机
+          <Plus className="h-4 w-4" /> 添加实例
         </button>
       </div>
     </div>
   )
 }
 
-// 单个主机行
+// 单个实例行
 function HostRow({ host, pingState, onEdit, onDelete, onPing, onInfo }) {
   const isLocal = host.local || host.type === 'local'
   const online = pingState ? pingState === 'ok' : host.online
@@ -170,8 +170,8 @@ function fmtBytes(bytes) {
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
-// 主机详细信息弹窗：打开时实时请求 docker info + version，分组展示。
-// 离线/无连接主机显示错误原因。
+// 实例详细信息弹窗：打开时实时请求 docker info + version，分组展示。
+// 离线/无连接实例显示错误原因。
 function HostInfoModal({ host, onClose }) {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
@@ -186,7 +186,7 @@ function HostInfoModal({ host, onClose }) {
         if (!alive) return
         if (resp.data?.code === 200) {
           const d = resp.data.data || {}
-          if (d.online === false) setErr(d.reason || '无法连接到该主机')
+          if (d.online === false) setErr(d.reason || '无法连接到该实例')
           else setData(d)
         } else {
           setErr(resp.data?.msg || '获取信息失败')
@@ -290,7 +290,7 @@ function InfoSection({ title, rows, list, emptyText }) {
   )
 }
 
-// 主机新建/编辑弹窗。本地主机仅可改名/备注，地址与类型锁定。
+// 实例新建/编辑弹窗。本地实例仅可改名/备注，地址与类型锁定。
 function HostEditModal({ host, onClose, onSaved }) {
   const isLocal = host.local || host.type === 'local' || host.id === 'local'
   const [name, setName] = useState(host.name || '')
@@ -334,7 +334,7 @@ function HostEditModal({ host, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{host.id ? '编辑主机' : '添加远程主机'}</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{host.id ? '编辑实例' : '添加远程实例'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
         </div>
         <div className="space-y-3">
@@ -349,15 +349,15 @@ function HostEditModal({ host, onClose, onSaved }) {
               placeholder="tcp://192.168.1.10:2375"
               className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm font-mono disabled:opacity-60" />
             {isLocal
-              ? <p className="text-xs text-gray-400 mt-1">本地主机固定使用 unix socket，地址不可修改</p>
+              ? <p className="text-xs text-gray-400 mt-1">本地实例固定使用 unix socket，地址不可修改</p>
               : <p className="text-xs text-amber-500 mt-1">⚠ tcp 为明文无认证连接，请仅在可信内网使用</p>}
           </div>
           {!isLocal && (
             <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> 启用该主机
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> 启用该实例
             </label>
           )}
-          {/* 自定义请求头：仅远程主机，用于经反向代理/网关鉴权的场景 */}
+          {/* 自定义请求头：仅远程实例，用于经反向代理/网关鉴权的场景 */}
           {!isLocal && (
             <div>
               <div className="flex items-center justify-between mb-1">

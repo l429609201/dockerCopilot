@@ -18,10 +18,10 @@ import { cn } from '../utils/cn.js'
 import logoImg from '../assets/DockerCopilot-logo.png'
 import { useVersionCheck } from '../hooks/useVersionCheck.js'
 
-// 全局导航项，桌面侧边栏与移动端底部导航共用，保证一致性
+// 全局导航项，桌面侧边栏与移动端底部导航共用；Docker 主机统一展示为“实例”。
 export const NAV_ITEMS = [
   { id: '#containers', label: '容器', icon: Server },
-  { id: '#docker-hosts', label: '多 Docker', icon: Network },
+  { id: '#docker-hosts', label: '实例', icon: Network },
   { id: '#images', label: '镜像', icon: Box },
   { id: '#compose', label: '项目', icon: Layers },
   { id: '#schedules', label: '定时', icon: Clock },

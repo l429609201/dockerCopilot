@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Save, AlertTriangle, FolderSearch } from 'lucide-react'
-import { containerAPI, hostPathAPI } from '../api/client.js'
+import { containerAPI, imageAPI, hostPathAPI } from '../api/client.js'
 import { DirectoryPicker } from './DirectoryPicker.jsx'
 import { ContainerPathPicker } from './ContainerPathPicker.jsx'
 import { useHostPathResolve } from '../hooks/useHostPathResolve.jsx'
@@ -45,7 +45,9 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
   // 容器是否运行中（决定容器内路径浏览是否可用，exec 需容器运行）
   const running = container.status === 'running'
   // 是否本地 Docker 主机（hostId 空或 'local' 视为本地）。仅本地容器需把 DC 容器内挂载源 resolve 成宿主机真实路径
-  const isLocalHost = !container.hostId || container.hostId === 'local'
+  // 统一主机标识，避免仅含 HostID 的远程容器被误判本地或切换后继续沿用旧主机。
+  const hostId = container.hostId || container.HostID
+  const isLocalHost = !hostId || hostId === 'local'
   const { available: resolveAvailable, reason: resolveReason, resolve: resolveHostPath } = useHostPathResolve()
   // 左侧「宿主机路径」浏览按钮启用条件：仅本地容器 + 宿主机路径映射可用（/compose 映射已配置）。
   // 远程容器 DC 摸不到宿主机文件系统；映射未配置时选出的路径无法反拼成宿主机真实路径。
@@ -179,7 +181,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         setLoading(false)
       }
     })()
-  }, [container.ID, isLocalHost, resolveAvailable, resolveHostPath])
+  }, [container.ID, hostId, isLocalHost, resolveAvailable, resolveHostPath])
 
   // 提交编辑（转为后端 EditSpec 格式）
   // 检查镜像是否存在于本地
@@ -189,23 +191,23 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
       const res = await imageAPI.getImages()
       const images = res.data?.data || []
 
-      // 解析镜像名称和标签
-      const [nameWithoutTag, tag] = imageName.includes(':')
-        ? imageName.split(':')
-        : [imageName, 'latest']
+      // 标签分隔符只认最后一个路径段，避免把 registry:port 当成镜像标签。
+      const tagIndex = imageName.lastIndexOf(':')
+      const hasTag = tagIndex > imageName.lastIndexOf('/')
+      const nameWithoutTag = hasTag ? imageName.slice(0, tagIndex) : imageName
+      const tag = hasTag ? imageName.slice(tagIndex + 1) : 'latest'
 
       // 检查是否存在匹配的镜像（需要考虑 hostId）
       const exists = images.some(img => {
-        // 如果有 hostId，必须匹配主机
-        if (hostId && img.hostId !== hostId) {
+        // 镜像必须属于目标主机，本地空 ID 与 local 归一后再比较。
+        if ((img.hostId || 'local') !== (hostId || 'local')) {
           return false
         }
         // 检查镜像名称和标签是否匹配
-        const imgFullName = `${img.imageName}:${img.imageTag}`
-        const imgNameWithLatest = img.imageName.includes(':') ? img.imageName : `${img.imageName}:latest`
+        // 镜像列表接口输出 name/tag，不能使用不存在的 imageName/imageTag 字段。
+        const imgFullName = `${img.name}:${img.tag}`
         return imgFullName === imageName ||
-               imgNameWithLatest === imageName ||
-               img.imageName === nameWithoutTag && img.imageTag === tag
+               (img.name === nameWithoutTag && img.tag === tag)
       })
 
       return exists
@@ -219,28 +221,16 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
     setSaving(true)
     setError('')
     try {
-      // 【新增】如果镜像被修改，检查本地是否存在
-      const originalImage = container.image || container.Image || ''
+      // 重建仅使用目标主机已有镜像，不能把任务提交描述为自动拉取或完成。
+      const originalImage = container.usingImage || container.image || container.Image || ''
       const currentImage = form.image?.trim() || ''
 
       if (currentImage && currentImage !== originalImage) {
         const exists = await checkImageExists(currentImage)
         if (!exists) {
-          // 镜像不存在，弹窗询问用户
-          const userChoice = window.confirm(
-            `⚠️ 镜像 "${currentImage}" 在本地不存在！\n\n` +
-            `如果继续保存，容器重建时会自动拉取该镜像。\n` +
-            `如果拉取失败（网络问题/镜像不存在），重建会失败并自动回滚到旧容器。\n\n` +
-            `点击"确定"继续保存（自动拉取镜像）\n` +
-            `点击"取消"返回重新编辑镜像名称`
-          )
-
-          if (!userChoice) {
-            // 用户选择返回编辑
-            setSaving(false)
-            return
-          }
-          // 用户选择继续，后端会自动拉取镜像
+          // Recreate 不会拉取镜像，必须先在目标 Docker 主机准备镜像再提交。
+          setError(`目标 Docker 主机不存在镜像「${currentImage}」，请先拉取镜像后重试`)
+          return
         }
       }
 
@@ -302,16 +292,24 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
         nanoCpus,
         confirmWarnings: true,
       }
-      const res = await containerAPI.editContainer(container.ID, spec, container.hostId || container.HostID)
-
-      // 【增强】将编辑任务添加到任务中心，让用户可以看到重建进度
-      const taskID = res.data?.data?.taskID
-      if (taskID) {
-        const containerName = container.name || container.Names?.[0]?.replace(/^\//, '') || container.ID?.slice(0, 12)
-        addTask(taskID, `编辑容器·${containerName}`)
+      const res = await containerAPI.editContainer(container.ID, spec, hostId)
+      // HTTP 200 不代表任务已被接收，业务失败（如重复任务）需留在弹窗显示。
+      if (res.data?.code !== 200 && res.data?.code !== 0) {
+        throw new Error(res.data?.msg || '重建任务提交失败')
       }
+      const taskID = res.data?.data?.taskID
+      if (!taskID) throw new Error('服务未返回重建任务 ID')
 
-      onSuccess?.()
+      // 提交只是开始重建；使用任务中心对象签名，并在真正成功后通知列表刷新。
+      const containerName = container.name || container.Names?.[0]?.replace(/^\//, '') || container.ID?.slice(0, 12)
+      addTask({
+        id: taskID,
+        title: `编辑容器·${containerName}`,
+        onDone: (task) => {
+          if (!task.failed && !task.canceled) onSuccess?.()
+        },
+      })
+      // 异步失败由任务中心展示后端详情，不把任务提交误报为参数编辑成功。
       onClose()
     } catch (e) {
       setError('提交失败：' + (e.response?.data?.msg || e.message))
@@ -403,7 +401,7 @@ export function ContainerEditModal({ container, onClose, onSuccess }) {
                   className="input"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  💡 修改镜像后保存会重建容器。如本地不存在该镜像，系统会提示是否拉取。
+                  修改镜像后保存会重建容器。请先在目标实例准备好所需镜像。
                 </p>
               </Field>
               <Field label="重启策略">
