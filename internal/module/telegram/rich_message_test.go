@@ -132,6 +132,25 @@ func TestRichMessageNetworkFailureAndRedaction(t *testing.T) {
 	}
 }
 
+// 复现线上明确的内容拒绝：可降级，但不能归为接口能力缺失。
+func TestRichContentRequiredFallback(t *testing.T) {
+	for _, method := range []string{"editMessageText", "sendRichMessage"} {
+		err := &apiError{method: method, httpStatus: 400, code: 400, description: "Bad Request: RICH_MESSAGE_CONTENT_REQUIRED"}
+		if !CanFallbackRichMessage(err) || IsRichMessageUnsupported(err) {
+			t.Fatal("明确内容拒绝应允许回退且不误判接口能力")
+		}
+		for _, code := range []int{401, 429, 500} {
+			err.code, err.httpStatus = code, code
+			if CanFallbackRichMessage(err) {
+				t.Fatalf("错误状态 %d 不应降级", code)
+			}
+		}
+	}
+	if CanFallbackRichMessage(errors.New("Bad Request: RICH_MESSAGE_CONTENT_REQUIRED")) || CanFallbackRichMessage(nil) {
+		t.Fatal("非结构化API错误不能触发回退")
+	}
+}
+
 func TestRichEditNotModified(t *testing.T) {
 	c := testClient(func(r *http.Request) (*http.Response, error) {
 		return fakeResponse(400, `{"ok":false,"error_code":400,"description":"Bad Request: message is not modified"}`), nil

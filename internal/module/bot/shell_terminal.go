@@ -386,13 +386,21 @@ func shellBody(s *shellSession, plain bool) string {
 	if s.showHistory && plain {
 		output = strings.Join(s.history, "\n")
 	}
+	// 首次连接和清屏使用可见占位；历史折叠块尤其不能只有标题和空正文。
+	if strings.TrimSpace(output) == "" {
+		output = "等待终端输出…"
+	}
 	budget := 24000
 	if plain {
 		budget = 3000
 	}
 	body := fmt.Sprintf("<b>🖥 %s · 持久 TTY</b>\n行式转录（非全屏终端）；发送文本后自动 Enter。\n仅发起者可操作；15分钟无输入自动关闭。\n<pre>%s</pre>", escapeHTML(truncName(s.name, 50)), escapedTailBudget(output, budget))
 	if !plain {
-		body += "<details><summary>最近命令历史</summary><pre>" + escapedTailBudget(strings.Join(s.history, "\n"), 3000) + "</pre></details>"
+		history := strings.Join(s.history, "\n")
+		if strings.TrimSpace(history) == "" {
+			history = "暂无命令历史"
+		}
+		body += "<details><summary>最近命令历史</summary><pre>" + escapedTailBudget(history, 3000) + "</pre></details>"
 	}
 	return body
 }
@@ -420,7 +428,7 @@ func (b *Bot) renderShell(s *shellSession, initial bool) error {
 		if !plain {
 			err = s.client.EditRichMessage(s.chatID, messageID, rich, nil)
 		}
-		if plain || telegram.IsRichMessageUnsupported(err) {
+		if plain || telegram.CanFallbackRichMessage(err) {
 			plain = true
 			err = s.client.EditMessageText(s.chatID, messageID, fallbackBody, kb)
 		}
@@ -428,7 +436,7 @@ func (b *Bot) renderShell(s *shellSession, initial bool) error {
 		if !plain {
 			messageID, err = s.client.SendRichMessageReturnID(s.chatID, rich, nil)
 		}
-		if plain || telegram.IsRichMessageUnsupported(err) {
+		if plain || telegram.CanFallbackRichMessage(err) {
 			plain = true
 			messageID, err = s.client.SendMessageReturnID(s.chatID, fallbackBody, kb)
 		}
@@ -468,7 +476,7 @@ func (b *Bot) finishShell(chatID int64, s *shellSession) {
 			_ = s.client.EditMessageText(chatID, id, fallbackBody, kb)
 		} else {
 			err := s.client.EditRichMessage(chatID, id, shellRichHTML(body, kb), nil)
-			if telegram.IsRichMessageUnsupported(err) {
+			if telegram.CanFallbackRichMessage(err) {
 				_ = s.client.EditMessageText(chatID, id, fallbackBody, kb)
 			}
 		}

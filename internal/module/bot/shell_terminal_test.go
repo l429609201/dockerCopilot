@@ -144,6 +144,17 @@ func TestShellRichEncodedButtons(t *testing.T) {
 	}
 }
 
+// 首次连接和清屏没有输出，不能向 Telegram 提交空 pre 内容块。
+func TestShellEmptyRichBlocksHavePlaceholder(t *testing.T) {
+	for _, empty := range []string{"", " \n\t"} {
+		s := &shellSession{name: "test", output: terminalOutput{text: empty}, history: []string{empty}}
+		body := shellBody(s, false)
+		if strings.Contains(body, "<pre></pre>") || !strings.Contains(body, "等待终端输出…") || !strings.Contains(body, "暂无命令历史") {
+			t.Fatal("初始化或清屏产生空富消息内容块")
+		}
+	}
+}
+
 func TestShellIgnoresNonText(t *testing.T) {
 	b := &Bot{}
 	s := &shellSession{input: make(chan shellInput, 2)}

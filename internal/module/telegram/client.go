@@ -90,6 +90,20 @@ func IsRichMessageUnsupported(err error) bool {
 	return false
 }
 
+// CanFallbackRichMessage 区分接口不支持与服务端明确拒绝富消息内容。
+// 内容拒绝不能证明能力缺失，但请求已失败，可以用普通消息继续终端交互。
+// 网络异常、限流和服务端错误不在此列，避免不确定结果下重复发送。
+func CanFallbackRichMessage(err error) bool {
+	if IsRichMessageUnsupported(err) {
+		return true
+	}
+	var e *apiError
+	return errors.As(err, &e) &&
+		(e.method == "sendRichMessage" || e.method == "editMessageText") &&
+		e.httpStatus == 400 && e.code == 400 &&
+		strings.EqualFold(strings.TrimSpace(e.description), "Bad Request: RICH_MESSAGE_CONTENT_REQUIRED")
+}
+
 // call 保留原有接口；不截断 HTML，格式及长度错误由 Telegram 明确返回给上层。
 func (c *Client) call(method string, payload interface{}, out interface{}) error {
 	var data []byte
