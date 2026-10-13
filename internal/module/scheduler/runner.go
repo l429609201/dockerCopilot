@@ -68,8 +68,8 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		recordResult(svcCtx, rule.ID, "获取容器列表失败："+err.Error())
 		// 汇总任务标记失败结束
 		svcCtx.UpdateProgress(summaryTaskID, svc.TaskProgress{
-			TaskID:   summaryTaskID, Name: summaryName, Percentage: 100,
-			Message:  "获取容器列表失败", DetailMsg: err.Error(),
+			TaskID: summaryTaskID, Name: summaryName, Percentage: 100,
+			Message: "获取容器列表失败", DetailMsg: err.Error(),
 			TaskType: svc.TaskTypeScheduledUpdate, IsDone: true, Failed: true,
 		})
 		return
@@ -129,7 +129,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		// 策略：仅在有更新时执行
 		if rule.OnlyWhenUpdate && !c.Update {
 			skippedList = append(skippedList, notify.ResultItem{
-				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image, Reason: "已是最新版本",
+				HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image, Reason: "已是最新版本",
 			})
 			continue
 		}
@@ -137,7 +137,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if rule.SkipInvalidTag && !isValidImageRef(c.Image) {
 			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, dispName, c.Image)
 			skippedList = append(skippedList, notify.ResultItem{
-				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image,
+				HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image,
 				Reason: "镜像标签无效: " + shortImage(c.Image),
 			})
 			continue
@@ -147,7 +147,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if autoAuth {
 			auth = utiles.MatchRegistryAuthByImage(svcCtx.AppConfig, c.Image)
 		}
-		item := notify.ResultItem{HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image}
+		item := notify.ResultItem{HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image}
 		if runOne(svcCtx, hostID, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			item.Reason = "镜像: " + shortImage(c.Image)
 			updatedList = append(updatedList, item)
@@ -177,12 +177,14 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 
 	// 保存本次执行明细到公共 result store：供 Bot 端「查看跳过/失败明细」和「重试全部失败」取用。
 	result := &notify.RuleUpdateResult{
-		RuleID:   rule.ID,
-		RuleName: rule.Name,
-		KeepOld:  rule.KeepOldContainer,
-		Updated:  updatedList,
-		Skipped:  skippedList,
-		Failed:   failedList,
+		// 每次运行独立标识，旧通知不会跳转到新一轮结果。
+		ExecutionID: uuid.NewString(),
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		KeepOld:     rule.KeepOldContainer,
+		Updated:     updatedList,
+		Skipped:     skippedList,
+		Failed:      failedList,
 	}
 	notify.SaveRuleUpdateResult(result)
 
@@ -203,19 +205,19 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	if len(updatedList) > 0 {
 		msg.WriteString("\n✅ 已更新：\n")
 		for _, item := range updatedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	if len(skippedList) > 0 {
 		msg.WriteString("\n⏭️ 已跳过：\n")
 		for _, item := range skippedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	if len(failedList) > 0 {
 		msg.WriteString("\n❌ 更新失败：\n")
 		for _, item := range failedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	notifier.Notify("定时更新完成", msg.String())
@@ -237,7 +239,7 @@ func buildUpdateDetail(updated, skipped, failed []notify.ResultItem) string {
 				sb.WriteString(fmt.Sprintf("  … 及其余 %d 个\n", len(items)-maxPerGroup))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("  • %s（%s）\n", it.Name, it.Reason))
+			sb.WriteString(fmt.Sprintf("  • %s（%s）\n", it.Label(), it.Reason))
 		}
 	}
 	var sb strings.Builder

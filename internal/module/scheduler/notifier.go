@@ -105,7 +105,8 @@ func (s *Scheduler) runUpdateCheck() {
 		if imageToUse == "" {
 			imageToUse = c.Image // 降级使用 Image 字段
 		}
-		item := notify.UpdateItem{ID: c.ID, Name: name, Image: imageToUse}
+		// 通知携带真实主机身份，防止后续按钮错误回退本机。
+		item := notify.UpdateItem{HostID: normalizeHostID(c.HostID), HostName: c.HostName, ID: c.ID, Name: name, Image: imageToUse}
 		if _, ok := muted[name]; ok {
 			mutedPending = append(mutedPending, item) // 已屏蔽
 		} else {

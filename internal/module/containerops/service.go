@@ -162,9 +162,40 @@ func (s *Service) Rename(id, newName string) error {
 // imageNameAndTag 为空时表示沿用容器当前镜像（等同"检查更新后重建"）。
 // 复用与 HTTP 层一致的任务管理器与自更新逻辑，返回提交的 taskID。
 func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
+	// 兼容旧调用签名；展示名或旧按钮名称不可信，重建只能使用 inspect 的真实名称。
+	return s.UpdateWithOptions(id, imageNameAndTag, UpdateOptions{})
+}
+
+// UpdateOptions 保留规则重试的原始更新策略，零值沿用手动更新行为。
+type UpdateOptions struct {
+	KeepOldContainer bool
+}
+
+// UpdateWithOptions 在提交及任务执行前核验目标身份，不接受外部展示名称。
+func (s *Service) UpdateWithOptions(id, imageNameAndTag string, opts UpdateOptions) (string, error) {
+	cli, err := s.cliOrErr()
+	if err != nil {
+		return "", err
+	}
+	inspectCtx, inspectCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	inspected, err := cli.ContainerInspect(inspectCtx, id)
+	inspectCancel()
+	if err != nil {
+		return "", fmt.Errorf("检查更新目标失败: %w", err)
+	}
+	if inspected.ID == "" || strings.TrimPrefix(inspected.Name, "/") == "" {
+		return "", fmt.Errorf("更新目标缺少完整 ID 或真实名称")
+	}
+	id = inspected.ID
+	// 镜像留空时读取创建配置，避免列表 Image 退化为镜像摘要。
+	if imageNameAndTag == "" && inspected.Config != nil {
+		imageNameAndTag = inspected.Config.Image
+	}
+	if strings.TrimSpace(imageNameAndTag) == "" {
+		return "", fmt.Errorf("更新目标缺少有效镜像引用")
+	}
 	taskID := uuid.New().String()
-	// 默认删除旧容器（不再使用环境变量控制）
-	delOldContainer := true
+	delOldContainer := !opts.KeepOldContainer
 	timeoutSec := s.svcCtx.Config.Task.PullTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 1800
@@ -175,6 +206,19 @@ func (s *Service) Update(id, name, imageNameAndTag string) (string, error) {
 	startErr := s.svcCtx.TaskManager.TryStart(taskID, id, svc.TaskTypeContainerUpdate, func(taskCtx context.Context) {
 		ctxWithTimeout, cancel := context.WithTimeout(taskCtx, time.Duration(timeoutSec)*time.Second)
 		defer cancel()
+		// 排队期间容器可能被重命名或删除，按已解析的完整 ID 再次核验，禁止按名替换目标。
+		current, inspectErr := cli.ContainerInspect(ctxWithTimeout, id)
+		if inspectErr != nil || current.ID != id || strings.TrimPrefix(current.Name, "/") == "" {
+			if inspectErr == nil {
+				inspectErr = fmt.Errorf("更新目标身份已变化")
+			}
+			s.svcCtx.UpdateProgress(taskID, svc.TaskProgress{
+				TaskID: taskID, TaskType: svc.TaskTypeContainerUpdate,
+				IsDone: true, Failed: true, Message: "核验更新目标失败", DetailMsg: inspectErr.Error(),
+			})
+			return
+		}
+		name := strings.TrimPrefix(current.Name, "/")
 		// 目标是本程序自身时，走辅助容器方案，避免"自己停自己"卡死。
 		// 仅本地主机允许走自更新辅助容器；远程 hostId 若误命中本地容器 ID，
 		// 不能回退本地 Docker 执行自更新流程。

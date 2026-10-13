@@ -3,11 +3,14 @@ package telegram
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -24,7 +27,7 @@ func NewClient(token, proxy string) (*Client, error) {
 	if proxy != "" {
 		proxyURL, err := url.Parse(proxy)
 		if err != nil {
-			return nil, fmt.Errorf("解析代理地址失败: %w", err)
+			return nil, fmt.Errorf("解析代理地址失败，请检查代理配置")
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
@@ -40,40 +43,129 @@ type apiResponse struct {
 	OK          bool            `json:"ok"`
 	Result      json.RawMessage `json:"result"`
 	Description string          `json:"description"`
+	ErrorCode   int             `json:"error_code"`
+	Parameters  struct {
+		RetryAfter int `json:"retry_after"`
+	} `json:"parameters"`
 }
 
-// call 执行一次 API 调用并解析 result 到 out。
-func (c *Client) call(method string, payload interface{}, out interface{}) error {
-	var body io.Reader
-	if payload != nil {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(data)
-	}
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/"+method, body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+// apiError 保存已脱敏的结构化 API 错误，网络错误不会被判为接口不支持。
+type apiError struct {
+	method      string
+	httpStatus  int
+	code        int
+	description string
+}
 
-	var apiResp apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return err
+func (e *apiError) Error() string {
+	return fmt.Sprintf("telegram api error (HTTP %d, code %d): %s", e.httpStatus, e.code, e.description)
+}
+
+// IsRichMessageUnsupported 仅识别明确能力拒绝，防止网络失败后降级重复发送。
+// 泛化 404 可能是无效 token，不能作为不支持依据。
+func IsRichMessageUnsupported(err error) bool {
+	var e *apiError
+	if !errors.As(err, &e) || (e.method != "sendRichMessage" && e.method != "editMessageText") {
+		return false
 	}
-	if !apiResp.OK {
-		return fmt.Errorf("telegram api error: %s", apiResp.Description)
+	if (e.httpStatus != 400 && e.httpStatus != 404) || (e.code != 400 && e.code != 404) {
+		return false
 	}
-	if out != nil && len(apiResp.Result) > 0 {
-		return json.Unmarshal(apiResp.Result, out)
+	description := strings.ToLower(e.description)
+	for _, phrase := range []string{
+		"method not found", "unknown method", "method is not supported", "method not supported",
+		"rich_message is not supported", "rich_message not supported", "rich messages are not supported",
+		"rich messages not supported", "unknown field rich_message", "unknown parameter rich_message",
+		"unsupported parameter rich_message", "unsupported field rich_message",
+	} {
+		if strings.Contains(description, phrase) {
+			return true
+		}
 	}
-	return nil
+	return false
+}
+
+// call 保留原有接口；不截断 HTML，格式及长度错误由 Telegram 明确返回给上层。
+func (c *Client) call(method string, payload interface{}, out interface{}) error {
+	var data []byte
+	if payload != nil {
+		var err error
+		data, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("Telegram 请求编码失败")
+		}
+	}
+	return c.request(method, "application/json", data, out)
+}
+
+// safeTransportError 不输出包含 Bot token 的请求 URL。
+func (c *Client) safeTransportError(err error) error {
+	// http.Client 可能再次包装 RoundTripper 返回的 url.Error，逐层去除请求地址。
+	for {
+		var urlErr *url.Error
+		if !errors.As(err, &urlErr) || urlErr.Err == nil {
+			break
+		}
+		err = urlErr.Err
+	}
+	return fmt.Errorf("Telegram 请求失败: %s", c.redact(err.Error()))
+}
+
+func (c *Client) redact(text string) string {
+	if c.token != "" {
+		text = strings.ReplaceAll(text, c.token, "[REDACTED]")
+		text = strings.ReplaceAll(text, url.QueryEscape(c.token), "[REDACTED]")
+	}
+	return text
+}
+
+// request 最多三次尝试；发送消息或文件遇到网络错误可能已经送达，绝不自动重发。
+// 仅明确拒绝的 429 允许重发；超过五秒的等待交还上层，避免长期阻塞入站处理。
+func (c *Client) request(method, contentType string, data []byte, out interface{}) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, c.baseURL+"/"+method, bytes.NewReader(data))
+		if err != nil {
+			return c.safeTransportError(err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			var temporary interface{ Timeout() bool }
+			retryable := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || (errors.As(err, &temporary) && temporary.Timeout())
+			if attempt < 2 && retryable && (method == "getUpdates" || method == "editMessageText" || method == "setMyCommands") {
+				time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+				continue
+			}
+			return c.safeTransportError(err)
+		}
+		var apiResp apiResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return fmt.Errorf("Telegram 响应解析失败 (HTTP %d)", resp.StatusCode)
+		}
+		if !apiResp.OK || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if method == "editMessageText" && (apiResp.ErrorCode == 400 || resp.StatusCode == 400) && strings.Contains(strings.ToLower(apiResp.Description), "message is not modified") {
+				return nil
+			}
+			if apiResp.ErrorCode == 429 || resp.StatusCode == 429 {
+				delay := apiResp.Parameters.RetryAfter
+				if attempt < 2 && delay > 0 && delay <= 5 {
+					time.Sleep(time.Duration(delay) * time.Second)
+					continue
+				}
+				return fmt.Errorf("Telegram 限流 (429)，retry_after=%d 秒: %s", delay, c.redact(apiResp.Description))
+			}
+			return &apiError{method: method, httpStatus: resp.StatusCode, code: apiResp.ErrorCode, description: c.redact(apiResp.Description)}
+		}
+		if out != nil && len(apiResp.Result) > 0 {
+			if err := json.Unmarshal(apiResp.Result, out); err != nil {
+				return fmt.Errorf("Telegram 返回结果解析失败")
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("Telegram 请求重试次数已耗尽")
 }
 
 // GetUpdates 长轮询获取更新。offset 为已确认的最大 update_id+1，timeout 为长轮询秒数。
@@ -113,6 +205,37 @@ func (c *Client) SendMessageReturnID(chatID int64, text string, keyboard *Inline
 	return msg.MessageID, nil
 }
 
+// SendRichMessageReturnID 使用独立的富消息接口发送 HTML，不改变普通消息语义。
+// html 由调用方转义并限制长度；仅关闭终端内容的自动实体检测，不截断原文。
+func (c *Client) SendRichMessageReturnID(chatID int64, html string, keyboard *InlineKeyboardMarkup) (int64, error) {
+	payload := map[string]interface{}{
+		"chat_id":      chatID,
+		"rich_message": InputRichMessage{HTML: html, SkipEntityDetection: true},
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+	var msg Message
+	if err := c.call("sendRichMessage", payload, &msg); err != nil {
+		return 0, err
+	}
+	return msg.MessageID, nil
+}
+
+// EditRichMessage 通过 editMessageText.rich_message 原地更新，不发送 text/parse_mode。
+// nil 键盘显式清旧按钮，避免终端结束后仍残留可操作按钮。
+func (c *Client) EditRichMessage(chatID, messageID int64, html string, keyboard *InlineKeyboardMarkup) error {
+	if keyboard == nil {
+		keyboard = &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{}}
+	}
+	return c.call("editMessageText", map[string]interface{}{
+		"chat_id":      chatID,
+		"message_id":   messageID,
+		"rich_message": InputRichMessage{HTML: html, SkipEntityDetection: true},
+		"reply_markup": keyboard,
+	}, nil)
+}
+
 // DeleteMessage 删除指定消息。私聊中 Bot 可删除收到的消息（48 小时内）。
 func (c *Client) DeleteMessage(chatID, messageID int64) error {
 	payload := map[string]interface{}{
@@ -135,9 +258,11 @@ func (c *Client) EditMessageText(chatID, messageID int64, text string, keyboard 
 		"text":       text,
 		"parse_mode": "HTML",
 	}
-	if keyboard != nil {
-		payload["reply_markup"] = keyboard
+	// 编辑时 nil 表示清空键盘，不能省略该字段，否则旧操作按钮仍可能可点。
+	if keyboard == nil {
+		keyboard = &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{}}
 	}
+	payload["reply_markup"] = keyboard
 	return c.call("editMessageText", payload, nil)
 }
 
@@ -166,25 +291,7 @@ func (c *Client) SendDocument(chatID int64, filename string, content []byte, cap
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/sendDocument", &buf)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	var apiResp apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return err
-	}
-	if !apiResp.OK {
-		return fmt.Errorf("telegram api error: %s", apiResp.Description)
-	}
-	return nil
+	return c.request("sendDocument", writer.FormDataContentType(), buf.Bytes(), nil)
 }
 
 // AnswerCallbackQuery 应答一次回调查询，消除按钮 loading 状态。
