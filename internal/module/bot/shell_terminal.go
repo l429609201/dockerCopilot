@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,15 @@ type shellSession struct {
 	keyboard                     *telegram.InlineKeyboardMarkup
 	client                       *telegram.Client
 	plain                        bool
+	// 目录状态与终端输出分离，读取结果通过代次检查防止覆盖后续视图。
+	directoryView       bool
+	directoryLoading    bool
+	directoryGeneration uint64
+	directoryCancel     context.CancelFunc
+	directory           containerops.TerminalDirectory
+	directoryError      string
+	directoryPage       int
+	directoryKeyboard   *telegram.InlineKeyboardMarkup
 }
 type shellInput struct {
 	data      string
@@ -142,6 +152,7 @@ func (s *shellSession) close() bool {
 		return false
 	}
 	s.closed = true
+	s.leaveDirectoryLocked()
 	close(s.done)
 	t := s.terminal
 	cancel := s.cancel
@@ -232,8 +243,14 @@ func (b *Bot) startShell(s *shellSession) {
 		b.removeShell(s)
 		return
 	}
+	directoryKB, err := b.encodeKeyboard(s.chatID, shellDirectoryKeyboard(s.token))
+	if err != nil {
+		b.removeShell(s)
+		return
+	}
 	s.mu.Lock()
 	s.keyboard = kb
+	s.directoryKeyboard = directoryKB
 	s.mu.Unlock()
 	if err = b.renderShell(s, true); err != nil {
 		// 界面初始化失败必须可见，避免用户点击后终端无声关闭。
@@ -319,6 +336,7 @@ func (b *Bot) enqueueShell(s *shellSession, in shellInput) bool {
 	select {
 	case s.input <- in:
 		s.lastActive = time.Now()
+		s.leaveDirectoryLocked()
 		s.showHistory = false
 		return true
 	default:
@@ -339,6 +357,7 @@ func shellKeyboard(token string) *telegram.InlineKeyboardMarkup {
 	for _, items := range [][][2]string{
 		{{"Ctrl+C", "interrupt"}, {"Tab", "tab"}, {"Enter", "enter"}, {"Esc", "esc"}},
 		{{"↑", "up"}, {"↓", "down"}, {"←", "left"}, {"→", "right"}},
+		{{"📁 目录", "directory"}},
 		{{"📜 历史", "history"}, {"终端", "output"}, {"清屏", "clear"}, {"关闭", "close"}},
 	} {
 		row := []telegram.InlineKeyboardButton{}
@@ -348,6 +367,88 @@ func shellKeyboard(token string) *telegram.InlineKeyboardMarkup {
 		rows = append(rows, row)
 	}
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func (s *shellSession) leaveDirectoryLocked() {
+	s.directoryView = false
+	s.directoryLoading = false
+	s.directoryGeneration++
+	if s.directoryCancel != nil {
+		s.directoryCancel()
+		s.directoryCancel = nil
+	}
+}
+
+func shellDirectoryKeyboard(token string) *telegram.InlineKeyboardMarkup {
+	rows := [][]telegram.InlineKeyboardButton{{
+		{Text: "⬅️ 上页", CallbackData: "shell|" + token + "|dirprev"},
+		{Text: "刷新", CallbackData: "shell|" + token + "|dirrefresh"},
+		{Text: "下页 ➡️", CallbackData: "shell|" + token + "|dirnext"},
+	}, {{Text: "返回终端", CallbackData: "shell|" + token + "|output"}}}
+	return &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+const shellDirectoryPageSize = 20
+
+// 文件名按带引号的字符串显示；换行、反斜线和控制符不可伪装成另一条记录。
+func shellDirectoryLabel(name string, budget int) string {
+	end := 0
+	for end < len(name) {
+		_, n := utf8.DecodeRuneInString(name[end:])
+		if len(escapeHTML(strconv.QuoteToGraphic(name[:end+n]))) > budget {
+			break
+		}
+		end += n
+	}
+	label := escapeHTML(strconv.QuoteToGraphic(name[:end]))
+	if end < len(name) {
+		label += "…[名称截断]"
+	}
+	return label
+}
+
+func shellDirectoryBody(s *shellSession) string {
+	header := "<b>📁 会话 Shell 目录</b>\n读取初始 Shell 的目录快照（不跟随嵌套 Shell）。\n发送文本或控制键将返回终端。\n"
+	if s.directoryLoading {
+		return header + "正在读取…"
+	}
+	if s.directoryError != "" {
+		return header + "❌ " + escapeHTML(s.directoryError)
+	}
+	n := len(s.directory.Entries)
+	pages := (n + shellDirectoryPageSize - 1) / shellDirectoryPageSize
+	if pages == 0 {
+		pages = 1
+	}
+	page := s.directoryPage
+	if page < 0 {
+		page = 0
+	}
+	if page >= pages {
+		page = pages - 1
+	}
+	var out strings.Builder
+	out.WriteString(header + "路径：<code>" + shellDirectoryLabel(s.directory.Path, 240) + "</code>\n")
+	out.WriteString(fmt.Sprintf("第 %d/%d 页 · 已读取 %d 项 · 每页最多20项\n", page+1, pages, n))
+	if s.directory.Truncated {
+		out.WriteString("⚠️ 已达读取上限，列表已截断；以上不是目录总数。\n")
+	}
+	if n == 0 {
+		out.WriteString("（空目录）\n")
+	}
+	end := (page + 1) * shellDirectoryPageSize
+	if end > n {
+		end = n
+	}
+	for _, e := range s.directory.Entries[page*shellDirectoryPageSize : end] {
+		icon := map[string]string{"directory": "📁", "symlink": "🔗", "executable": "⚙️", "file": "📄", "other": "❔"}[e.Kind]
+		if icon == "" {
+			icon = "❔"
+		}
+		out.WriteString(icon + " <code>" + shellDirectoryLabel(e.Name, 100) + "</code>\n")
+	}
+	out.WriteString("📁目录 🔗链接 ⚙️可执行 📄普通文件 ❔其他\n名称以引号显示，\\n 表示换行。")
+	return out.String()
 }
 
 // shellRichHTML 只把已编码短令牌放进 data 属性，输出内容始终先 HTML 转义。
@@ -382,6 +483,9 @@ func escapedTailBudget(text string, budget int) string {
 	return escapeHTML(string(runes[start:]))
 }
 func shellBody(s *shellSession, plain bool) string {
+	if s.directoryView {
+		return shellDirectoryBody(s)
+	}
 	output := s.output.text
 	if s.showHistory && plain {
 		output = strings.Join(s.history, "\n")
@@ -419,6 +523,9 @@ func (b *Bot) renderShell(s *shellSession, initial bool) error {
 		return nil
 	}
 	kb := s.keyboard
+	if s.directoryView {
+		kb = s.directoryKeyboard
+	}
 	plain := s.plain
 	messageID := s.resultMsgID
 	s.mu.Unlock()
@@ -512,14 +619,25 @@ func (b *Bot) handleShellCallback(chatID int64, cb *telegram.CallbackQuery, mess
 	switch action {
 	case "close":
 		b.finishShell(chatID, s)
+	case "directory", "dirrefresh":
+		b.readShellDirectory(s)
+	case "dirprev", "dirnext":
+		delta := 1
+		if action == "dirprev" {
+			delta = -1
+		}
+		s.pageDirectory(delta)
+		go func() { _ = b.renderShell(s, false) }()
 	case "history", "output", "clear":
 		s.mu.Lock()
+		s.leaveDirectoryLocked()
 		s.lastActive = time.Now()
 		s.showHistory = action == "history"
 		if action == "clear" {
 			s.output.text = ""
 		}
 		s.mu.Unlock()
+		go func() { _ = b.renderShell(s, false) }()
 	default:
 		controls := map[string]string{"esc": "\x1b", "interrupt": "\x03", "tab": "\t", "enter": "\r", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D", "right": "\x1b[C"}
 		if data, ok := controls[action]; ok {
@@ -533,6 +651,7 @@ func (b *Bot) handleShellCallback(chatID int64, cb *telegram.CallbackQuery, mess
 func (b *Bot) renewShellKeyboard(s *shellSession) {
 	s.mu.Lock()
 	kb := s.keyboard
+	directoryKB := s.directoryKeyboard
 	closed := s.closed
 	s.mu.Unlock()
 	if closed || kb == nil {
@@ -540,11 +659,16 @@ func (b *Bot) renewShellKeyboard(s *shellSession) {
 	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	for _, row := range kb.InlineKeyboard {
-		for _, button := range row {
-			if record, ok := b.callbackStore[button.CallbackData]; ok {
-				record.ExpiresAt = time.Now().Add(callbackTTL)
-				b.callbackStore[button.CallbackData] = record
+	for _, keyboard := range []*telegram.InlineKeyboardMarkup{kb, directoryKB} {
+		if keyboard == nil {
+			continue
+		}
+		for _, row := range keyboard.InlineKeyboard {
+			for _, button := range row {
+				if record, ok := b.callbackStore[button.CallbackData]; ok {
+					record.ExpiresAt = time.Now().Add(callbackTTL)
+					b.callbackStore[button.CallbackData] = record
+				}
 			}
 		}
 	}

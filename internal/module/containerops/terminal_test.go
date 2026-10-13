@@ -61,6 +61,10 @@ func (f *terminalFakeClient) ContainerExecAttach(ctx context.Context, id string,
 	}
 	return types.HijackedResponse{Conn: f.conn, Reader: bufio.NewReader(strings.NewReader("tty-output"))}, nil
 }
+func (f *terminalFakeClient) ContainerExecInspect(context.Context, string) (container.ExecInspect, error) {
+	return container.ExecInspect{}, nil
+}
+
 func (f *terminalFakeClient) ContainerExecResize(_ context.Context, id string, opts container.ResizeOptions) error {
 	f.resize = append(f.resize, opts)
 	return f.resizeErr
@@ -106,7 +110,7 @@ func TestTerminalCreateAndLifetime(t *testing.T) {
 	if f.createTarget != terminalTestID || !f.create.AttachStdin || !f.create.AttachStdout || !f.create.AttachStderr || !f.create.Tty {
 		t.Fatalf("unexpected create: %#v", f.create)
 	}
-	if !reflect.DeepEqual(f.create.Cmd, []string{"/bin/sh", "-i"}) || !f.attachOptions.Tty {
+	if !reflect.DeepEqual(f.create.Cmd, []string{"/bin/sh", "-c", "export DC_TERMINAL_PID=$$; exec \"$1\" -i", "terminal", "/bin/sh"}) || !f.attachOptions.Tty {
 		t.Fatalf("unexpected shell or attach: %#v / %#v", f.create.Cmd, f.attachOptions)
 	}
 	if len(f.resize) != 1 || f.resize[0].Width != 80 || f.resize[0].Height != 24 {
@@ -155,7 +159,7 @@ func TestTerminalValidationAndNoRetry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(f.create.Cmd[0], strings.TrimPrefix(shell, "/bin/")) {
+		if !strings.HasSuffix(f.create.Cmd[len(f.create.Cmd)-1], strings.TrimPrefix(shell, "/bin/")) {
 			t.Fatal(f.create.Cmd)
 		}
 		_ = term.Close()

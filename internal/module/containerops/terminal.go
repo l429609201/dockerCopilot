@@ -2,6 +2,7 @@ package containerops
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -29,16 +30,19 @@ type terminalClient interface {
 	ContainerExecCreate(context.Context, string, container.ExecOptions) (types.IDResponse, error)
 	ContainerExecAttach(context.Context, string, container.ExecAttachOptions) (types.HijackedResponse, error)
 	ContainerExecResize(context.Context, string, container.ResizeOptions) error
+	ContainerExecInspect(context.Context, string) (container.ExecInspect, error)
 }
 
 type dockerTerminal struct {
-	client    terminalClient
-	execID    string
-	attach    types.HijackedResponse
-	cancel    context.CancelFunc
-	writeMu   sync.Mutex
-	closeOnce sync.Once
-	closed    atomic.Bool
+	client      terminalClient
+	containerID string
+	token       string
+	execID      string
+	attach      types.HijackedResponse
+	cancel      context.CancelFunc
+	writeMu     sync.Mutex
+	closeOnce   sync.Once
+	closed      atomic.Bool
 }
 
 // OpenTerminal 仅对当前 Service 的主机及完整容器 ID 建立交互终端，不按名查找或重试。
@@ -78,9 +82,17 @@ func openTerminal(ctx context.Context, cli terminalClient, containerID, shell st
 	if inspected.State == nil || !inspected.State.Running || inspected.State.Paused {
 		return nil, fmt.Errorf("终端容器必须处于运行且未暂停状态")
 	}
+	// 在 exec 的初始环境中放置随机标记；wrapper 用同一 PID exec 成交互 shell。
+	// 后续目录读取仅在独立 exec 中检查 /proc，绝不向活动 TTY 发送探针。
+	var nonce [24]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, fmt.Errorf("生成终端标记失败: %w", err)
+	}
+	token := hex.EncodeToString(nonce[:])
 	created, err := cli.ContainerExecCreate(buildCtx, containerID, container.ExecOptions{
 		AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: true,
-		Cmd: []string{shell, "-i"}, Env: []string{"TERM=xterm"},
+		Cmd: []string{"/bin/sh", "-c", "export DC_TERMINAL_PID=$$; exec \"$1\" -i", "terminal", shell},
+		Env: []string{"TERM=xterm", "DC_TERMINAL_TOKEN=" + token},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建终端失败: %w", err)
@@ -97,7 +109,7 @@ func openTerminal(ctx context.Context, cli terminalClient, containerID, shell st
 		liveCancel()
 		return nil, fmt.Errorf("连接终端失败（不会自动重试）: %w", err)
 	}
-	t := &dockerTerminal{client: cli, execID: created.ID, attach: attached, cancel: liveCancel}
+	t := &dockerTerminal{client: cli, containerID: containerID, token: token, execID: created.ID, attach: attached, cancel: liveCancel}
 	if attached.Conn == nil || attached.Reader == nil {
 		stopForward()
 		_ = t.Close()
