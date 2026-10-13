@@ -72,6 +72,11 @@ func IsRichMessageUnsupported(err error) bool {
 		return false
 	}
 	description := strings.ToLower(e.description)
+	// 旧接口忽略 rich_message 后会明确报告缺少 text；只有编辑请求允许据此降级。
+	if e.method == "editMessageText" && e.code == 400 && e.httpStatus == 400 &&
+		(description == "bad request: message text is empty" || description == "bad request: text must be non-empty") {
+		return true
+	}
 	for _, phrase := range []string{
 		"method not found", "unknown method", "method is not supported", "method not supported",
 		"rich_message is not supported", "rich_message not supported", "rich messages are not supported",

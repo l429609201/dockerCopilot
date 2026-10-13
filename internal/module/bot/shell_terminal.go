@@ -13,6 +13,7 @@ import (
 
 	"github.com/l429609201/dockerCopilot/internal/module/containerops"
 	"github.com/l429609201/dockerCopilot/internal/module/telegram"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const shellOutputBudget = 64 * 1024
@@ -235,7 +236,10 @@ func (b *Bot) startShell(s *shellSession) {
 	s.keyboard = kb
 	s.mu.Unlock()
 	if err = b.renderShell(s, true); err != nil {
+		// 界面初始化失败必须可见，避免用户点击后终端无声关闭。
+		logx.Errorf("Telegram Shell 初始化界面失败: %v", err)
 		b.removeShell(s)
+		b.reply(s.chatID, "❌ 终端界面初始化失败，请检查服务日志中的 Telegram Shell 错误。")
 		return
 	}
 	go b.shellReadLoop(s, terminal)
