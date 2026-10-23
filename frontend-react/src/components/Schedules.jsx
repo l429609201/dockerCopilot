@@ -73,6 +73,7 @@ export function Schedules() {
   // 任务类型元信息：标签 + 徽标配色
   const TYPE_META = {
     update: { label: '自动更新', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+    restart: { label: '定时重启', cls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
     prune: { label: '自动清理镜像', cls: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
     backup: { label: '自动备份', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
   }
@@ -83,7 +84,11 @@ export function Schedules() {
     const timeDesc = describeCron(r.cron)
     if (t === 'prune') return `清理范围：${r.pruneMode === 'unused' ? '所有未使用镜像' : '无tag悬空镜像'} · ${timeDesc}`
     if (t === 'backup') return `备份所有容器配置 · ${timeDesc}`
-    return `容器 ${r.containerNames?.length || 0} 个 · ${timeDesc}${r.registryId === 'auto' ? ' · 凭证自适应' : ''}`
+    const targets = r.containerTargets?.length
+      ? r.containerTargets
+      : (r.containerNames || []).map((name) => ({ hostId: 'local', name }))
+    if (t === 'restart') return `重启容器 ${targets.length} 个 · ${timeDesc}`
+    return `容器 ${targets.length} 个 · ${timeDesc}${r.registryId === 'auto' ? ' · 凭证自适应' : ''}`
   }
 
   return (
@@ -123,17 +128,20 @@ export function Schedules() {
               <div className="text-xs text-gray-500 mt-1">
                 {ruleSubtitle(r)}
               </div>
-              {/* 展示该规则选中的容器名（仅自动更新类型） */}
-              {(r.type || 'update') === 'update' && r.containerNames?.length > 0 && (
+              {/* 展示选中的容器名及其主机（自动更新/定时重启） */}
+              {['update', 'restart'].includes(r.type || 'update') && (r.containerTargets?.length > 0 || r.containerNames?.length > 0) && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
-                  {r.containerNames.slice(0, 8).map((n) => (
-                    <span key={n} className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                      {n}
+                  {(r.containerTargets?.length
+                    ? r.containerTargets
+                    : r.containerNames.map((name) => ({ hostId: 'local', name }))
+                  ).slice(0, 8).map((target) => (
+                    <span key={`${target.hostId || 'local'}|${target.name}`} className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                      {target.name}{target.hostId && target.hostId !== 'local' ? `@${target.hostName || target.hostId}` : ''}
                     </span>
                   ))}
-                  {r.containerNames.length > 8 && (
+                  {(r.containerTargets?.length || r.containerNames?.length || 0) > 8 && (
                     <span className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-50 dark:bg-gray-800 text-gray-400">
-                      +{r.containerNames.length - 8}
+                      +{(r.containerTargets?.length || r.containerNames?.length) - 8}
                     </span>
                   )}
                 </div>

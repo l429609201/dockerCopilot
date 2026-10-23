@@ -77,9 +77,10 @@ type RegistryCredential struct {
 
 // 定时任务类型常量。老数据无 Type 字段时按 update 处理，保证向后兼容。
 const (
-	RuleTypeUpdate = "update" // 自动更新容器
-	RuleTypePrune  = "prune"  // 自动清理镜像
-	RuleTypeBackup = "backup" // 自动备份容器配置
+	RuleTypeUpdate  = "update"  // 自动更新容器
+	RuleTypePrune   = "prune"   // 自动清理镜像
+	RuleTypeBackup  = "backup"  // 自动备份容器配置
+	RuleTypeRestart = "restart" // 重启指定容器
 )
 
 // 镜像清理范围常量（仅 prune 类型使用）。
@@ -92,7 +93,7 @@ const (
 type ScheduledUpdateRule struct {
 	ID   string `json:"id"`   // 唯一标识
 	Name string `json:"name"` // 规则名称
-	// Type 任务类型：update(自动更新) / prune(自动清理镜像) / backup(自动备份)。
+	// Type 任务类型：update(自动更新) / prune(自动清理镜像) / backup(自动备份) / restart(重启容器)。
 	// 为空时按 update 处理，兼容历史数据。
 	Type string `json:"type,omitempty"`
 	// Enabled 是否启用。
@@ -114,8 +115,8 @@ type ScheduledUpdateRule struct {
 	MaxBackups int `json:"maxBackups,omitempty"`
 	// ContainerNames 需要纳入本规则的容器名列表（历史字段，视为本地主机的容器，用于向后兼容）。
 	ContainerNames []string `json:"containerNames"`
-	// ContainerTargets 精确到「主机+容器名」的更新目标（多 Docker 管理）。
-	// 优先使用本字段；为空时回退按 ContainerNames 处理（视为本地容器）。
+	// ContainerTargets 精确到「主机+容器名」的目标（多 Docker 管理）。
+	// 优先使用本字段；为空时 update 类型回退按 ContainerNames 处理（视为本地容器）。
 	ContainerTargets []ContainerTarget `json:"containerTargets,omitempty"`
 	// HostIDs 目标 Docker 主机列表，用于 prune/backup 这类整机级任务（为空视为仅本地）。
 	HostIDs []string `json:"hostIds,omitempty"`

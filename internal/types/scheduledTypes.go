@@ -7,13 +7,13 @@ package types
 type ScheduledRuleReq struct {
 	ID               string   `json:"id,optional"`
 	Name             string   `json:"name"`
-	Type             string   `json:"type,optional"`      // 任务类型：update/prune/backup，空按 update
+	Type             string   `json:"type,optional"`      // 任务类型：update/prune/backup/restart，空按 update
 	PruneMode        string   `json:"pruneMode,optional"` // 清理范围：dangling/unused（仅 prune）
 	MaxBackups       int      `json:"maxBackups,optional"` // 备份最大保留数（仅 backup，0/负=不限制，按主机计数）
 	Enabled          bool     `json:"enabled,optional"`
 	Cron             string   `json:"cron,optional"` // 该规则独立的定时表达式（五段式cron或简化写法daily/hourly/interval）
 	ContainerNames   []string `json:"containerNames,optional"`
-	// ContainerTargets 精确到「主机+容器名」的更新目标（update 类型使用）。
+	// ContainerTargets 精确到「主机+容器名」的目标（update/restart 类型使用）。
 	ContainerTargets []ContainerTargetReq `json:"containerTargets,optional"`
 	// HostIDs 目标主机列表（prune/backup 类型使用）。
 	HostIDs          []string `json:"hostIds,optional"`

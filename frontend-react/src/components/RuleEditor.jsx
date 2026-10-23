@@ -9,9 +9,10 @@ function hostNameOf(hostList, hostId) {
   return h ? h.name : hostId
 }
 
-// 任务类型选项：自动更新 / 自动清理镜像 / 自动备份
+// 任务类型选项：自动更新 / 定时重启 / 自动清理镜像 / 自动备份
 const TASK_TYPES = [
   { value: 'update', label: '自动更新', desc: '按策略更新选中容器的镜像' },
+  { value: 'restart', label: '定时重启', desc: '按计划重启选中的容器' },
   { value: 'prune', label: '自动清理镜像', desc: '定时清理无tag或未使用的镜像' },
   { value: 'backup', label: '自动备份', desc: '定时备份所有容器配置为JSON' },
 ]
@@ -54,7 +55,7 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
     containerTargets: (rule.containerTargets && rule.containerTargets.length > 0)
       ? rule.containerTargets
       : (rule.containerNames || []).map((n) => ({ hostId: 'local', name: n })),
-    // prune/backup 的目标主机列表；为空默认本地
+    // 仅清理/备份使用目标主机列表；为空默认本地
     hostIds: rule.hostIds || [],
     // 该规则独立的 cron 定时（默认每天 04:30）
     cron: rule.cron || '30 4 * * *',
@@ -159,8 +160,8 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
       toast.warning('规则名称必填')
       return
     }
-    // 仅"自动更新"类型需要选择容器；清理/备份无需选容器
-    if (form.type === 'update' && form.containerTargets.length === 0) {
+    // 更新和重启都需要精确选择容器；清理/备份无需选容器
+    if ((form.type === 'update' || form.type === 'restart') && form.containerTargets.length === 0) {
       toast.warning('请至少选择一个容器')
       return
     }
@@ -189,7 +190,7 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
 
         {/* 任务类型选择 */}
         <Field label="任务类型">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {TASK_TYPES.map((t) => (
               <button type="button" key={t.value} onClick={() => set('type', t.value)}
                 className={`px-2 py-2 rounded-lg text-sm border text-center transition-colors ${
@@ -303,8 +304,8 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
           </>
         )}
 
-        {/* 自动更新：容器选择 + 拉取凭据 */}
-        {form.type === 'update' && (
+        {/* 自动更新/定时重启：精确容器选择 + 拉取凭据（仅更新） */}
+        {(form.type === 'update' || form.type === 'restart') && (
         <>
         <Field label={`选择容器（已选 ${form.containerTargets.length} 个）`}>
           {/* 已选标签：非本地带主机名后缀 */}
@@ -364,6 +365,7 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
           <p className="text-xs text-gray-400 mt-1.5">容器按所属 Docker 主机分组，勾选精确到某主机的某容器。</p>
         </Field>
 
+        {form.type === 'update' && (
         <Field label="拉取凭据">
           <select value={form.registryId} onChange={(e) => set('registryId', e.target.value)} className="input">
             <option value="">匿名拉取</option>
@@ -376,6 +378,7 @@ export function RuleEditor({ rule, registries, onCancel, onSave }) {
             </p>
           )}
         </Field>
+        )}
         </>
         )}
 
