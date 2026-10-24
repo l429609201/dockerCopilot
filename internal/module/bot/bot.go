@@ -23,14 +23,18 @@ type Bot struct {
 	cfg     appconfig.TelegramConfig
 	running atomic.Bool
 	stopCh  chan struct{}
+	// callbackStore 按聊天保存有期限的随机回调，避免长名称与实例排序进入 Telegram 协议。
+	callbackMu    sync.Mutex
+	callbackStore map[string]callbackRecord
 	// pending 记录每个会话待完成的输入型动作（重命名/切标签等一次性动作），
 	// 用户点击按钮后进入等待，下一条文本消息作为输入完成动作。
 	pendingMu sync.Mutex
 	pending   map[int64]*pendingAction
 	// shells 记录每个会话进入的"交互式 Shell 会话"（持续，直到 /exit）。
 	// 与 pending 区分：pending 是一次性动作，shells 是连续命令会话，需保持工作目录。
-	shellMu sync.Mutex
-	shells  map[int64]*shellSession
+	shellStopped bool
+	shellMu      sync.Mutex
+	shells       map[int64]*shellSession
 }
 
 // pendingAction 描述一个等待用户文本输入的动作。
@@ -39,18 +43,6 @@ type pendingAction struct {
 	id     string // 目标容器ID
 	name   string // 目标容器名
 	hostID string // 目标容器所属 Docker 主机（多 Docker 管理），空表示本地
-}
-
-// shellSession 描述一个持续的容器 Shell 会话。
-// 进入后用户连续发送的每条文本都会作为命令在该容器内执行，直到 /exit 退出。
-// workDir 记录当前工作目录，使连续的 cd 生效（通过每次命令末尾回写 pwd 实现）。
-type shellSession struct {
-	id          string   // 目标容器ID
-	name        string   // 目标容器名
-	hostID      string   // 目标容器所属 Docker 主机（多 Docker 管理），空表示本地
-	workDir     string   // 当前工作目录（空表示容器默认目录）
-	resultMsgID int64    // "终端消息"ID：结果始终更新在这一条上
-	history     []string // 已执行命令历史（用于"查看历史命令"）
 }
 
 // New 创建 Bot 服务实例（未启动）。
@@ -84,20 +76,6 @@ func (b *Bot) getShell(chatID int64) *shellSession {
 	b.shellMu.Lock()
 	defer b.shellMu.Unlock()
 	return b.shells[chatID]
-}
-
-// setShell 进入/更新一个 Shell 会话。
-func (b *Bot) setShell(chatID int64, s *shellSession) {
-	b.shellMu.Lock()
-	b.shells[chatID] = s
-	b.shellMu.Unlock()
-}
-
-// clearShell 退出并清除 Shell 会话。
-func (b *Bot) clearShell(chatID int64) {
-	b.shellMu.Lock()
-	delete(b.shells, chatID)
-	b.shellMu.Unlock()
 }
 
 // Notify 实现 notify.Notifier：向所有白名单会话推送通知。
@@ -191,12 +169,15 @@ func (b *Bot) Reload() {
 	b.stopCh = make(chan struct{})
 	b.mu.Unlock()
 
+	b.shellMu.Lock()
+	b.shellStopped = false
+	b.shellMu.Unlock()
 	b.running.Store(true)
 	// 注册命令菜单，让 TG 客户端输入框旁展示可用命令
 	if err := client.SetMyCommands(botCommands()); err != nil {
 		logx.Errorf("Telegram 设置命令菜单失败: %v", err)
 	}
-	go b.pollLoop()
+	go b.pollLoop(b.stopCh)
 	logx.Info("Telegram Bot 已启动")
 }
 
@@ -216,6 +197,7 @@ func botCommands() []telegram.BotCommand {
 
 // Stop 停止轮询。
 func (b *Bot) Stop() {
+	b.stopShells()
 	if !b.running.CompareAndSwap(true, false) {
 		return
 	}
@@ -228,7 +210,7 @@ func (b *Bot) Stop() {
 }
 
 // pollLoop 长轮询主循环，处理更新并对失败做退避。
-func (b *Bot) pollLoop() {
+func (b *Bot) pollLoop(generation chan struct{}) {
 	var offset int
 	interval := b.cfg.PollIntervalSec
 	if interval <= 0 {
@@ -242,7 +224,15 @@ func (b *Bot) pollLoop() {
 		if client == nil {
 			return
 		}
+		if stopCh != generation {
+			return
+		}
 		updates, err := client.GetUpdates(offset, 30)
+		select {
+		case <-generation:
+			return
+		default:
+		}
 		if err != nil {
 			logx.Errorf("Telegram getUpdates 失败: %v", err)
 			select {
@@ -253,6 +243,11 @@ func (b *Bot) pollLoop() {
 			}
 		}
 		for _, u := range updates {
+			select {
+			case <-generation:
+				return
+			default:
+			}
 			offset = int(u.UpdateID) + 1
 			b.handleUpdate(u)
 		}

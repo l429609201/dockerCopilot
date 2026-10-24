@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// RunRule 执行一条定时任务规则：按类型分发到更新/清理/备份。
+// RunRule 执行一条定时任务规则：按类型分发到更新/清理/备份/重启。
 // 该函数可被 cron 调度和"立即执行"接口复用（单一职责：只负责编排一条规则的执行）。
 func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfig.ScheduledUpdateRule) {
 	defer func() {
@@ -31,6 +32,15 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		return
 	case appconfig.RuleTypeBackup:
 		runBackup(svcCtx, notifier, rule)
+		return
+	case appconfig.RuleTypeRestart:
+		runRestart(svcCtx, notifier, rule)
+		return
+	case "", appconfig.RuleTypeUpdate:
+		// 空类型按 update 处理，兼容历史规则。
+	default:
+		logx.Errorf("定时任务规则[%s]类型无效: %q", rule.Name, rule.Type)
+		recordResult(svcCtx, rule.ID, "不支持的定时任务类型: "+rule.Type)
 		return
 	}
 
@@ -68,8 +78,8 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		recordResult(svcCtx, rule.ID, "获取容器列表失败："+err.Error())
 		// 汇总任务标记失败结束
 		svcCtx.UpdateProgress(summaryTaskID, svc.TaskProgress{
-			TaskID:   summaryTaskID, Name: summaryName, Percentage: 100,
-			Message:  "获取容器列表失败", DetailMsg: err.Error(),
+			TaskID: summaryTaskID, Name: summaryName, Percentage: 100,
+			Message: "获取容器列表失败", DetailMsg: err.Error(),
 			TaskType: svc.TaskTypeScheduledUpdate, IsDone: true, Failed: true,
 		})
 		return
@@ -129,7 +139,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		// 策略：仅在有更新时执行
 		if rule.OnlyWhenUpdate && !c.Update {
 			skippedList = append(skippedList, notify.ResultItem{
-				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image, Reason: "已是最新版本",
+				HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image, Reason: "已是最新版本",
 			})
 			continue
 		}
@@ -137,7 +147,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if rule.SkipInvalidTag && !isValidImageRef(c.Image) {
 			logx.Infof("定时更新规则[%s]跳过非法镜像标签容器 %s (%s)", rule.Name, dispName, c.Image)
 			skippedList = append(skippedList, notify.ResultItem{
-				HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image,
+				HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image,
 				Reason: "镜像标签无效: " + shortImage(c.Image),
 			})
 			continue
@@ -147,7 +157,7 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 		if autoAuth {
 			auth = utiles.MatchRegistryAuthByImage(svcCtx.AppConfig, c.Image)
 		}
-		item := notify.ResultItem{HostID: hostID, ID: c.ID, Name: dispName, Image: c.Image}
+		item := notify.ResultItem{HostID: hostID, ID: c.ID, Name: name, DisplayName: dispName, Image: c.Image}
 		if runOne(svcCtx, hostID, c.ID, name, c.Image, !rule.KeepOldContainer, auth, timeoutSec) {
 			item.Reason = "镜像: " + shortImage(c.Image)
 			updatedList = append(updatedList, item)
@@ -177,12 +187,14 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 
 	// 保存本次执行明细到公共 result store：供 Bot 端「查看跳过/失败明细」和「重试全部失败」取用。
 	result := &notify.RuleUpdateResult{
-		RuleID:   rule.ID,
-		RuleName: rule.Name,
-		KeepOld:  rule.KeepOldContainer,
-		Updated:  updatedList,
-		Skipped:  skippedList,
-		Failed:   failedList,
+		// 每次运行独立标识，旧通知不会跳转到新一轮结果。
+		ExecutionID: uuid.NewString(),
+		RuleID:      rule.ID,
+		RuleName:    rule.Name,
+		KeepOld:     rule.KeepOldContainer,
+		Updated:     updatedList,
+		Skipped:     skippedList,
+		Failed:      failedList,
 	}
 	notify.SaveRuleUpdateResult(result)
 
@@ -203,19 +215,19 @@ func RunRule(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfi
 	if len(updatedList) > 0 {
 		msg.WriteString("\n✅ 已更新：\n")
 		for _, item := range updatedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	if len(skippedList) > 0 {
 		msg.WriteString("\n⏭️ 已跳过：\n")
 		for _, item := range skippedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	if len(failedList) > 0 {
 		msg.WriteString("\n❌ 更新失败：\n")
 		for _, item := range failedList {
-			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Name, item.Reason))
+			msg.WriteString(fmt.Sprintf("  • %s (%s)\n", item.Label(), item.Reason))
 		}
 	}
 	notifier.Notify("定时更新完成", msg.String())
@@ -237,7 +249,7 @@ func buildUpdateDetail(updated, skipped, failed []notify.ResultItem) string {
 				sb.WriteString(fmt.Sprintf("  … 及其余 %d 个\n", len(items)-maxPerGroup))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("  • %s（%s）\n", it.Name, it.Reason))
+			sb.WriteString(fmt.Sprintf("  • %s（%s）\n", it.Label(), it.Reason))
 		}
 	}
 	var sb strings.Builder
@@ -272,6 +284,129 @@ func moveSelfToEnd(svcCtx *svc.ServiceContext, containers []MyType.Container) []
 	reordered = append(reordered, self)
 	logx.Infof("定时更新：已将本程序容器 %s 调整到队尾最后更新", containerName(self))
 	return reordered
+}
+
+var restartTargetsMu sync.Mutex
+var restartTargetsRunning = make(map[string]struct{})
+
+func runRestart(svcCtx *svc.ServiceContext, notifier notify.Notifier, rule appconfig.ScheduledUpdateRule) {
+	const taskType = svc.TaskTypeScheduledUpdate
+	taskID := "sched-restart-" + rule.ID
+	taskName := "定时重启·" + rule.Name
+	nowMs := time.Now().UnixNano() / int64(time.Millisecond)
+	targets := rule.ContainerTargets
+	locked := make([]string, 0, len(targets))
+	restartTargetsMu.Lock()
+	for _, target := range targets {
+		key := targetKey(target.HostID, target.Name)
+		if _, exists := restartTargetsRunning[key]; exists {
+			restartTargetsMu.Unlock()
+			recordResult(svcCtx, rule.ID, fmt.Sprintf("跳过：目标容器 %s@%s 已有重启任务执行中", target.Name, target.HostID))
+			return
+		}
+	}
+	for _, target := range targets {
+		key := targetKey(target.HostID, target.Name)
+		restartTargetsRunning[key] = struct{}{}
+		locked = append(locked, key)
+	}
+	restartTargetsMu.Unlock()
+	defer func() {
+		restartTargetsMu.Lock()
+		for _, key := range locked {
+			delete(restartTargetsRunning, key)
+		}
+		restartTargetsMu.Unlock()
+	}()
+	if notifier != nil && rule.NotifyOnStart {
+		notifier.Notify("定时重启开始", fmt.Sprintf("规则「%s」开始执行，目标容器：%d", rule.Name, len(targets)))
+	}
+	svcCtx.UpdateProgress(taskID, svc.TaskProgress{
+		TaskID: taskID, Name: taskName, Percentage: 0,
+		Message: fmt.Sprintf("开始执行，目标容器 %d 个", len(targets)),
+		DetailMsg: "正在获取容器列表…", TaskType: taskType, StartedAt: nowMs,
+	})
+
+	containers, listErr := utiles.GetAllContainers(svcCtx)
+	byTarget := make(map[string][]string, len(containers))
+	if listErr == nil {
+		for _, c := range containers {
+			name := containerName(c)
+			if name == "" {
+				continue
+			}
+			key := targetKey(c.HostID, name)
+			byTarget[key] = append(byTarget[key], c.ID)
+		}
+	}
+
+	var succeeded, failed int
+	var details []string
+	for i, target := range targets {
+		hostID := normalizeHostID(target.HostID)
+		key := targetKey(hostID, target.Name)
+		var result error
+		switch {
+		case listErr != nil:
+			result = fmt.Errorf("获取容器列表失败: %w", listErr)
+		case len(byTarget[key]) == 0:
+			// 逐主机查询以避免聚合接口吞掉部分主机不可达错误。
+			hostContainers, hostErr := utiles.GetContainerListFromHost(svcCtx, hostID)
+			if hostErr != nil {
+				result = fmt.Errorf("主机 %s 不可达: %w", hostID, hostErr)
+			} else if containerFound(hostContainers, target.Name) {
+				result = fmt.Errorf("主机 %s 上容器 %q 匹配到多个容器", hostID, target.Name)
+			} else {
+				result = fmt.Errorf("主机 %s 上找不到容器 %q", hostID, target.Name)
+			}
+		case len(byTarget[key]) > 1:
+			result = fmt.Errorf("主机 %s 上容器名 %q 匹配到多个容器", hostID, target.Name)
+		case len(byTarget[key]) == 1 && containerIsStopped(containers, byTarget[key][0]):
+			result = fmt.Errorf("容器 %q 当前未运行", target.Name)
+		case len(byTarget[key]) == 1:
+			result = utiles.RestartContainerOnHost(svcCtx, hostID, byTarget[key][0])
+		}
+		if result != nil {
+			failed++
+			details = append(details, fmt.Sprintf("%s@%s：失败（%s）", target.Name, hostID, result.Error()))
+			logx.Errorf("定时重启规则[%s]目标[%s@%s]失败: %v", rule.Name, target.Name, hostID, result)
+		} else {
+			succeeded++
+			details = append(details, fmt.Sprintf("%s@%s：重启成功", target.Name, hostID))
+		}
+		svcCtx.UpdateProgress(taskID, svc.TaskProgress{
+			TaskID: taskID, Name: taskName, Percentage: (i + 1) * 100 / max(len(targets), 1),
+			Message: fmt.Sprintf("已处理 %d/%d，成功 %d，失败 %d", i+1, len(targets), succeeded, failed),
+			DetailMsg: strings.Join(details, "\n"), TaskType: taskType,
+			ResourceID: target.Name,
+		})
+	}
+
+	summary := fmt.Sprintf("重启成功 %d，失败 %d", succeeded, failed)
+	if len(targets) == 0 {
+		failed = 1
+		summary = "无有效重启目标"
+		details = append(details, summary)
+	}
+	resultSummary := summary
+	if len(details) > 0 {
+		resultSummary += "；" + strings.Join(details, "；")
+	}
+	recordResult(svcCtx, rule.ID, resultSummary)
+	logx.Infof("定时重启规则[%s]执行完成：%s", rule.Name, summary)
+	svcCtx.UpdateProgress(taskID, svc.TaskProgress{
+		TaskID: taskID, Name: taskName, Percentage: 100,
+		Message: summary, DetailMsg: strings.Join(details, "\n"),
+		TaskType: taskType, IsDone: true, Failed: failed > 0,
+	})
+	if notifier == nil {
+		return
+	}
+	if failed > 0 && rule.NotifyOnError {
+		notifier.Notify("定时重启失败", fmt.Sprintf("规则「%s」执行完成：%s\n\n%s", rule.Name, summary, strings.Join(details, "\n")))
+	} else if rule.NotifyOnDone {
+		notifier.Notify("定时重启完成", fmt.Sprintf("规则「%s」执行完成：%s\n\n%s", rule.Name, summary, strings.Join(details, "\n")))
+	}
 }
 
 // runOne 提交单个容器的更新任务并等待其结束，返回是否成功。
@@ -349,7 +484,26 @@ func recordResult(svcCtx *svc.ServiceContext, ruleID, result string) {
 	})
 }
 
-// containerName 提取容器主名称（去掉前导斜杠）。
+// containerIsStopped 判断容器是否处于非运行状态。
+func containerIsStopped(containers []MyType.Container, id string) bool {
+	for _, c := range containers {
+		if c.ID == id {
+			return c.State != "running"
+		}
+	}
+	return true
+}
+
+func containerFound(containers []MyType.Container, name string) bool {
+	count := 0
+	for _, c := range containers {
+		if containerName(c) == name {
+			count++
+		}
+	}
+	return count > 0
+}
+
 func containerName(c MyType.Container) string {
 	if len(c.Names) > 0 {
 		return strings.TrimPrefix(c.Names[0], "/")

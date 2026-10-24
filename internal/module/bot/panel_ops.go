@@ -24,7 +24,7 @@ func (b *Bot) doUpdate(chatID int64, id, name, hostID string, messageID int64) {
 		imageToUse = c.Image // 降级使用 Image 字段
 	}
 	// 沿用容器当前镜像进行更新（拉取同名 tag 的最新镜像并重建），按主机路由
-	taskID, err := containerops.NewForHost(b.svcCtx, hostID).Update(c.ID, name, imageToUse)
+	taskID, err := containerops.NewForHost(b.svcCtx, hostID).UpdateWithOptions(c.ID, imageToUse, containerops.UpdateOptions{})
 	if err != nil {
 		b.reply(chatID, fmt.Sprintf("❌ 提交更新失败：%s", err.Error()))
 		return
@@ -40,7 +40,7 @@ func (b *Bot) sendContainerLogs(chatID int64, id, name, hostID string, messageID
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ops := containerops.NewForHost(b.svcCtx, hostID)
-	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
+	hs := "|" + encodeHostRef(hostID)
 	// TG 单条消息上限约 4096 字符，日志控制在 3500 字节内
 	out, err := ops.Logs(ctx, id, 50, "", false, 3500)
 	if err != nil {
@@ -52,10 +52,12 @@ func (b *Bot) sendContainerLogs(chatID int64, id, name, hostID string, messageID
 		out = "(无日志输出)"
 	}
 	// 截断保护
-	if len(out) > 3500 {
-		out = out[len(out)-3500:]
+	runes := []rune(strings.ToValidUTF8(out, ""))
+	if len(runes) > 1500 {
+		runes = runes[len(runes)-1500:]
 	}
-	text := fmt.Sprintf("<b>📄 %s 最近日志</b>\n<pre>%s</pre>", escapeHTML(name), escapeHTML(out))
+	out = string(runes)
+	text := fmt.Sprintf("<b>📄 %s 最近日志</b>\n<pre>%s</pre>", escapeHTML(truncName(name, 100)), escapeHTML(out))
 	// 键盘：下载完整日志 + 返回管理
 	kb := &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{
 		{{Text: "⬇ 下载完整日志", CallbackData: fmt.Sprintf("logdl|%s|%s%s", id, name, hs)}},
@@ -109,7 +111,7 @@ func (b *Bot) sendContainerInspect(chatID int64, id, name, hostID string, messag
 		return
 	}
 	var t strings.Builder
-	t.WriteString(fmt.Sprintf("<b>🔍 容器详情：%s</b>\n", escapeHTML(name)))
+	t.WriteString(fmt.Sprintf("<b>🔍 容器详情：%s</b>\n", escapeHTML(truncName(name, 100))))
 	t.WriteString(fmt.Sprintf("ID：<code>%s</code>\n", escapeHTML(shortID(c.ID))))
 	t.WriteString(fmt.Sprintf("状态：%s\n", stateLabel(c.State)))
 	t.WriteString(fmt.Sprintf("镜像：<code>%s</code>\n", escapeHTML(c.Image)))
@@ -159,7 +161,7 @@ func (b *Bot) sendContainerStats(chatID int64, id, name, hostID string, messageI
 		return
 	}
 	var t strings.Builder
-	t.WriteString(fmt.Sprintf("<b>📊 %s 资源占用</b>\n", escapeHTML(name)))
+	t.WriteString(fmt.Sprintf("<b>📊 %s 资源占用</b>\n", escapeHTML(truncName(name, 100))))
 	t.WriteString(fmt.Sprintf("CPU：%.2f%%\n", stat.CPUPercent))
 	t.WriteString(fmt.Sprintf("内存：%.1f MB / %.1f MB（%.1f%%）\n",
 		float64(stat.MemUsage)/1024/1024, float64(stat.MemLimit)/1024/1024, stat.MemPercent))
@@ -174,7 +176,7 @@ func (b *Bot) sendContainerStats(chatID int64, id, name, hostID string, messageI
 
 // backToPanelKb 生成"返回容器面板"的键盘。hostID 决定回到哪个主机的面板。
 func (b *Bot) backToPanelKb(id, name, hostID string) *telegram.InlineKeyboardMarkup {
-	hs := "|" + b.svcCtx.DockerManager.HostCode(hostID)
+	hs := "|" + encodeHostRef(hostID)
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: [][]telegram.InlineKeyboardButton{{
 		{Text: "⬅ 返回管理", CallbackData: fmt.Sprintf("panel|%s|%s%s", id, name, hs)},
 	}}}
@@ -189,42 +191,43 @@ func shortID(id string) string {
 }
 
 // watchUpdateProgress 监听容器更新任务进度，持续编辑消息显示进度条和状态。
-// 适配 Telegram 每条消息最多每秒编辑一次的频率限制。
+// 限频并去重；只有明确终态才显示完成，缺失进度绝不猜测成功。
 func (b *Bot) watchUpdateProgress(chatID int64, messageID int64, taskID, name, image string) {
-	ticker := time.NewTicker(1 * time.Second) // Telegram 编辑限制：每秒最多一次
+	// 无面板时只创建一次消息，后续始终编辑，避免刷屏。
+	if messageID <= 0 {
+		var err error
+		messageID, err = b.client.SendMessageReturnID(chatID, "⏳ 更新任务已提交，等待进度…", nil)
+		if err != nil {
+			return
+		}
+	}
+	b.mu.Lock()
+	stopCh := b.stopCh
+	b.mu.Unlock()
+	// 不按五分钟截断慢速拉取；Bot 停止时释放监听，无进度不推断成功。
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-
-	lastProgress := -1 // 记录上次进度，避免重复编辑
-	maxWait := 300     // 最长等待5分钟，防止任务卡死导致 goroutine 泄漏
-	elapsed := 0
-
+	lastText := ""
 	for {
 		select {
+		case <-stopCh:
+			return
 		case <-ticker.C:
-			elapsed++
-			if elapsed > maxWait {
-				// 超时，停止监听
-				return
-			}
-
-			// 从 ProgressStore 获取任务进度
 			progress, exists := b.svcCtx.GetProgress(taskID)
 			if !exists {
-				// 任务不存在，可能已完成或失败
-				return
-			}
-
-			// 进度未变化且未完成，跳过编辑
-			if progress.Percentage == lastProgress && !progress.IsDone {
+				text := "⚠️ 暂无任务进度，尚未确认更新结果；正在继续等待。"
+				if text != lastText {
+					b.editMessage(chatID, messageID, text)
+					lastText = text
+				}
 				continue
 			}
-			lastProgress = progress.Percentage
 
 			// 构建进度消息
 			var text strings.Builder
-			text.WriteString(fmt.Sprintf("<b>🚀 正在更新：%s</b>\n\n", escapeHTML(name)))
-			text.WriteString(fmt.Sprintf("镜像：<code>%s</code>\n", escapeHTML(shortImage(image))))
-			text.WriteString(fmt.Sprintf("任务ID：<code>%s</code>\n\n", taskID[:8]))
+			text.WriteString(fmt.Sprintf("<b>🚀 正在更新：%s</b>\n\n", escapeHTML(truncName(name, 100))))
+			text.WriteString(fmt.Sprintf("镜像：<code>%s</code>\n", escapeHTML(truncName(image, 200))))
+			text.WriteString(fmt.Sprintf("任务ID：<code>%s</code>\n\n", escapeHTML(truncName(taskID, 36))))
 
 			// 绘制进度条
 			text.WriteString(b.renderProgressBar(progress.Percentage))
@@ -232,10 +235,10 @@ func (b *Bot) watchUpdateProgress(chatID int64, messageID int64, taskID, name, i
 
 			// 显示当前状态
 			if progress.Message != "" {
-				text.WriteString(fmt.Sprintf("状态：%s\n", escapeHTML(progress.Message)))
+				text.WriteString(fmt.Sprintf("状态：%s\n", escapeHTML(truncName(progress.Message, 200))))
 			}
 			if progress.DetailMsg != "" {
-				text.WriteString(fmt.Sprintf("详情：%s\n", escapeHTML(progress.DetailMsg)))
+				text.WriteString(fmt.Sprintf("详情：%s\n", escapeHTML(truncName(progress.DetailMsg, 500))))
 			}
 
 			// 任务完成
@@ -244,16 +247,19 @@ func (b *Bot) watchUpdateProgress(chatID int64, messageID int64, taskID, name, i
 					text.WriteString("\n❌ <b>更新失败</b>")
 				} else if progress.Canceled {
 					text.WriteString("\n⚠️ <b>更新已取消</b>")
+				} else if updateHandedOff(progress.Message, progress.DetailMsg) {
+					// 自更新的 IsDone 仅表示已交接，重启后的健康状态尚未验证。
+					text.WriteString("\n⏳ <b>辅助容器已接管，等待重启</b>\n尚未确认更新成功，请稍后查看容器状态。")
 				} else {
 					text.WriteString("\n✅ <b>更新完成</b>\n\n")
 
 					// 【增强】显示镜像详细信息
 					text.WriteString("<b>📦 镜像详情</b>\n")
 					if progress.ImageName != "" {
-						text.WriteString(fmt.Sprintf("名称：<code>%s</code>\n", escapeHTML(progress.ImageName)))
+						text.WriteString(fmt.Sprintf("名称：<code>%s</code>\n", escapeHTML(truncName(progress.ImageName, 200))))
 					}
 					if progress.ImageTag != "" {
-						text.WriteString(fmt.Sprintf("标签：<code>%s</code>\n", escapeHTML(progress.ImageTag)))
+						text.WriteString(fmt.Sprintf("标签：<code>%s</code>\n", escapeHTML(truncName(progress.ImageTag, 128))))
 					}
 
 					// 显示旧镜像信息
@@ -301,16 +307,19 @@ func (b *Bot) watchUpdateProgress(chatID int64, messageID int64, taskID, name, i
 				return
 			}
 
-			// 编辑消息显示进度
-			if messageID > 0 {
-				b.editMessage(chatID, messageID, text.String())
-			} else {
-				// 如果没有 messageID，发送新消息（不应该走到这里）
-				b.reply(chatID, text.String())
-				return
+			// 按最终显示内容去重，状态文字变化也能展示，最多三秒一次。
+			shown := text.String()
+			if shown != lastText {
+				b.editMessage(chatID, messageID, shown)
+				lastText = shown
 			}
 		}
 	}
+}
+
+// updateHandedOff 识别现有自更新协议中的交信号，不将其当作重启成功。
+func updateHandedOff(message, detail string) bool {
+	return strings.Contains(message, "辅助容器已接管") || strings.Contains(detail, "辅助容器已接管")
 }
 
 // renderProgressBar 渲染文本进度条，百分比 0-100。

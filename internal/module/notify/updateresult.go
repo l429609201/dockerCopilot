@@ -1,52 +1,134 @@
 package notify
 
-import "sync"
+import (
+	"sync"
+	"time"
 
-// ResultItem 是定时更新完成后单个容器的处理结果条目。
-// 用于"查看跳过/失败明细"以及"重试全部失败"，需携带足够信息重新提交更新。
+	"github.com/google/uuid"
+)
+
+// ResultItem 分离真实身份和展示名称，展示字段绝不能用于容器重建。
 type ResultItem struct {
-	HostID string // 容器所属 Docker 主机 ID（空/local 表示本地）
-	ID     string // 容器 ID
-	Name   string // 容器名
-	Image  string // 镜像引用
-	Reason string // 跳过/失败原因（用于明细展示）
+	HostID      string
+	ID          string
+	Name        string
+	DisplayName string
+	Image       string
+	Reason      string
 }
 
-// RuleUpdateResult 记录一条定时规则最近一次执行的分类明细。
-// Rule 名称用于通知标题回显；三类列表分别对应已更新/已跳过/失败。
+// Label 保留远程主机标识，同时兼容没有独立展示名称的调用方。
+func (i ResultItem) Label() string {
+	if i.DisplayName != "" {
+		return i.DisplayName
+	}
+	return i.Name
+}
+
+// RuleUpdateResult 是一次执行的不可变结果快照，按钮应绑定 ExecutionID。
 type RuleUpdateResult struct {
-	RuleID    string
-	RuleName  string
-	KeepOld   bool // 该规则是否保留旧容器（重试失败时复用同一策略）
-	Updated   []ResultItem
-	Skipped   []ResultItem
-	Failed    []ResultItem
+	ExecutionID string
+	RuleID      string
+	RuleName    string
+	KeepOld     bool
+	Updated     []ResultItem
+	Skipped     []ResultItem
+	Failed      []ResultItem
 }
 
-// updateResultStore 以 ruleID 为键缓存每条规则"最近一次"执行结果。
-// 只保留最近一次：完成消息与其明细/重试按钮均针对最近一次执行，历史结果无需累积。
-// scheduler 写入、bot 读取，定义在公共 notify 包避免 bot↔scheduler 循环依赖。
+const (
+	resultTTL  = 24 * time.Hour
+	maxResults = 256
+)
+
+type resultEntry struct {
+	result  *RuleUpdateResult
+	expires time.Time
+}
+
+// 结果只驻留内存：重启后旧按钮明确过期；容量和有效期防止历史结果无界增长。
 type updateResultStore struct {
-	mu   sync.RWMutex
-	data map[string]*RuleUpdateResult
+	mu         sync.Mutex
+	latest     map[string]string
+	executions map[string]resultEntry
 }
 
-// 全局单例：进程内共享，重启后清空（结果本就是临时交互态，无需持久化）。
-var resultStore = &updateResultStore{data: make(map[string]*RuleUpdateResult)}
+var resultStore = &updateResultStore{
+	latest:     make(map[string]string),
+	executions: make(map[string]resultEntry),
+}
 
-// SaveRuleUpdateResult 保存/覆盖某规则最近一次执行结果。
+// cloneResult 复制切片，避免生产者或读取者修改已发布按钮对应的执行快照。
+func cloneResult(res *RuleUpdateResult) *RuleUpdateResult {
+	if res == nil {
+		return nil
+	}
+	copy := *res
+	copy.Updated = append([]ResultItem(nil), res.Updated...)
+	copy.Skipped = append([]ResultItem(nil), res.Skipped...)
+	copy.Failed = append([]ResultItem(nil), res.Failed...)
+	return &copy
+}
+
+func (s *updateResultStore) remove(id string) {
+	entry := s.executions[id]
+	if entry.result != nil && s.latest[entry.result.RuleID] == id {
+		delete(s.latest, entry.result.RuleID)
+	}
+	delete(s.executions, id)
+}
+
+func (s *updateResultStore) prune(now time.Time) {
+	for id, entry := range s.executions {
+		if !now.Before(entry.expires) {
+			s.remove(id)
+		}
+	}
+}
+
+// SaveRuleUpdateResult 为旧生产者补齐执行 ID，保存快照且保留按规则查询最近结果的兼容接口。
+// 调用方须在发布通知前保存，之后使用同一个 res.ExecutionID 生成按钮。
 func SaveRuleUpdateResult(res *RuleUpdateResult) {
 	if res == nil || res.RuleID == "" {
 		return
 	}
 	resultStore.mu.Lock()
 	defer resultStore.mu.Unlock()
-	resultStore.data[res.RuleID] = res
+	if res.ExecutionID == "" {
+		res.ExecutionID = uuid.NewString()
+	}
+	now := time.Now()
+	resultStore.prune(now)
+	// 相同执行 ID 不允许覆盖快照，防止已发出的按钮改变操作对象。
+	if _, exists := resultStore.executions[res.ExecutionID]; exists {
+		return
+	}
+	for len(resultStore.executions) >= maxResults {
+		oldestID := ""
+		var oldest time.Time
+		for id, entry := range resultStore.executions {
+			if oldestID == "" || entry.expires.Before(oldest) {
+				oldestID, oldest = id, entry.expires
+			}
+		}
+		resultStore.remove(oldestID)
+	}
+	resultStore.executions[res.ExecutionID] = resultEntry{cloneResult(res), now.Add(resultTTL)}
+	resultStore.latest[res.RuleID] = res.ExecutionID
 }
 
-// GetRuleUpdateResult 读取某规则最近一次执行结果，不存在返回 nil。
+// GetRuleUpdateResult 兼容按规则读取最近结果；危险回调必须改用执行 ID 查询。
 func GetRuleUpdateResult(ruleID string) *RuleUpdateResult {
-	resultStore.mu.RLock()
-	defer resultStore.mu.RUnlock()
-	return resultStore.data[ruleID]
+	resultStore.mu.Lock()
+	defer resultStore.mu.Unlock()
+	resultStore.prune(time.Now())
+	return cloneResult(resultStore.executions[resultStore.latest[ruleID]].result)
+}
+
+// GetRuleUpdateResultByExecutionID 严格读取指定执行，不会回退到同规则的新一轮结果。
+func GetRuleUpdateResultByExecutionID(executionID string) *RuleUpdateResult {
+	resultStore.mu.Lock()
+	defer resultStore.mu.Unlock()
+	resultStore.prune(time.Now())
+	return cloneResult(resultStore.executions[executionID].result)
 }

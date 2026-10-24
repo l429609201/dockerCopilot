@@ -13,9 +13,11 @@ type Notifier interface {
 // 定义在 notify 包（scheduler 与 bot 的公共依赖），避免两侧各自定义
 // 同构类型导致接口断言失败、以及 bot↔scheduler 的循环依赖。
 type UpdateItem struct {
-	ID    string // 容器 ID
-	Name  string // 容器名
-	Image string // 镜像引用
+	HostID   string // 操作目标主机，不能由展示名称推导
+	HostName string // 仅用于区分同名容器的展示信息
+	ID       string // 容器 ID
+	Name     string // 真实容器名，不得截断或拼接主机后缀
+	Image    string // 镜像引用
 }
 
 // UpdateNotifier 是"带交互式键盘的更新通知"能力接口。
@@ -41,7 +43,7 @@ type UpdateNotifierWithMuted interface {
 // 跳过/失败改由内联按钮按需查看，并支持一键重试全部失败；
 // 未实现时调用方回退为纯文本通知（正文铺开三段明细）。
 type RuleResultNotifier interface {
-	// NotifyRuleResult 推送某规则的执行结果（明细已存入 result store，通过 ruleID 取用）。
+	// NotifyRuleResult 推送某规则的执行结果（明细已存入 result store，通过 ExecutionID 取用）。
 	NotifyRuleResult(res *RuleUpdateResult)
 }
 

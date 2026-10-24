@@ -1,5 +1,14 @@
 package telegram
 
+import "encoding/json"
+
+// InputRichMessage 仅实现 Shell 所需的 HTML 分支；官方要求 html/markdown/blocks 三选一。
+// 关闭自动实体检测，避免终端输出被自动转换为链接或命令。
+type InputRichMessage struct {
+	HTML                string `json:"html"`
+	SkipEntityDetection bool   `json:"skip_entity_detection,omitempty"`
+}
+
 // Update 对应 Telegram 的一次更新。
 type Update struct {
 	UpdateID      int64          `json:"update_id"`
@@ -13,6 +22,13 @@ type Message struct {
 	From      *User  `json:"from"`
 	Chat      *Chat  `json:"chat"`
 	Text      string `json:"text"`
+	// 保留代发与转发来源标记，供 Shell 拒绝非本人直接发送的输入。
+	SenderChat        *Chat           `json:"sender_chat,omitempty"`
+	ForwardOrigin     json.RawMessage `json:"forward_origin,omitempty"`
+	ForwardFrom       *User           `json:"forward_from,omitempty"`
+	ForwardFromChat   *Chat           `json:"forward_from_chat,omitempty"`
+	ForwardSenderName string          `json:"forward_sender_name,omitempty"`
+	ForwardDate       int64           `json:"forward_date,omitempty"`
 }
 
 // CallbackQuery inline 按钮回调。

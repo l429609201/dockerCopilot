@@ -2,11 +2,13 @@ package schedule
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/types"
+	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -36,19 +38,71 @@ func (l *ScheduleLogic) List() (resp *types.Resp, err error) {
 // Save 新建或更新一条规则；ID 为空则新建。保存后触发调度重载。
 func (l *ScheduleLogic) Save(req *types.ScheduledRuleReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	if req.Name == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		resp.Code = 400
 		resp.Msg = "规则名称不能为空"
 		resp.Data = map[string]interface{}{}
 		return resp, nil
 	}
+	if req.Name != strings.TrimSpace(req.Name) {
+		resp.Code = 400
+		resp.Msg = "规则名称不能包含首尾空格"
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
+	ruleType := req.Type
+	if ruleType == "" {
+		ruleType = appconfig.RuleTypeUpdate
+	}
+	switch ruleType {
+	case appconfig.RuleTypeUpdate, appconfig.RuleTypePrune, appconfig.RuleTypeBackup, appconfig.RuleTypeRestart:
+	default:
+		resp.Code = 400
+		resp.Msg = "不支持的定时任务类型"
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
+	if ruleType == appconfig.RuleTypeRestart && len(req.ContainerTargets) == 0 {
+		resp.Code = 400
+		resp.Msg = "重启任务必须指定至少一个主机和容器目标"
+		resp.Data = map[string]interface{}{}
+		return resp, nil
+	}
+	if req.Enabled {
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+		if _, parseErr := parser.Parse(appconfig.ParseCronExpression(req.Cron)); parseErr != nil {
+			resp.Code = 400
+			resp.Msg = "无效的 cron 表达式：" + parseErr.Error()
+			resp.Data = map[string]interface{}{}
+			return resp, nil
+		}
+	}
 	// 将请求中的容器目标转换为持久化结构（精确到主机+容器名）
 	targets := make([]appconfig.ContainerTarget, 0, len(req.ContainerTargets))
 	for _, t := range req.ContainerTargets {
-		if t.Name == "" {
+		targetName := strings.TrimSpace(t.Name)
+		if targetName == "" {
+			if ruleType == appconfig.RuleTypeRestart {
+				resp.Code = 400
+				resp.Msg = "重启任务的容器名不能为空"
+				resp.Data = map[string]interface{}{}
+				return resp, nil
+			}
 			continue
 		}
-		targets = append(targets, appconfig.ContainerTarget{HostID: t.HostID, Name: t.Name})
+		if ruleType == appconfig.RuleTypeRestart && targetName != t.Name {
+			resp.Code = 400
+			resp.Msg = "重启任务的容器名不能包含首尾空格"
+			resp.Data = map[string]interface{}{}
+			return resp, nil
+		}
+		targets = append(targets, appconfig.ContainerTarget{HostID: t.HostID, Name: targetName})
+	}
+	if ruleType == appconfig.RuleTypeRestart && len(targets) == 0 {
+		resp.Code = 400
+		resp.Msg = "重启任务必须指定至少一个有效的主机和容器目标"
+		resp.Data = map[string]interface{}{}
+		return resp, nil
 	}
 	rule := appconfig.ScheduledUpdateRule{
 		ID:               req.ID,

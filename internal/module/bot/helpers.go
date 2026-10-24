@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -50,7 +51,13 @@ func (b *Bot) replyKeyboard(chatID int64, text string, kb *telegram.InlineKeyboa
 	if b.client == nil {
 		return
 	}
-	if err := b.client.SendMessage(chatID, text, kb); err != nil {
+	encoded, err := b.encodeKeyboard(chatID, kb)
+	if err != nil {
+		logx.Errorf("Telegram 键盘生成失败: %v", err)
+		b.reply(chatID, "⚠️ "+escapeHTML(err.Error()))
+		return
+	}
+	if err := b.client.SendMessage(chatID, text, encoded); err != nil {
 		logx.Errorf("Telegram 回复失败 chat=%d: %v", chatID, err)
 	}
 }
@@ -72,17 +79,17 @@ func (b *Bot) deleteMsg(chatID, messageID int64) {
 	}
 }
 
-// helpText 返回帮助文案。
-// 现版本以「按钮式菜单」为主，帮助内容对齐主菜单的 8 个入口，指导用户点击操作，
-// 而非记忆命令（命令仍可用，作为补充在末尾列出）。
-// hostFromParts 从 callback 分段里安全取出 host 码（位于索引 idx），还原为 hostID。
-// 缺省（旧格式无 host 段）时返回本地主机 ID，保证向后兼容。
+// hostFromParts 只接受服务端保存的稳定实例引用，旧排序码或缺失值必须拒绝。
+// 无效引用交由业务服务报错，绝不猜测本地目标。
 func (b *Bot) hostFromParts(parts []string, idx int) string {
-	code := ""
-	if len(parts) > idx {
-		code = parts[idx]
+	if len(parts) <= idx || !strings.HasPrefix(parts[idx], "h:") {
+		return "__expired_instance__"
 	}
-	return b.svcCtx.DockerManager.HostByCode(code)
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(parts[idx], "h:"))
+	if err != nil || len(decoded) == 0 {
+		return "__expired_instance__"
+	}
+	return string(decoded)
 }
 
 // isPanelSubAction 判断是否为携带 host 段（4 段）的面板子功能动作，
@@ -99,19 +106,21 @@ func helpText() string {
 	return "<b>DockerCopilot 使用帮助</b>\n\n" +
 		"发送 /menu 或 /start 打开主菜单，全部操作都能点按钮完成：\n\n" +
 		"📊 <b>概览</b> — 系统统计：容器/镜像数量、磁盘占用\n" +
-		"📦 <b>容器</b> — 容器列表，点「⚙ 管理」进入单容器面板\n" +
+		"📦 <b>容器</b> — 容器列表，点容器名称进入单容器面板\n" +
 		"🆙 <b>更新</b> — 检查镜像更新、一键批量更新\n" +
 		"🐳 <b>镜像</b> — 查看镜像列表（名称、大小、是否在用）\n" +
 		"📋 <b>备份</b> — 备份与恢复容器配置\n" +
 		"💻 <b>实例</b> — 管理多个 Docker 实例\n" +
 		"⚙️ <b>设置</b> — 通知、更新策略等配置\n" +
 		"📚 <b>帮助</b> — 显示本页说明\n\n" +
-		"<b>单容器面板</b>（在容器列表点「⚙ 管理」）可用：\n" +
+		"<b>单容器面板</b>（在容器列表点容器名称）可用：\n" +
 		"启动/停止/重启/暂停/恢复、更新、切换标签、查看日志、\n" +
 		"详情、资源、命令行（Shell）、重命名、删除等。\n\n" +
 		"<b>命令行（Shell）</b>：在面板点「💻 命令行」后，直接发送命令\n" +
-		"即可连续执行，<code>cd</code> 会保持工作目录；点「⏹ 退出交互」\n" +
-		"返回容器面板。\n\n" +
+		"进入持久 TTY，<code>cd</code> 与环境变量会保持；仅发起者可输入及关闭。\n" +
+		"支持 Ctrl+C、Tab、Enter 和方向键；行式转录不适合 vim 等全屏程序。\n" +
+		"请勿输入密码；历史仅保留内存最近20条。15分钟无输入自动断开。\n" +
+		"点「关闭」或发送 /exit 退出，/menu 退出并打开主菜单。\n\n" +
 		"<b>快捷命令（可选）</b>：/ps 容器列表、/images 镜像、\n" +
 		"/sys 概览、/check_updates 检查更新、/compose 管理 Compose 项目。"
 }
