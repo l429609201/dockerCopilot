@@ -62,40 +62,14 @@ func GetImagesListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.Ima
 	return imagesList, nil
 }
 
-// GetAllImagesList 聚合所有已启用 Docker 主机的镜像列表，按镜像ID去重。
-// 用于更新检查：只有覆盖所有主机的镜像，远程主机容器才能正确显示"可更新"。
-// 单个主机不可达仅记录日志并跳过，不影响其它主机。
+// GetAllImagesList 聚合所有已启用 Docker 主机的镜像列表，供更新检查使用。
+// 修复：原实现按镜像ID跨主机去重，只保留第一台主机的那条（含其 RepoTags/RepoDigests/HostID），
+// 检查结果也只记在该主机名下，远程主机容器因此查不到或用错结果。
+// 现在每台主机各保留一条，结果按「主机+镜像ID」独立保存；
+// 同一 registry 地址的重复请求由 digest/token 缓存吸收。
+// 单个主机不可达仅记录日志并跳过，不影响其它主机，且该主机上次的结果会被保留。
 func GetAllImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
-	ctx.AppConfig.EnsureLocalHost()
-	hosts := ctx.AppConfig.ListDockerHosts()
-	var all []MyType.Image
-	// seen 记录镜像ID -> 在 all 中的下标，便于去重后回填 InUsed
-	seen := make(map[string]int)
-	for _, h := range hosts {
-		if !h.Enabled {
-			continue
-		}
-		list, err := GetImagesListFromHost(ctx, h.ID)
-		if err != nil {
-			logx.Errorf("聚合镜像列表跳过主机[%s:%s]: %v", h.ID, h.Name, err)
-			continue
-		}
-		// 按镜像ID去重：不同主机上相同镜像 digest 相同，检查一次即可。
-		// InUsed 取「任一主机在用即为在用」：同一镜像在 A 主机未用、B 主机有容器在用时，
-		// 去重保留的那条必须反映 B 的在用状态，否则「有容器在用的可更新镜像」统计会漏项，
-		// 与容器列表「有更新」角标对不上。
-		for _, img := range list {
-			if idx, ok := seen[img.ID]; ok {
-				if img.InUsed {
-					all[idx].InUsed = true
-				}
-				continue
-			}
-			seen[img.ID] = len(all)
-			all = append(all, img)
-		}
-	}
-	return all, nil
+	return GetAllImagesListPerHost(ctx)
 }
 
 // GetAllImagesListPerHost 聚合所有已启用 Docker 主机的镜像列表，**不去重**。

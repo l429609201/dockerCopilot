@@ -150,7 +150,8 @@ func (l *CheckUpdateLogic) collectUpdatableImages(images []types.Image) []svc.Up
 		if !img.InUsed {
 			continue
 		}
-		r, ok := snapshot[img.ID]
+		// 结果按「主机+镜像ID」保存，必须带主机ID查询
+		r, ok := snapshot[module.ResultKey(img.HostID, img.ID)]
 		if !ok || !r.NeedUpdate {
 			continue
 		}

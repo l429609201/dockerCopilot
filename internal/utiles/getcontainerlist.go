@@ -38,6 +38,10 @@ func GetContainerListFromHost(ctx *svc.ServiceContext, hostID string) ([]MyType.
 			HostID:    host.ID,
 			HostName:  host.Name,
 		}
+		// 主机配置查不到时回退为请求的主机ID，保证更新状态按正确主机匹配
+		if c.HostID == "" {
+			c.HostID = hostID
+		}
 		// 填充 CreateImage：从 inspect 获取 Config.Image（创建时的镜像名）
 		// 这样即使镜像 tag 更新后 Image 字段变空，CreateImage 仍保持稳定
 		if inspectData, err := cli.ContainerInspect(context.Background(), dockerContainerInfo.ID); err == nil {
@@ -73,7 +77,8 @@ func GetAllContainers(ctx *svc.ServiceContext) ([]MyType.Container, error) {
 func CheckImageUpdate(ctx *svc.ServiceContext, containerListData []MyType.Container) []MyType.Container {
 	for i, v := range containerListData {
 		// 通过并发安全的方法读取，避免与后台检查 goroutine 并发读写 map 导致进程崩溃
-		if needUpdate, ok := ctx.HubImageInfo.NeedUpdate(v.ImageID); ok && needUpdate {
+		// 按容器所属主机读取结果，远程主机容器只使用本主机镜像的检查结论
+		if needUpdate, ok := ctx.HubImageInfo.NeedUpdate(v.HostID, v.ImageID); ok && needUpdate {
 			containerListData[i].Update = true
 		}
 	}

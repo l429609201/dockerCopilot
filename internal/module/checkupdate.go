@@ -1,18 +1,24 @@
 package module
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	ref "github.com/distribution/reference"
-	"github.com/l429609201/dockerCopilot/internal/types"
-	"github.com/zeromicro/go-zero/core/logx"
 	"io"
 	"net"
 	"net/http"
 	url2 "net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	ref "github.com/distribution/reference"
+	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
+	"github.com/l429609201/dockerCopilot/internal/types"
+	"github.com/zeromicro/go-zero/core/logx"
+	"golang.org/x/sync/singleflight"
 )
 
 // CheckStatus 单个镜像的更新检查状态。
@@ -31,12 +37,39 @@ const (
 
 // ImageCheckList 检查更新处理后的镜像列表
 type ImageCheckList struct {
-	NeedUpdate bool
+	NeedUpdate bool `json:"needUpdate"`
 	// Status 明确区分 最新/有更新/未知，供前端与日志分级展示。
-	Status CheckStatus
+	Status CheckStatus `json:"status"`
 	// Reason 未知/失败时的原因（如 auth failed、no repoDigests），便于排查。
-	Reason string
+	Reason string `json:"reason,omitempty"`
+	// CheckedAt 本条结果的检查时间，持久化后用于排查结果新旧。
+	CheckedAt time.Time `json:"checkedAt"`
 }
+
+// ResultKey 生成检查结果的存储键：主机ID + 镜像ID。
+// 修复：原来只用镜像ID做键，多台 Docker 主机上同 ID 的镜像会共用/互相覆盖结果，
+// 远程主机容器的更新状态无法独立保存。空主机ID按本地主机处理，与各请求类型的约定一致。
+func ResultKey(hostID, imageID string) string {
+	if hostID == "" {
+		hostID = appconfig.DockerHostLocalID
+	}
+	return hostID + "|" + imageID
+}
+
+// resultHost 从存储键中取出主机ID，用于按主机清理过期结果。
+func resultHost(key string) string {
+	host, _, _ := strings.Cut(key, "|")
+	return host
+}
+
+// persistedResults 检查结果落盘格式，带版本号便于以后兼容升级。
+type persistedResults struct {
+	Version int                       `json:"version"`
+	Results map[string]ImageCheckList `json:"results"`
+}
+
+// persistedResultsVersion 当前落盘格式版本；键为 ResultKey(主机ID, 镜像ID)。
+const persistedResultsVersion = 1
 
 // ImageUpdateData 保存镜像更新检查结果。
 // 注意：Data 会被后台检查 goroutine 写入，同时被大量容器列表请求读取，
@@ -55,6 +88,13 @@ type ImageUpdateData struct {
 	// 每个镜像每轮原本都要走 challenge + token 两次往返（auth.docker.io 经常慢），
 	// 同一仓库在 TTL 内复用同一 token 可显著减少往返、加快整轮检查。
 	tokenCache map[string]tokenCacheEntry
+	// digestFlight 合并同一 manifest URL 的并发请求。
+	// 修复：多主机同镜像在同一轮被不同 worker 同时检查时，缓存尚未写入，
+	// 会各自请求 registry；singleflight 保证同一 URL 同时只发一次请求，其余等待共享结果。
+	digestFlight singleflight.Group
+	// storePath 检查结果持久化文件路径；为空表示不落盘（单测或未配置）。
+	// 修复：结果原来只在内存，进程重启后全部丢失，远程主机不可达期间也无法保留上次结论。
+	storePath string
 }
 
 // digestCacheEntry 单条 digest 缓存。只缓存成功结果，失败不缓存以便下轮立即重试。
@@ -92,6 +132,93 @@ func NewImageCheck() *ImageUpdateData {
 		Data:        map[string]ImageCheckList{},
 		digestCache: map[string]digestCacheEntry{},
 		tokenCache:  map[string]tokenCacheEntry{},
+	}
+}
+
+// NewImageCheckWithStore 创建检查结果容器，并从 storePath 恢复上次保存的结果。
+// 文件不存在或损坏时仅记录日志并从空结果开始，不影响服务启动。
+func NewImageCheckWithStore(storePath string) *ImageUpdateData {
+	i := NewImageCheck()
+	i.storePath = storePath
+	i.loadResults()
+	return i
+}
+
+// loadResults 从持久化文件恢复检查结果。旧格式或版本不符的文件直接忽略，等下一轮检查重建。
+func (i *ImageUpdateData) loadResults() {
+	if i.storePath == "" {
+		return
+	}
+	raw, err := os.ReadFile(i.storePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logx.Errorf("读取镜像更新检查结果失败 [%s]: %v", i.storePath, err)
+		}
+		return
+	}
+	var data persistedResults
+	if err := json.Unmarshal(raw, &data); err != nil {
+		logx.Errorf("解析镜像更新检查结果失败 [%s]: %v", i.storePath, err)
+		return
+	}
+	if data.Version != persistedResultsVersion || data.Results == nil {
+		logx.Infof("镜像更新检查结果版本不符，忽略旧文件 [%s]", i.storePath)
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for k, v := range data.Results {
+		i.Data[k] = v
+	}
+	logx.Infof("已恢复 %d 条镜像更新检查结果", len(data.Results))
+}
+
+// saveResults 把当前结果原子写入持久化文件（先写临时文件再 rename，避免半截文件）。
+func (i *ImageUpdateData) saveResults() {
+	if i.storePath == "" {
+		return
+	}
+	raw, err := json.Marshal(persistedResults{Version: persistedResultsVersion, Results: i.Snapshot()})
+	if err != nil {
+		logx.Errorf("序列化镜像更新检查结果失败: %v", err)
+		return
+	}
+	dir := filepath.Dir(i.storePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		logx.Errorf("创建镜像更新检查结果目录失败 [%s]: %v", dir, err)
+		return
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(i.storePath)+".tmp-*")
+	if err != nil {
+		logx.Errorf("创建镜像更新检查结果临时文件失败: %v", err)
+		return
+	}
+	tmpName := tmp.Name()
+	_, writeErr := tmp.Write(raw)
+	closeErr := tmp.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(tmpName)
+		logx.Errorf("写入镜像更新检查结果失败: %v %v", writeErr, closeErr)
+		return
+	}
+	if err := os.Rename(tmpName, i.storePath); err != nil {
+		_ = os.Remove(tmpName)
+		logx.Errorf("保存镜像更新检查结果失败 [%s]: %v", i.storePath, err)
+	}
+}
+
+// pruneHosts 清理本轮已成功列出镜像的主机上、已不存在的镜像结果。
+// 本轮未出现的主机（不可达/禁用）保留上次结果，避免远程主机短暂离线时状态被清空。
+func (i *ImageUpdateData) pruneHosts(hosts map[string]struct{}, keep map[string]struct{}) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for k := range i.Data {
+		if _, checkedHost := hosts[resultHost(k)]; !checkedHost {
+			continue
+		}
+		if _, ok := keep[k]; !ok {
+			delete(i.Data, k)
+		}
 	}
 }
 
@@ -155,11 +282,12 @@ func (i *ImageUpdateData) storeTokenCache(key, token string) {
 	i.tokenCache[key] = tokenCacheEntry{token: token, cachedAt: now}
 }
 
-// NeedUpdate 以并发安全的方式读取指定镜像ID是否需要更新。
-func (i *ImageUpdateData) NeedUpdate(imageID string) (bool, bool) {
+// NeedUpdate 以并发安全的方式读取指定主机上某镜像是否需要更新。
+// 必须带主机ID：不同主机的同 ID 镜像各自保存结果，互不覆盖。
+func (i *ImageUpdateData) NeedUpdate(hostID, imageID string) (bool, bool) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	v, ok := i.Data[imageID]
+	v, ok := i.Data[ResultKey(hostID, imageID)]
 	return v.NeedUpdate, ok
 }
 
@@ -174,14 +302,17 @@ func (i *ImageUpdateData) Snapshot() map[string]ImageCheckList {
 	return snapshot
 }
 
-// setResult 以并发安全的方式写入单条检查结果。
-func (i *ImageUpdateData) setResult(imageID string, result ImageCheckList) {
+// setResult 以并发安全的方式写入单条检查结果，key 为 ResultKey(主机ID, 镜像ID)。
+func (i *ImageUpdateData) setResult(key string, result ImageCheckList) {
+	if result.CheckedAt.IsZero() {
+		result.CheckedAt = time.Now()
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.Data == nil {
 		i.Data = map[string]ImageCheckList{}
 	}
-	i.Data[imageID] = result
+	i.Data[key] = result
 }
 
 // beginCheck 尝试占用检查标记，返回 false 表示已有检查在进行中，应跳过本轮。
@@ -232,12 +363,22 @@ func (i *ImageUpdateData) CheckUpdateWithProgress(imageList []types.Image, onPro
 
 	// 先过滤掉不需要检查的镜像（自身镜像），再分发给 worker
 	targets := make([]types.Image, 0, len(imageList))
+	// checkedHosts/keep 用于本轮结束后按主机清理已删除镜像的旧结果
+	checkedHosts := make(map[string]struct{})
+	keep := make(map[string]struct{}, len(imageList))
 	for _, image := range imageList {
+		checkedHosts[resultHost(ResultKey(image.HostID, image.ID))] = struct{}{}
 		if strings.Contains(image.ImageName, "0nlylty/dockercopilot") {
 			continue
 		}
+		keep[ResultKey(image.HostID, image.ID)] = struct{}{}
 		targets = append(targets, image)
 	}
+	// 无论本轮是否有待检查镜像，都按主机清理并落盘，保证重启后看到的是最近一轮的结论
+	defer func() {
+		i.pruneHosts(checkedHosts, keep)
+		i.saveResults()
+	}()
 	total := len(targets)
 	if total == 0 {
 		if onProgress != nil {
@@ -306,8 +447,10 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 	// 关键修复：以前这些分支直接 return 不写结果，map 里没有该 imageID，
 	// 前端 NeedUpdate 读到 (false,false) 会当成"最新"，导致失败被吞成 0 个待更新。
 	// 现在显式写入 StatusUnknown，让失败可见、可区分。
+	// 结果按「主机 + 镜像ID」保存，远程主机的同 ID 镜像不会覆盖本地结果
+	key := ResultKey(image.HostID, image.ID)
 	markUnknown := func(reason string) {
-		i.setResult(image.ID, ImageCheckList{NeedUpdate: false, Status: StatusUnknown, Reason: reason})
+		i.setResult(key, ImageCheckList{NeedUpdate: false, Status: StatusUnknown, Reason: reason})
 	}
 
 	// ImageName/ImageTag 解析失败的镜像（悬空镜像等）无法构造 manifest URL，直接跳过（不标未知，本就无意义）
@@ -326,21 +469,35 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 	// 优先命中缓存，省掉 token 获取 + manifest HEAD 两次网络往返
 	remoteDigest, cached := i.lookupDigestCache(digestURL)
 	if !cached {
-		// token 缓存 key 用「registry host + repository path」（不含 tag），
-		// 同一仓库不同 tag 的 pull token 通用，可跨镜像/跨轮复用。
-		tokenKey := tokenCacheKey(image)
-		token, tokenCached := i.lookupTokenCache(tokenKey)
-		if !tokenCached {
-			// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
-			var errToken error
-			token, errToken = GetToken(image, "")
-			if errToken != nil {
-				logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
+		// 同一 URL 的并发请求合并为一次（见 digestFlight 注释）
+		var v interface{}
+		v, err, _ = i.digestFlight.Do(digestURL, func() (interface{}, error) {
+			// 进入后再查一次缓存：前一个同 URL 请求可能刚刚完成并写入
+			if d, ok := i.lookupDigestCache(digestURL); ok {
+				return d, nil
 			}
-			// 只缓存成功获取的非空 token（storeTokenCache 内部已对空值忽略）
-			i.storeTokenCache(tokenKey, token)
-		}
-		remoteDigest, err = GetDigest(digestURL, token)
+			// token 缓存 key 用「registry host + repository path」（不含 tag），
+			// 同一仓库不同 tag 的 pull token 通用，可跨镜像/跨轮复用。
+			tokenKey := tokenCacheKey(image)
+			token, tokenCached := i.lookupTokenCache(tokenKey)
+			if !tokenCached {
+				// 部分 registry 无需 token 即可读 manifest，取不到不算失败，继续尝试匿名请求
+				var errToken error
+				token, errToken = GetToken(image, "")
+				if errToken != nil {
+					logx.Debugf("获取 token 失败或无需 token [%s]: %v", imageRef, errToken)
+				}
+				// 只缓存成功获取的非空 token（storeTokenCache 内部已对空值忽略）
+				i.storeTokenCache(tokenKey, token)
+			}
+			d, errDigest := GetDigest(digestURL, token)
+			if errDigest != nil {
+				return "", errDigest
+			}
+			i.storeDigestCache(digestURL, d)
+			return d, nil
+		})
+		remoteDigest, _ = v.(string)
 		if err != nil {
 			// 401/404 是私有仓库或未配置凭据时的预期结果，不算故障，降为 Info；
 			// go-zero 无 Warn 级别，故在文案中标注 warn 供前端与人工识别。
@@ -353,7 +510,6 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 			markUnknown("获取远端 digest 失败: " + err.Error())
 			return
 		}
-		i.storeDigestCache(digestURL, remoteDigest)
 	}
 
 	if len(image.RepoDigests) == 0 {
@@ -392,7 +548,7 @@ func (i *ImageUpdateData) checkSingleImage(image types.Image) {
 		logx.Debugf("镜像已是最新 [%s]", imageRef)
 	}
 	// 并发安全写入，禁止直接操作 map
-	i.setResult(image.ID, ImageCheckList{NeedUpdate: needUpdate, Status: status})
+	i.setResult(key, ImageCheckList{NeedUpdate: needUpdate, Status: status})
 }
 
 // tokenCacheKey 生成 token 缓存 key：registry host + repository path（不含 tag）。

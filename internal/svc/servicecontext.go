@@ -7,6 +7,7 @@ import (
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
+	"path/filepath"
 	"sort"
 	"sync"
 )
@@ -110,9 +111,10 @@ type LayerProgress struct {
 type ProgressStoreType map[string]TaskProgress
 
 func NewServiceContext(c config.Config) *ServiceContext {
+	// HubImageInfo 检查结果持久化到配置目录，重启后恢复上次结论
 	svcCtx := &ServiceContext{
 		Config:        c,
-		HubImageInfo:  module.NewImageCheck(),
+		HubImageInfo:  module.NewImageCheckWithStore(filepath.Join(config.ConfigDir, "update_check_results.json")),
 		ProgressStore: make(ProgressStoreType),
 	}
 	// 默认并发上限取配置值，未配置时回退为 2，避免同时拉取过多镜像压垮 Docker daemon
