@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Clock, Plus, Trash2, Play } from 'lucide-react'
-import { scheduleAPI, registryAPI } from '../api/client.js'
+import { scheduleAPI, registryAPI, dockerHostAPI } from '../api/client.js'
 import { RuleEditor } from './RuleEditor.jsx'
 
 // 将 cron 表达式转为人性化描述，用于规则副标题展示。
@@ -24,6 +24,7 @@ function describeCron(cron) {
 export function Schedules() {
   const [rules, setRules] = useState([])
   const [registries, setRegistries] = useState([])
+  const [hostNames, setHostNames] = useState({}) // 主机ID -> 主机名，用于规则卡片展示
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(null) // 正在编辑的规则
@@ -35,6 +36,15 @@ export function Schedules() {
       const [r1, r2] = await Promise.all([scheduleAPI.list(), registryAPI.list()])
       setRules(r1.data?.data || [])
       setRegistries(r2.data?.data || [])
+      // 主机列表单独加载：失败时不影响规则展示，仅回退显示主机ID
+      try {
+        const r3 = await dockerHostAPI.list()
+        const map = {}
+        for (const h of (Array.isArray(r3.data?.data) ? r3.data.data : [])) map[h.id] = h.name || h.id
+        setHostNames(map)
+      } catch {
+        setHostNames({})
+      }
     } catch (e) {
       setError('加载失败：' + (e.message || '未知错误'))
     } finally {
@@ -136,7 +146,7 @@ export function Schedules() {
                     : r.containerNames.map((name) => ({ hostId: 'local', name }))
                   ).slice(0, 8).map((target) => (
                     <span key={`${target.hostId || 'local'}|${target.name}`} className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                      {target.name}{target.hostId && target.hostId !== 'local' ? `@${target.hostName || target.hostId}` : ''}
+                      {target.name}{target.hostId && target.hostId !== 'local' ? `@${hostNames[target.hostId] || target.hostName || target.hostId}` : ''}
                     </span>
                   ))}
                   {(r.containerTargets?.length || r.containerNames?.length || 0) > 8 && (
