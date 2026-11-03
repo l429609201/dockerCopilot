@@ -235,7 +235,8 @@ export const imageAPI = {
     apiClient.post('/api/image/pull', { imageName, imageTag, hostId, registryId }),
   // 导出镜像：生成下载链接，直接下载 tar 文件
   // <a> 下载无法带 Authorization 头，与 SSE 一致把 token 放进 query；基址与日志流规则相同
-  exportImage: (id, hostId = '') => {
+  // ref 为「名字:标签」：按引用导出，docker load 后自动带标签；悬空镜像传空按 ID 导出
+  exportImage: (id, hostId = '', ref = '') => {
     const token = localStorage.getItem('docker_copilot_token') || ''
     const base =
       (typeof window !== 'undefined' && window.__API_BASE_URL) ||
@@ -243,6 +244,7 @@ export const imageAPI = {
       (typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : '')
     const params = new URLSearchParams({ token })
     if (hostId) params.append('hostId', hostId)
+    if (ref) params.append('ref', ref)
     return `${base}/api/image/${encodeURIComponent(id)}/export?${params.toString()}`
   },
   // 以下图标方法统一为「对象入参」，字段与后端 struct tag 严格对齐（imageName/url/targetType）。

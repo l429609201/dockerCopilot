@@ -224,7 +224,9 @@ export function Images() {
 
   // 导出镜像：下载镜像离线包
   const handleExportImage = (image) => {
-    const downloadUrl = imageAPI.exportImage(image.id, image.hostId || '')
+    // 有名字和标签时按「名字:标签」导出，导入目标机后可直接按名字部署
+    const hasRef = image.name && image.tag && image.name !== '<none>' && image.tag !== '<none>'
+    const downloadUrl = imageAPI.exportImage(image.id, image.hostId || '', hasRef ? `${image.name}:${image.tag}` : '')
     // 创建隐藏的 a 标签触发下载
     const link = document.createElement('a')
     link.href = downloadUrl

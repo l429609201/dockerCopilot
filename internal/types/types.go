@@ -89,6 +89,9 @@ type PullImageReq struct {
 
 type ExportImageReq struct {
 	IdReq
+	// Ref 镜像引用（名字:标签）。提供时按引用导出，tar 内会记录 RepoTags，
+	// docker load 后自动带上标签；为空（如悬空镜像）时按 ID 导出。
+	Ref string `form:"ref,optional"`
 }
 
 // PruneImagesReq 批量清理镜像请求：提交镜像ID列表，异步逐个删除。
