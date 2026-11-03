@@ -199,9 +199,10 @@ export function ImageUpdateCheckCard({ intervalMinutes, muteLevel, mutedContaine
             </>
           )}
         </div>
-      </div>
+        </div>
+      )}
 
-      {/* 保存 */}
+      {/* 保存按钮与状态消息 */}
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <button onClick={save} disabled={saving}
           className="flex items-center gap-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60">
