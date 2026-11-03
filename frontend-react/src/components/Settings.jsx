@@ -28,6 +28,7 @@ export function Settings() {
   const [cfg, setCfg] = useState({
     enabled: false, token: '', allowedChatIds: [], proxy: '',
     pollIntervalSec: 3, notifyUpdate: true, updateCheckIntervalMinutes: 30,
+    muteLevel: 1, // 默认级别1：只屏蔽通知
     mutedContainers: [],
   })
   const [chatIdsText, setChatIdsText] = useState('')
@@ -52,6 +53,7 @@ export function Settings() {
           allowedChatIds: d.allowedChatIds || [], proxy: d.proxy || '',
           pollIntervalSec: d.pollIntervalSec || 3, notifyUpdate: !!d.notifyUpdate,
           updateCheckIntervalMinutes: d.updateCheckIntervalMinutes || 30,
+          muteLevel: d.muteLevel !== undefined ? d.muteLevel : 1, // 默认级别1
           mutedContainers: d.mutedContainers || [],
         })
         setChatIdsText((d.allowedChatIds || []).join(', '))
@@ -204,8 +206,10 @@ export function Settings() {
           {/* 镜像更新检查卡片 */}
           <ImageUpdateCheckCard
             intervalMinutes={cfg.updateCheckIntervalMinutes}
+            muteLevel={cfg.muteLevel}
             mutedContainers={cfg.mutedContainers}
             onChangeInterval={(v) => set('updateCheckIntervalMinutes', v)}
+            onChangeMuteLevel={(v) => set('muteLevel', v)}
             onChangeMuted={(list) => set('mutedContainers', list)}
             onSave={saveAll}
           />

@@ -190,6 +190,8 @@ type TelegramConfig struct {
 	NotifyUpdate bool `json:"notifyUpdate"`
 	// UpdateCheckIntervalMinutes 内置更新检测周期（分钟），<=0 时用默认 30。
 	UpdateCheckIntervalMinutes int `json:"updateCheckIntervalMinutes,omitempty"`
+	// MuteLevel 屏蔽级别：0=不屏蔽，1=只屏蔽通知（默认），2=跳过检查。
+	MuteLevel int `json:"muteLevel,omitempty"`
 	// MutedContainers 已屏蔽"有更新"周期通知的容器名列表，命中则不推送。
 	MutedContainers []string `json:"mutedContainers,omitempty"`
 	// NotifiedVersions 记录已推送过更新通知的容器→镜像版本，用于去重避免刷屏。

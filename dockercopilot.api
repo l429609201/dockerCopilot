@@ -166,6 +166,12 @@ service dockerCopilot {
 
 	@handler remove
 	delete /image/:id (RemoveImageReq) returns (Resp)
+
+	@handler pull
+	post /image/pull (PullImageReq) returns (Resp)
+
+	@handler export
+	get /image/:id/export (ExportImageReq)
 }
 
 @server(

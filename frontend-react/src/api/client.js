@@ -230,6 +230,15 @@ export const imageAPI = {
   pruneImages: (ids, force = false, hostId = '') => apiClient.post('/api/images/prune', { ids, force, hostId }),
   // 手动触发检测所有镜像更新（异步执行，立即返回）
   checkUpdate: () => apiClient.post('/api/images/check-update'),
+  // 拉取镜像：支持指定镜像名、tag、主机和凭据，异步执行并在任务中心展示进度
+  pullImage: ({ imageName, imageTag, hostId = '', registryId = 'auto' }) =>
+    apiClient.post('/api/image/pull', { imageName, imageTag, hostId, registryId }),
+  // 导出镜像：生成下载链接，直接下载 tar 文件
+  exportImage: (id, hostId = '') => {
+    const params = new URLSearchParams()
+    if (hostId) params.append('hostId', hostId)
+    return `/api/image/${id}/export${params.toString() ? '?' + params.toString() : ''}`
+  },
   // 以下图标方法统一为「对象入参」，字段与后端 struct tag 严格对齐（imageName/url/targetType）。
   // 通过 URL 绑定图标（无需上传图片）
   setIconUrl: ({ imageName, url, targetType = 'image' }) =>

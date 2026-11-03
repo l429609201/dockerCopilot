@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle, Server, Bell } from 'lucide-react'
+import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle, Server, Bell, Download, FileDown } from 'lucide-react'
 import { imageAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
@@ -188,6 +188,53 @@ export function Images() {
     } finally {
       setCheckingUpdate(false)
     }
+  }
+
+  // 拉取镜像：直接从 registry 重新拉取指定镜像
+  const handlePullImage = async (image) => {
+    try {
+      setError(null)
+      const response = await imageAPI.pullImage({
+        imageName: image.name,
+        imageTag: image.tag,
+        hostId: image.hostId || '',
+        registryId: 'auto' // 自动匹配凭据
+      })
+      
+      const taskID = response.data?.data?.taskId
+      if (!taskID) {
+        setError('创建拉取任务失败')
+        return
+      }
+
+      const hostLabel = image.hostName || (String(image.hostId || 'local') === 'local' ? '本地 Docker' : image.hostId)
+      addTask({
+        id: taskID,
+        title: `拉取镜像 ${image.name}:${image.tag}（${hostLabel}）`,
+        onDone: () => refetch(),
+      })
+      
+      setSuccessModal({ isOpen: true, message: `已提交拉取任务，可在右下角查看进度` })
+      setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
+    } catch (error) {
+      const errorMsg = error.response?.data?.msg || error.message || '拉取镜像失败'
+      setError(errorMsg)
+    }
+  }
+
+  // 导出镜像：下载镜像离线包
+  const handleExportImage = (image) => {
+    const downloadUrl = imageAPI.exportImage(image.id, image.hostId || '')
+    // 创建隐藏的 a 标签触发下载
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = `image-${image.name.replace(/\//g, '_')}-${image.tag}.tar`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    setSuccessModal({ isOpen: true, message: '镜像导出已开始，请稍候...' })
+    setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 2000)
   }
 
   const formatImageSize = (sizeStr) => {
@@ -544,8 +591,27 @@ export function Images() {
                   {/* 操作按钮：mt-auto 贴底，配合卡片 flex-col 使所有卡片按钮行对齐 */}
                   <div className="flex gap-2 pt-4 mt-auto border-t border-gray-100 dark:border-gray-700">
                     <button
+                      onClick={() => handlePullImage(image)}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors active:scale-95"
+                      title="从 registry 重新拉取该镜像"
+                      disabled={isLoading}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>拉取</span>
+                    </button>
+                    <button
+                      onClick={() => handleExportImage(image)}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors active:scale-95"
+                      title="导出镜像为 tar 离线包"
+                      disabled={isLoading}
+                    >
+                      <FileDown className="h-3.5 w-3.5" />
+                      <span>导出</span>
+                    </button>
+                    <button
                       onClick={() => setDeleteModal({ isOpen: true, image, force: false })}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors active:scale-95"
+                      disabled={isLoading}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       <span>删除</span>
@@ -555,6 +621,7 @@ export function Images() {
                         onClick={() => setDeleteModal({ isOpen: true, image, force: true })}
                         className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-lg transition-colors active:scale-95"
                         title="强制删除正在使用的镜像"
+                        disabled={isLoading}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                         <span>强制删除</span>

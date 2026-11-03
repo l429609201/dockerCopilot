@@ -73,5 +73,6 @@ type TelegramConfigReq struct {
 	PollIntervalSec            int      `json:"pollIntervalSec,optional"`
 	NotifyUpdate               bool     `json:"notifyUpdate,optional"`
 	UpdateCheckIntervalMinutes int      `json:"updateCheckIntervalMinutes,optional"` // 内置更新检测周期(分钟)，<=0 用默认 30
+	MuteLevel                  int      `json:"muteLevel,optional"`                  // 屏蔽级别：0=不屏蔽，1=只屏蔽通知(默认)，2=跳过检查
 	MutedContainers            []string `json:"mutedContainers,optional"`            // 更新检查屏蔽黑名单，命中的容器不推送"有更新"通知
 }

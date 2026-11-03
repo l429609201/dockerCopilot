@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { BellOff, Save, Loader2, X, Plus, ChevronDown, Search } from 'lucide-react'
+import { BellOff, Save, Loader2, X, Plus, ChevronDown, Search, Bell, BellRing } from 'lucide-react'
 import { containerAPI } from '../api/client.js'
 
-// 镜像更新检查卡片：第一行=更新检查周期(分钟)，第二行=屏蔽黑名单(标签式增删+从容器列表勾选)。
+// 镜像更新检查卡片：第一行=更新检查周期(分钟)，第二行=三级屏蔽开关+黑名单。
 // 受控组件：值与变更回调由父级 Settings 统一管理，onSave 提交完整配置避免多卡片互相覆盖。
-export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChangeInterval, onChangeMuted, onSave }) {
+export function ImageUpdateCheckCard({ intervalMinutes, muteLevel, mutedContainers, onChangeInterval, onChangeMuteLevel, onChangeMuted, onSave }) {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null) // { ok, text }
   const [names, setNames] = useState([]) // 现有容器名列表，供勾选
@@ -70,10 +70,70 @@ export function ImageUpdateCheckCard({ intervalMinutes, mutedContainers, onChang
         <p className="text-xs text-gray-500 mt-1">内置更新检测推送周期，留空或 0 使用默认 30 分钟</p>
       </div>
 
-      {/* 第二行：屏蔽黑名单 */}
+      {/* 第二行：三级屏蔽开关 */}
       <div>
-        <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">更新检查屏蔽黑名单</label>
-        <p className="text-xs text-gray-500 mb-2">黑名单中的容器不会推送"有更新"通知</p>
+        <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">屏蔽级别</label>
+        <div className="flex items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+          {/* 三个级别的单选按钮 */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="muteLevel"
+              value={0}
+              checked={muteLevel === 0}
+              onChange={() => onChangeMuteLevel(0)}
+              className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+            />
+            <div className="flex items-center gap-1.5">
+              <Bell className="h-4 w-4 text-green-600 dark:text-green-400" />
+              <span className="text-sm text-gray-700 dark:text-gray-200">不屏蔽</span>
+            </div>
+          </label>
+          
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="muteLevel"
+              value={1}
+              checked={muteLevel === 1}
+              onChange={() => onChangeMuteLevel(1)}
+              className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+            />
+            <div className="flex items-center gap-1.5">
+              <BellRing className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+              <span className="text-sm text-gray-700 dark:text-gray-200">仅屏蔽通知</span>
+            </div>
+          </label>
+          
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="muteLevel"
+              value={2}
+              checked={muteLevel === 2}
+              onChange={() => onChangeMuteLevel(2)}
+              className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+            />
+            <div className="flex items-center gap-1.5">
+              <BellOff className="h-4 w-4 text-red-600 dark:text-red-400" />
+              <span className="text-sm text-gray-700 dark:text-gray-200">跳过检查</span>
+            </div>
+          </label>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          {muteLevel === 0 && '检查所有镜像更新并推送通知'}
+          {muteLevel === 1 && '检查更新但黑名单容器不推送通知（默认）'}
+          {muteLevel === 2 && '黑名单容器完全跳过更新检查'}
+        </p>
+      </div>
+
+      {/* 第三行：屏蔽黑名单（仅在级别≥1时显示） */}
+      {muteLevel >= 1 && (
+        <div>
+          <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">屏蔽黑名单</label>
+          <p className="text-xs text-gray-500 mb-2">
+            {muteLevel === 1 ? '黑名单中的容器不会推送"有更新"通知' : '黑名单中的容器不会进行更新检查'}
+          </p>
 
         {/* 已选标签 */}
         <div className="flex flex-wrap gap-2 mb-2">

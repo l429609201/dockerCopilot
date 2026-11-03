@@ -98,8 +98,9 @@ func (s *Store) MaskedTelegram() map[string]interface{} {
 		"proxy":           t.Proxy,
 		"pollIntervalSec": t.PollIntervalSec,
 		"notifyUpdate":    t.NotifyUpdate,
-		// 补充回显：更新检测周期(分钟) 与 屏蔽黑名单，供前端《镜像更新检查》卡片回填
+		// 补充回显：更新检测周期(分钟)、屏蔽级别 与 屏蔽黑名单，供前端《镜像更新检查》卡片回填
 		"updateCheckIntervalMinutes": t.UpdateCheckIntervalMinutes,
-		"mutedContainers":            muted,
+		"muteLevel":                   t.MuteLevel,
+		"mutedContainers":             muted,
 	}
 }

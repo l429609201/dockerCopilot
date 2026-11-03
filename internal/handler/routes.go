@@ -175,6 +175,18 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/images/check-update",
 				Handler: image.CheckUpdateHandler(serverCtx),
 			},
+			{
+				// 拉取镜像：支持指定镜像名、tag、主机和凭据，异步执行
+				Method:  http.MethodPost,
+				Path:    "/image/pull",
+				Handler: image.PullHandler(serverCtx),
+			},
+			{
+				// 导出镜像：将镜像导出为 tar 文件，通过浏览器下载
+				Method:  http.MethodGet,
+				Path:    "/image/:id/export",
+				Handler: image.ExportHandler(serverCtx),
+			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),

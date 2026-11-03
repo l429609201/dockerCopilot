@@ -78,6 +78,19 @@ type RemoveImageReq struct {
 	Force bool `form:"force,default=false"`
 }
 
+type PullImageReq struct {
+	ImageName string `json:"imageName"`
+	ImageTag  string `json:"imageTag"`
+	// HostID 目标 Docker 主机（多 Docker 管理），空表示本地。
+	HostID string `json:"hostId,optional"`
+	// RegistryID 拉取时使用的凭据ID；空表示匿名拉取；"auto" 表示按镜像自动匹配。
+	RegistryID string `json:"registryId,optional"`
+}
+
+type ExportImageReq struct {
+	IdReq
+}
+
 // PruneImagesReq 批量清理镜像请求：提交镜像ID列表，异步逐个删除。
 type PruneImagesReq struct {
 	Ids   []string `json:"ids"`

@@ -75,7 +75,29 @@ func GetAllContainers(ctx *svc.ServiceContext) ([]MyType.Container, error) {
 }
 
 func CheckImageUpdate(ctx *svc.ServiceContext, containerListData []MyType.Container) []MyType.Container {
+	// 读取配置：屏蔽级别和黑名单
+	cfg := ctx.AppConfig.Get()
+	muteLevel := cfg.Telegram.MuteLevel
+	mutedSet := make(map[string]struct{}, len(cfg.Telegram.MutedContainers))
+	for _, name := range cfg.Telegram.MutedContainers {
+		mutedSet[name] = struct{}{}
+	}
+
 	for i, v := range containerListData {
+		containerName := v.Name
+		if containerName == "" {
+			containerName = v.Names
+		}
+
+		// 级别2：跳过检查黑名单容器
+		if muteLevel >= 2 {
+			if _, muted := mutedSet[containerName]; muted {
+				// 黑名单容器直接标记为无更新，不读取检查结果
+				containerListData[i].Update = false
+				continue
+			}
+		}
+
 		// 通过并发安全的方法读取，避免与后台检查 goroutine 并发读写 map 导致进程崩溃
 		// 按容器所属主机读取结果，远程主机容器只使用本主机镜像的检查结论
 		if needUpdate, ok := ctx.HubImageInfo.NeedUpdate(v.HostID, v.ImageID); ok && needUpdate {
