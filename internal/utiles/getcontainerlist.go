@@ -84,9 +84,10 @@ func CheckImageUpdate(ctx *svc.ServiceContext, containerListData []MyType.Contai
 	}
 
 	for i, v := range containerListData {
-		containerName := v.Name
+		// Container 嵌入 docker.Container，Names 是字符串（如 "/container_name"）
+		containerName := v.Names
 		if containerName == "" {
-			containerName = v.Names
+			containerName = v.ID[:12] // 回退到短ID
 		}
 
 		// 级别2：跳过检查黑名单容器

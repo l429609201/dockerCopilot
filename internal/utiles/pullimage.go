@@ -14,9 +14,9 @@ import (
 // registryAuth 为空时等价于匿名拉取。
 func PullImageOnHost(ctx context.Context, svcCtx *svc.ServiceContext, hostID string, imageNameAndTag string, registryAuth string, taskID string) error {
 	// 按 hostID 路由到对应 Docker 主机（空表示本地）
-	cli, err := svcCtx.DockerManager.Get(hostID)
-	if err != nil {
-		return fmt.Errorf("获取 Docker 客户端失败 [主机%s]: %w", displayHostID(hostID), err)
+	cli, ok := svcCtx.DockerManager.GetClient(hostID)
+	if !ok {
+		return fmt.Errorf("获取 Docker 客户端失败 [主机%s]", displayHostID(hostID))
 	}
 
 	// 初始进度
