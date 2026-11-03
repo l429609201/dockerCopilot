@@ -149,6 +149,11 @@ func pathID(r *http.Request) string {
 	return vars["id"]
 }
 
+// ValidQueryToken 供其它包（如镜像导出下载）复用的 query token 校验。
+func ValidQueryToken(r *http.Request, secret string) bool {
+	return validWSToken(r, secret)
+}
+
 // validWSToken 校验 query 中的 token（HS256，密钥为 AccessSecret）。
 // 支持 ?token=xxx，兼容前端把 JWT 放到 query 传递的方式。
 func validWSToken(r *http.Request, secret string) bool {

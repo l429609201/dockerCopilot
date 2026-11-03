@@ -181,12 +181,6 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Path:    "/image/pull",
 				Handler: image.PullHandler(serverCtx),
 			},
-			{
-				// 导出镜像：将镜像导出为 tar 文件，通过浏览器下载
-				Method:  http.MethodGet,
-				Path:    "/image/:id/export",
-				Handler: image.ExportHandler(serverCtx),
-			},
 		},
 		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
@@ -604,6 +598,12 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Method:  http.MethodGet,
 				Path:    "/progress/stream",
 				Handler: ops.ProgressStreamHandler(serverCtx),
+			},
+			{
+				// 导出镜像为 tar 离线包（浏览器 <a> 下载无法带 Authorization 头，用 query token）
+				Method:  http.MethodGet,
+				Path:    "/image/:id/export",
+				Handler: image.ExportHandler(serverCtx),
 			},
 		},
 		rest.WithPrefix("/api"),

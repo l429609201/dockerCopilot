@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/l429609201/dockerCopilot/internal/handler/ops"
 	"github.com/l429609201/dockerCopilot/internal/svc"
 	"github.com/l429609201/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -29,14 +30,22 @@ func ExportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		// 获取主机ID（从查询参数）
-		hostID := r.URL.Query().Get("hostId")
+		// 浏览器 <a> 下载无法携带 Authorization 头，路由不走 WithJwt，
+		// 改为与 SSE/WebSocket 接口一致的 query token 校验（也兼容 Authorization 头）。
+		if !ops.ValidQueryToken(r, svcCtx.Config.Auth.AccessSecret) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if req.Id == "" {
+			http.Error(w, "镜像ID不能为空", http.StatusBadRequest)
+			return
+		}
 
-		// 按 hostID 路由到对应 Docker 主机
-		cli, err := svcCtx.DockerManager.Get(hostID)
-		if err != nil {
-			logx.Errorf("获取 Docker 客户端失败: %v", err)
-			http.Error(w, fmt.Sprintf("主机不可用: %v", err), http.StatusBadRequest)
+		// 按 hostID 路由到对应 Docker 主机（空表示本地）
+		cli, ok := svcCtx.DockerManager.GetClient(req.HostID)
+		if !ok {
+			logx.Errorf("导出镜像失败：Docker 主机 %s 不可用", req.HostID)
+			http.Error(w, "Docker 主机不可用", http.StatusBadRequest)
 			return
 		}
 

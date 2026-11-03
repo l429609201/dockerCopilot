@@ -3,6 +3,7 @@ package utiles
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/l429609201/dockerCopilot/internal/module/appconfig"
@@ -84,14 +85,14 @@ func CheckImageUpdate(ctx *svc.ServiceContext, containerListData []MyType.Contai
 	}
 
 	for i, v := range containerListData {
-		// Container 嵌入 docker.Container，Names 是字符串（如 "/container_name"）
-		containerName := v.Names
-		if containerName == "" {
-			containerName = v.ID[:12] // 回退到短ID
+		// Names 是 []string（如 ["/container_name"]），与 Bot 屏蔽面板一致取首个并去掉前导 "/"
+		containerName := ""
+		if len(v.Names) > 0 {
+			containerName = strings.TrimPrefix(v.Names[0], "/")
 		}
 
-		// 级别2：跳过检查黑名单容器
-		if muteLevel >= 2 {
+		// 级别2：跳过检查黑名单容器（无名容器不可能在黑名单中）
+		if muteLevel >= 2 && containerName != "" {
 			if _, muted := mutedSet[containerName]; muted {
 				// 黑名单容器直接标记为无更新，不读取检查结果
 				containerListData[i].Update = false
